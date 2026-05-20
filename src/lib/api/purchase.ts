@@ -1,0 +1,528 @@
+import { getSupabaseClient } from "@/lib/supabase/client";
+
+export type PurchaseOrderStatus =
+  | "draft"
+  | "ordered"
+  | "partially_received"
+  | "received"
+  | "cancelled";
+
+export type ShortageMaterialRequirement = {
+  id: string;
+  production_order_id: string;
+  material_sku_id: string;
+  required_quantity: number;
+  available_quantity: number;
+  shortage_quantity: number;
+  unit: string;
+  status: "shortage";
+  production_order: {
+    id: string;
+    production_order_no: string;
+    sku_id: string;
+    finished_sku: {
+      id: string;
+      sku_code: string;
+      sku_name: string;
+    } | null;
+  } | null;
+  material_sku: {
+    id: string;
+    sku_code: string;
+    sku_name: string;
+    unit: string;
+  } | null;
+};
+
+export type PurchaseOrderItem = {
+  id: string;
+  purchase_order_id: string;
+  sku_id: string;
+  material_requirement_id: string | null;
+  ordered_quantity: number;
+  received_quantity: number;
+  unit: string;
+  unit_price: number | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  sku: {
+    id: string;
+    sku_code: string;
+    sku_name: string;
+    unit: string;
+  } | null;
+  material_requirement: {
+    id: string;
+    shortage_quantity: number;
+    status: string;
+    production_order: {
+      id: string;
+      production_order_no: string;
+    } | null;
+  } | null;
+};
+
+export type PurchaseOrder = {
+  id: string;
+  purchase_order_no: string;
+  supplier_id: string | null;
+  warehouse_id: string | null;
+  created_by: string | null;
+  status: PurchaseOrderStatus;
+  ordered_at: string | null;
+  expected_arrival_date: string | null;
+  received_at: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  supplier: {
+    id: string;
+    supplier_code: string;
+    name: string;
+  } | null;
+  created_by_profile: {
+    id: string;
+    full_name: string;
+    email: string;
+  } | null;
+  items: PurchaseOrderItem[];
+  total_amount: number;
+};
+
+export type CreatePurchaseOrderInput = {
+  supplierId: string;
+  expectedArrivalDate?: string;
+  notes?: string;
+  items: Array<{
+    skuId: string;
+    materialRequirementId: string;
+    orderedQuantity: number;
+    unit: string;
+    unitPrice?: number | null;
+    notes?: string;
+  }>;
+};
+
+type MaybeRelation<T> = T | T[] | null;
+
+type RawShortageMaterialRequirement = Omit<
+  ShortageMaterialRequirement,
+  "production_order" | "material_sku"
+> & {
+  production_order: MaybeRelation<
+    Omit<NonNullable<ShortageMaterialRequirement["production_order"]>, "finished_sku"> & {
+      finished_sku: MaybeRelation<
+        NonNullable<
+          NonNullable<ShortageMaterialRequirement["production_order"]>["finished_sku"]
+        >
+      >;
+    }
+  >;
+  material_sku: MaybeRelation<
+    NonNullable<ShortageMaterialRequirement["material_sku"]>
+  >;
+};
+
+type RawPurchaseOrderItem = Omit<
+  PurchaseOrderItem,
+  "sku" | "material_requirement"
+> & {
+  sku: MaybeRelation<NonNullable<PurchaseOrderItem["sku"]>>;
+  material_requirement: MaybeRelation<
+    Omit<
+      NonNullable<PurchaseOrderItem["material_requirement"]>,
+      "production_order"
+    > & {
+      production_order: MaybeRelation<
+        NonNullable<
+          NonNullable<PurchaseOrderItem["material_requirement"]>["production_order"]
+        >
+      >;
+    }
+  >;
+};
+
+type RawPurchaseOrder = Omit<
+  PurchaseOrder,
+  "supplier" | "created_by_profile" | "items" | "total_amount"
+> & {
+  supplier: MaybeRelation<NonNullable<PurchaseOrder["supplier"]>>;
+  created_by_profile: MaybeRelation<
+    NonNullable<PurchaseOrder["created_by_profile"]>
+  >;
+  items: RawPurchaseOrderItem[] | null;
+};
+
+type InsertedPurchaseOrder = {
+  id: string;
+  purchase_order_no: string;
+};
+
+function formatSupabaseError(action: string, error: { message: string }) {
+  return new Error(`${action}失败：${error.message}`);
+}
+
+async function withTimeout<T>(promise: PromiseLike<T>, action: string) {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(
+        new Error(`${action}超时：请检查 Supabase 地址、anon key、网络和 RLS 策略。`)
+      );
+    }, 10000);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
+function singleRelation<T>(value: MaybeRelation<T>): T | null {
+  if (Array.isArray(value)) {
+    return value[0] ?? null;
+  }
+
+  return value;
+}
+
+function roundMoney(value: number) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function createPurchaseOrderNo() {
+  const now = new Date();
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const datePart = [
+    now.getFullYear(),
+    pad(now.getMonth() + 1),
+    pad(now.getDate())
+  ].join("");
+  const randomPart = String(Math.floor(Math.random() * 10000)).padStart(4, "0");
+
+  return `PUR-${datePart}-${randomPart}`;
+}
+
+function normalizeShortageRequirement(
+  row: RawShortageMaterialRequirement
+): ShortageMaterialRequirement {
+  const productionOrder = singleRelation(row.production_order);
+
+  return {
+    ...row,
+    production_order: productionOrder
+      ? {
+          ...productionOrder,
+          finished_sku: singleRelation(productionOrder.finished_sku)
+        }
+      : null,
+    material_sku: singleRelation(row.material_sku)
+  };
+}
+
+function normalizePurchaseOrderItem(row: RawPurchaseOrderItem): PurchaseOrderItem {
+  const materialRequirement = singleRelation(row.material_requirement);
+
+  return {
+    ...row,
+    sku: singleRelation(row.sku),
+    material_requirement: materialRequirement
+      ? {
+          ...materialRequirement,
+          production_order: singleRelation(materialRequirement.production_order)
+        }
+      : null
+  };
+}
+
+function normalizePurchaseOrder(row: RawPurchaseOrder): PurchaseOrder {
+  const items = (row.items ?? []).map(normalizePurchaseOrderItem);
+  const totalAmount = items.reduce((sum, item) => {
+    return sum + Number(item.ordered_quantity) * Number(item.unit_price ?? 0);
+  }, 0);
+
+  return {
+    ...row,
+    supplier: singleRelation(row.supplier),
+    created_by_profile: singleRelation(row.created_by_profile),
+    items,
+    total_amount: roundMoney(totalAmount)
+  };
+}
+
+function getPurchaseOrderSelect() {
+  return `
+    id,
+    purchase_order_no,
+    supplier_id,
+    warehouse_id,
+    created_by,
+    status,
+    ordered_at,
+    expected_arrival_date,
+    received_at,
+    notes,
+    created_at,
+    updated_at,
+    supplier:suppliers!purchase_orders_supplier_id_fkey (
+      id,
+      supplier_code,
+      name
+    ),
+    created_by_profile:profiles!purchase_orders_created_by_fkey (
+      id,
+      full_name,
+      email
+    ),
+    items:purchase_order_items!purchase_order_items_purchase_order_id_fkey (
+      id,
+      purchase_order_id,
+      sku_id,
+      material_requirement_id,
+      ordered_quantity,
+      received_quantity,
+      unit,
+      unit_price,
+      notes,
+      created_at,
+      updated_at,
+      sku:skus!purchase_order_items_sku_id_fkey (
+        id,
+        sku_code,
+        sku_name,
+        unit
+      ),
+      material_requirement:material_requirements!purchase_order_items_material_requirement_id_fkey (
+        id,
+        shortage_quantity,
+        status,
+        production_order:production_orders!material_requirements_production_order_id_fkey (
+          id,
+          production_order_no
+        )
+      )
+    )
+  `;
+}
+
+export async function getShortageMaterialRequirements(): Promise<
+  ShortageMaterialRequirement[]
+> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase
+      .from("material_requirements")
+      .select(
+        `
+          id,
+          production_order_id,
+          material_sku_id,
+          required_quantity,
+          available_quantity,
+          shortage_quantity,
+          unit,
+          status,
+          production_order:production_orders!material_requirements_production_order_id_fkey (
+            id,
+            production_order_no,
+            sku_id,
+            finished_sku:skus!production_orders_sku_id_fkey (
+              id,
+              sku_code,
+              sku_name
+            )
+          ),
+          material_sku:skus!material_requirements_material_sku_id_fkey (
+            id,
+            sku_code,
+            sku_name,
+            unit
+          )
+        `
+      )
+      .eq("status", "shortage")
+      .gt("shortage_quantity", 0)
+      .order("created_at", { ascending: false }),
+    "读取缺料物料列表"
+  );
+
+  if (error) {
+    throw formatSupabaseError("读取缺料物料列表", error);
+  }
+
+  return ((data ?? []) as unknown as RawShortageMaterialRequirement[]).map(
+    normalizeShortageRequirement
+  );
+}
+
+export async function getPurchaseOrders(): Promise<PurchaseOrder[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase
+      .from("purchase_orders")
+      .select(getPurchaseOrderSelect())
+      .order("created_at", { ascending: false }),
+    "读取采购单列表"
+  );
+
+  if (error) {
+    throw formatSupabaseError("读取采购单列表", error);
+  }
+
+  return ((data ?? []) as unknown as RawPurchaseOrder[]).map(normalizePurchaseOrder);
+}
+
+export async function getPurchaseOrderDetail(
+  purchaseOrderId: string
+): Promise<PurchaseOrder> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase
+      .from("purchase_orders")
+      .select(getPurchaseOrderSelect())
+      .eq("id", purchaseOrderId)
+      .single(),
+    "读取采购单详情"
+  );
+
+  if (error) {
+    throw formatSupabaseError("读取采购单详情", error);
+  }
+
+  return normalizePurchaseOrder(data as unknown as RawPurchaseOrder);
+}
+
+export async function createPurchaseOrder(
+  input: CreatePurchaseOrderInput
+): Promise<InsertedPurchaseOrder> {
+  if (!input.supplierId) {
+    throw new Error("请选择供应商。");
+  }
+
+  if (input.items.length === 0) {
+    throw new Error("请至少选择一条缺料物料。");
+  }
+
+  for (const item of input.items) {
+    if (!item.skuId || !item.materialRequirementId) {
+      throw new Error("采购明细缺少原材料 SKU 或物料需求 ID。");
+    }
+
+    if (Number(item.orderedQuantity) <= 0) {
+      throw new Error("采购数量必须大于 0。");
+    }
+  }
+
+  const supabase = getSupabaseClient();
+  const purchaseOrderNo = createPurchaseOrderNo();
+
+  const { data: order, error: orderError } = await withTimeout(
+    supabase
+      .from("purchase_orders")
+      .insert({
+        purchase_order_no: purchaseOrderNo,
+        supplier_id: input.supplierId,
+        status: "draft",
+        expected_arrival_date: input.expectedArrivalDate || null,
+        notes: input.notes || null
+      })
+      .select("id, purchase_order_no")
+      .single(),
+    "创建采购单"
+  );
+
+  if (orderError) {
+    throw formatSupabaseError("创建采购单", orderError);
+  }
+
+  const insertedOrder = order as InsertedPurchaseOrder;
+  const itemRows = input.items.map((item) => ({
+    purchase_order_id: insertedOrder.id,
+    sku_id: item.skuId,
+    material_requirement_id: item.materialRequirementId,
+    ordered_quantity: item.orderedQuantity,
+    received_quantity: 0,
+    unit: item.unit,
+    unit_price: item.unitPrice ?? null,
+    notes: item.notes || null
+  }));
+
+  const { error: itemsError } = await withTimeout(
+    supabase.from("purchase_order_items").insert(itemRows),
+    "写入采购单明细"
+  );
+
+  if (itemsError) {
+    throw formatSupabaseError("写入采购单明细", itemsError);
+  }
+
+  const materialRequirementIds = input.items.map(
+    (item) => item.materialRequirementId
+  );
+  const { error: requirementsError } = await withTimeout(
+    supabase
+      .from("material_requirements")
+      .update({ status: "purchased" })
+      .in("id", materialRequirementIds),
+    "更新物料需求状态"
+  );
+
+  if (requirementsError) {
+    throw formatSupabaseError("更新物料需求状态", requirementsError);
+  }
+
+  return insertedOrder;
+}
+
+export async function updatePurchaseOrderStatus(
+  purchaseOrderId: string,
+  status: PurchaseOrderStatus
+) {
+  const supabase = getSupabaseClient();
+  const updates: Partial<{
+    status: PurchaseOrderStatus;
+    ordered_at: string;
+    received_at: string;
+  }> = { status };
+
+  if (status === "ordered") {
+    updates.ordered_at = new Date().toISOString();
+  }
+
+  if (status === "received") {
+    updates.received_at = new Date().toISOString();
+  }
+
+  const { error } = await withTimeout(
+    supabase.from("purchase_orders").update(updates).eq("id", purchaseOrderId),
+    "更新采购单状态"
+  );
+
+  if (error) {
+    throw formatSupabaseError("更新采购单状态", error);
+  }
+
+  if (status === "received") {
+    const detail = await getPurchaseOrderDetail(purchaseOrderId);
+    const receivedRows = detail.items.map((item) =>
+      supabase
+        .from("purchase_order_items")
+        .update({ received_quantity: item.ordered_quantity })
+        .eq("id", item.id)
+    );
+
+    const results = await Promise.all(
+      receivedRows.map((request) => withTimeout(request, "更新采购明细到货数量"))
+    );
+    const itemError = results.find((result) => result.error)?.error;
+
+    if (itemError) {
+      throw formatSupabaseError("更新采购明细到货数量", itemError);
+    }
+  }
+}
