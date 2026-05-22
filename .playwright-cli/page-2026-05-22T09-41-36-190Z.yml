@@ -1,0 +1,155 @@
+- generic [ref=e2]:
+  - complementary [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: FBA
+      - generic [ref=e6]:
+        - strong [ref=e7]: 备货生产系统
+        - generic [ref=e8]: 内部管理后台
+    - navigation "后台菜单" [ref=e9]:
+      - generic [ref=e10]:
+        - paragraph [ref=e11]: 首页
+        - link "后台首页" [ref=e12] [cursor=pointer]:
+          - /url: /dashboard
+      - generic [ref=e13]:
+        - paragraph [ref=e14]: FBA 备货
+        - link "FBA 备货需求" [ref=e15] [cursor=pointer]:
+          - /url: /replenishment
+        - link "创建备货单" [ref=e16] [cursor=pointer]:
+          - /url: /replenishment/new
+      - generic [ref=e17]:
+        - paragraph [ref=e18]: 生产
+        - link "厂长排产" [ref=e19] [cursor=pointer]:
+          - /url: /production/planning
+        - link "生产任务" [ref=e20] [cursor=pointer]:
+          - /url: /production/orders
+      - generic [ref=e21]:
+        - paragraph [ref=e22]: 物料与采购
+        - link "BOM 管理" [ref=e23] [cursor=pointer]:
+          - /url: /bom
+        - link "物料需求" [ref=e24] [cursor=pointer]:
+          - /url: /materials/requirements
+        - link "采购单" [ref=e25] [cursor=pointer]:
+          - /url: /purchase/orders
+      - generic [ref=e26]:
+        - paragraph [ref=e27]: 仓库
+        - link "原材料库存" [ref=e28] [cursor=pointer]:
+          - /url: /inventory/materials
+        - link "成品库存" [ref=e29] [cursor=pointer]:
+          - /url: /inventory/products
+        - link "入库管理" [ref=e30] [cursor=pointer]:
+          - /url: /inventory/inbound
+        - link "FBA 出库" [ref=e31] [cursor=pointer]:
+          - /url: /inventory/fba-outbound
+        - link "出入库记录" [ref=e32] [cursor=pointer]:
+          - /url: /inventory/transactions
+      - generic [ref=e33]:
+        - paragraph [ref=e34]: 基础资料
+        - link "用户管理" [ref=e35] [cursor=pointer]:
+          - /url: /admin/users
+        - link "产品管理" [ref=e36] [cursor=pointer]:
+          - /url: /admin/products
+        - link "SKU 管理" [ref=e37] [cursor=pointer]:
+          - /url: /admin/skus
+        - link "仓库管理" [ref=e38] [cursor=pointer]:
+          - /url: /admin/warehouses
+        - link "供应商管理" [ref=e39] [cursor=pointer]:
+          - /url: /admin/suppliers
+  - generic [ref=e40]:
+    - banner [ref=e41]:
+      - generic [ref=e42]:
+        - paragraph [ref=e43]: 当前阶段：基础结构
+        - heading "FBA 备货生产管理后台" [level=1] [ref=e44]
+      - generic [ref=e45]:
+        - generic [ref=e46]:
+          - generic [ref=e47]: 模拟角色
+          - combobox "模拟角色" [ref=e48]:
+            - option "运营"
+            - option "厂长"
+            - option "采购"
+            - option "仓库"
+            - option "管理员" [selected]
+        - generic [ref=e49]:
+          - strong [ref=e50]: 内部测试用户
+          - generic [ref=e51]: demo@company.local
+    - main [ref=e52]:
+      - generic [ref=e53]:
+        - generic [ref=e54]:
+          - paragraph [ref=e55]: 基础资料
+          - heading "仓库管理" [level=2] [ref=e56]
+          - paragraph [ref=e57]: 维护仓库基础资料。库存、入库、出库和库存流水都会通过仓库 ID 关联到这里的仓库。
+        - generic [ref=e58]: Supabase 数据
+      - generic [ref=e59]:
+        - generic [ref=e60]:
+          - text: 仓库总数
+          - strong [ref=e61]: "0"
+        - generic [ref=e62]:
+          - text: 原材料仓数量
+          - strong [ref=e63]: "0"
+        - generic [ref=e64]:
+          - text: 成品仓数量
+          - strong [ref=e65]: "0"
+        - generic [ref=e66]:
+          - text: FBA 暂存仓数量
+          - strong [ref=e67]: "0"
+        - generic [ref=e68]:
+          - text: 有库存的仓库数量
+          - strong [ref=e69]: "0"
+      - generic [ref=e70]:
+        - generic [ref=e72]:
+          - paragraph [ref=e73]: 新增仓库
+          - heading "创建仓库基础资料" [level=3] [ref=e74]
+        - generic [ref=e75]:
+          - generic [ref=e76]:
+            - text: 仓库编码
+            - textbox "仓库编码" [ref=e77]:
+              - /placeholder: 例如 WH-MATERIAL
+          - generic [ref=e78]:
+            - text: 仓库名称
+            - textbox "仓库名称" [ref=e79]:
+              - /placeholder: 例如 原材料仓
+          - generic [ref=e80]:
+            - text: 仓库类型
+            - combobox "仓库类型" [ref=e81]:
+              - option "原材料仓" [selected]
+              - option "成品仓"
+              - option "半成品仓"
+              - option "FBA 发货暂存仓"
+              - option "内部仓"
+          - generic [ref=e82]:
+            - text: 状态
+            - combobox "状态" [ref=e83]:
+              - option "启用" [selected]
+              - option "停用"
+          - generic [ref=e84]:
+            - text: 地址
+            - textbox "地址" [ref=e85]:
+              - /placeholder: 可填写仓库地址
+          - button "新增仓库" [ref=e87]
+      - generic [ref=e88]:
+        - generic [ref=e89]:
+          - generic [ref=e90]:
+            - paragraph [ref=e91]: 仓库列表
+            - heading "所有仓库" [level=3] [ref=e92]
+          - button "正在刷新..." [ref=e93]
+        - generic [ref=e94]:
+          - generic [ref=e95]:
+            - text: 搜索仓库名称 / 编码
+            - textbox "搜索仓库名称 / 编码" [ref=e96]:
+              - /placeholder: 输入仓库名称或编码
+          - generic [ref=e97]:
+            - text: 仓库类型
+            - combobox "仓库类型" [ref=e98]:
+              - option "全部类型" [selected]
+              - option "原材料仓"
+              - option "成品仓"
+              - option "半成品仓"
+              - option "FBA 发货暂存仓"
+              - option "内部仓"
+          - generic [ref=e99]:
+            - text: 仓库状态
+            - combobox "仓库状态" [ref=e100]:
+              - option "全部状态" [selected]
+              - option "启用"
+              - option "停用"
+          - button "刷新" [ref=e101]
+        - generic [ref=e102]: 正在读取仓库数据...

@@ -51,15 +51,17 @@
 | `/inventory/products` | 已完成查询第一版 | 成品当前库存页面。读取 `inventory_items`，按成品 SKU 筛选，显示当前成品库存、仓库和查看流水入口。 |
 | `/admin/products` | 已完成管理第一版 | 产品基础资料管理页面。读取 `products` 和 `skus`，支持产品列表、搜索、状态筛选、汇总卡片、新增产品、编辑产品、启用/停用产品、查看产品关联 SKU。 |
 | `/admin/skus` | 已完成管理第一版 | SKU 基础资料管理页面。读取 `skus`、`products`、`inventory_items`、`bom_headers`、`bom_items`，支持 SKU 列表、搜索筛选、汇总卡片、新增 SKU、编辑 SKU、启用/停用 SKU、查看库存入口和查看 BOM 关联。 |
+| `/admin/suppliers` | 已完成管理第一版 | 供应商基础资料管理页面。读取 `suppliers` 和 `purchase_orders`，支持供应商列表、搜索、状态筛选、汇总卡片、新增供应商、编辑供应商、启用/停用供应商、查看关联采购单。 |
+| `/admin/warehouses` | 已完成管理第一版 | 仓库基础资料管理页面。读取 `warehouses`、`inventory_items`、`inventory_transactions` 和 `skus`，支持仓库列表、搜索筛选、汇总卡片、新增仓库、编辑仓库、启用/停用仓库、查看仓库库存和跳转查看流水。 |
+| `/admin/users` | 已完成管理第一版 | 用户管理页面。读取 `profiles` 和 `roles`，支持用户资料列表、搜索筛选、汇总卡片、新增/编辑 profiles、启用/停用用户、分配角色，并只读展示角色列表。当前不创建 Supabase Auth 登录账号。 |
 
 ### 当前还是占位或待完善的页面
 
 | 页面 | 当前状态 | 说明 |
 | --- | --- | --- |
-| `/admin/users` | 待完善 | 当前使用通用预留页面，还没有接入 Supabase Auth 和真实用户管理。 |
 | `/login` | 待完善 | 当前只是登录页面样式，点击后进入后台，还没有真实 Supabase Auth 登录。 |
 
-当前导航里还没有看到 `/admin/suppliers` 和 `/admin/warehouses` 页面文件，后续需要新增或补齐。
+用户管理页面已经新增到导航，管理员可以看到入口。仓库管理页面已经新增到导航，管理员和仓库角色都可以看到入口。
 
 ## 4. 当前已完成的业务流程
 
@@ -441,6 +443,263 @@
 - 可以补充 Amazon SKU、FNSKU 的管理入口；当前第一版先按本次需求维护基础字段。
 - 正式登录后按管理员角色收紧 SKU 写入权限。
 
+### 4.15 供应商管理
+
+已完成第一版。
+
+入口：`/admin/suppliers`
+
+当前逻辑：
+
+- 页面读取真实 `suppliers` 和 `purchase_orders`，不再使用占位页或 mock 数据。
+- 供应商列表显示供应商编码、供应商名称、联系人、联系电话、邮箱、地址、状态、关联采购单数量、创建时间、更新时间、备注和操作。
+- `purchase_orders.supplier_id` 关联 `suppliers.id`，页面通过这个关系统计采购单数量并查看某个供应商的关联采购单。
+- 顶部汇总供应商总数、启用供应商数、停用供应商数和已产生采购单的供应商数量。
+- 支持按供应商名称、供应商编码、联系人搜索。
+- 支持按 `suppliers.status` 筛选，当前状态主要使用 `active` 和 `inactive`。
+- 新增供应商会写入 `suppliers.supplier_code`、`name`、`contact_name`、`phone`、`email`、`address`、`notes` 和 `status`。
+- 新增供应商前会检查 `supplier_code` 是否重复。
+- 供应商编码和供应商名称都是必填，因为当前 schema 中 `supplier_code` 和 `name` 都是非空字段。
+- 编辑供应商支持修改供应商名称、联系人、联系电话、邮箱、地址、备注和状态，不修改供应商编码。
+- 启用/停用供应商通过更新 `suppliers.status` 实现。
+- 查看采购单通过 `purchase_orders.supplier_id = suppliers.id` 查询，显示采购单号、状态、下单日期、预计到货日期、创建时间和备注。
+
+本次修改文件：
+
+- `src/lib/api/suppliers.ts`
+- `src/app/(app)/admin/suppliers/page.tsx`
+- `src/lib/navigation.ts`
+- `src/app/globals.css`
+- `supabase/dev-suppliers-policies.sql`
+- `PROJECT_NOTES.md`
+
+测试方式：
+
+- 运行 `npm run typecheck`。
+- 运行 `npm run build`。
+- 打开 `/admin/suppliers`，确认供应商列表能读取真实数据。
+- 使用搜索框按供应商名称、编码或联系人筛选。
+- 按状态筛选启用/停用供应商。
+- 新增一个供应商，确认写入 `suppliers` 并刷新列表。
+- 编辑供应商名称、联系人、电话、邮箱、地址、备注或状态，确认保存后刷新列表。
+- 点击启用/停用，确认 `suppliers.status` 变化。
+- 点击“查看采购单”，确认能看到该供应商下 `purchase_orders.supplier_id` 关联的采购单。
+
+如果页面读不到或写不进去，优先检查：
+
+- `.env.local` 里的 `NEXT_PUBLIC_SUPABASE_URL` 和 `NEXT_PUBLIC_SUPABASE_ANON_KEY` 是否正确。
+- Supabase 里是否已经执行基础 `dev-policies.sql`。
+- 如果新增、编辑或启用/停用供应商报 RLS 权限问题，请在 Supabase SQL Editor 执行 `supabase/dev-suppliers-policies.sql`。
+- `suppliers` 表里是否存在 `supplier_code`、`name`、`contact_name`、`phone`、`email`、`address`、`status`、`notes` 等真实字段。
+- `purchase_orders.supplier_id` 是否正确关联到 `suppliers.id`。
+- 如果供应商编码重复，页面会阻止新增，请换一个 `supplier_code`。
+
+后续待优化：
+
+- 正式登录后按管理员/采购角色收紧供应商写入权限。
+- 如果采购单页面后续支持 URL 参数，可以从供应商管理页跳转到 `/purchase/orders` 并自动筛选供应商。
+- 如果需要供应商分类、付款条款或账期等字段，需要先确认业务是否真的需要改 schema。
+
+### 4.16 仓库管理
+
+已完成第一版。
+
+入口：`/admin/warehouses`
+
+当前逻辑：
+
+- 页面读取真实 `warehouses`、`inventory_items`、`inventory_transactions` 和 `skus`，不再使用占位页或 mock 数据。
+- 仓库列表显示仓库编码、仓库名称、仓库类型、地址、状态、当前库存 SKU 数量、当前库存总数量、创建时间、更新时间和操作。
+- 当前 `warehouses` 表没有 `notes` 备注字段，所以页面没有新增或保存仓库备注，避免凭空编字段。
+- `inventory_items.warehouse_id` 关联 `warehouses.id`，表示某个仓库里某个 SKU 当前有多少库存。
+- `inventory_transactions.warehouse_id` 关联 `warehouses.id`，表示某次库存变化发生在哪个仓库。
+- 仓库类型中文展示：`material` 为原材料仓，`finished_product` / `finished_good` 为成品仓，`semi_finished` 为半成品仓，`fba` / `fba_staging` 为 FBA 发货暂存仓，`internal` 为内部仓，其他值按原值显示。
+- 顶部汇总仓库总数、原材料仓数量、成品仓数量、FBA 暂存仓数量和有库存的仓库数量。
+- 支持按仓库名称 / 编码搜索。
+- 支持按 `warehouses.warehouse_type` 筛选。
+- 支持按 `warehouses.status` 筛选，当前状态主要使用 `active` 和 `inactive`。
+- 新增仓库会写入 `warehouses.warehouse_code`、`name`、`warehouse_type`、`address` 和 `status`。
+- 新增仓库前会检查 `warehouse_code` 是否重复。
+- 仓库编码和仓库名称都是必填，因为当前 schema 中 `warehouse_code` 和 `name` 都是非空字段。
+- 编辑仓库支持修改仓库名称、仓库类型、地址和状态，不修改仓库编码。
+- 启用/停用仓库通过更新 `warehouses.status` 实现。
+- 点击“查看库存”会读取该仓库下的 `inventory_items` 并关联 `skus`，显示 SKU 编码、SKU 名称、SKU 类型、当前库存数量、单位和最后更新时间。
+- 点击“查看流水”会跳转到 `/inventory/transactions?warehouseId=仓库ID`，库存流水页面已支持读取这个 URL 参数并自动按仓库筛选。
+
+本次修改文件：
+
+- `src/lib/api/warehouses.ts`
+- `src/app/(app)/admin/warehouses/page.tsx`
+- `src/app/(app)/inventory/transactions/page.tsx`
+- `src/lib/navigation.ts`
+- `src/app/globals.css`
+- `supabase/dev-warehouses-policies.sql`
+- `PROJECT_NOTES.md`
+
+测试方式：
+
+- 运行 `npm run typecheck`。
+- 运行 `npm run build`。
+- 打开 `/admin/warehouses`，确认仓库列表能读取真实数据。
+- 使用搜索框按仓库名称或仓库编码筛选。
+- 按仓库类型、状态筛选。
+- 新增一个仓库，确认写入 `warehouses` 并刷新列表。
+- 编辑仓库名称、仓库类型、地址或状态，确认保存后刷新列表。
+- 点击启用/停用，确认 `warehouses.status` 变化。
+- 点击“查看库存”，确认能看到该仓库下 `inventory_items.warehouse_id` 关联的当前库存。
+- 点击“查看流水”，确认跳转到库存流水页面后按该仓库筛选。
+
+如果页面读不到或写不进去，优先检查：
+
+- `.env.local` 里的 `NEXT_PUBLIC_SUPABASE_URL` 和 `NEXT_PUBLIC_SUPABASE_ANON_KEY` 是否正确。
+- Supabase 里是否已经执行基础 `dev-policies.sql`。
+- 如果新增、编辑或启用/停用仓库报 RLS 权限问题，请在 Supabase SQL Editor 执行 `supabase/dev-warehouses-policies.sql`。
+- `warehouses` 表里是否存在 `warehouse_code`、`name`、`warehouse_type`、`address`、`status` 等真实字段。
+- `inventory_items.warehouse_id` 是否正确关联到 `warehouses.id`。
+- `inventory_transactions.warehouse_id` 是否正确关联到 `warehouses.id`。
+- 如果仓库编码重复，页面会阻止新增，请换一个 `warehouse_code`。
+
+后续待优化：
+
+- 正式登录后按管理员/仓库角色收紧仓库写入权限。
+- 如果后续要加仓库负责人、库位、备注等字段，需要先确认业务是否真的需要改 schema。
+- 可以给仓库库存详情增加按 SKU 类型或 SKU 关键词筛选。
+
+### 4.17 用户管理
+
+已完成第一版。
+
+入口：`/admin/users`
+
+当前逻辑：
+
+- 页面读取真实 `profiles` 和 `roles`，不再使用占位页或 mock 数据。
+- `profiles.role_id` 关联 `roles.id`，页面通过这个关系显示角色名称和角色编码。
+- `profiles.id` 关联 Supabase Auth 的 `auth.users.id`，这是 schema 里的真实外键。
+- 用户列表显示用户名称、邮箱、角色、手机号、状态、创建时间、更新时间和操作。
+- 顶部汇总用户总数、管理员数量、运营数量、厂长数量、采购数量和仓库数量。
+- 角色统计按 `roles.code` 计算，兼容当前测试角色里的 `admin`、`operator`、`factory_manager`、`purchaser`、`warehouse`，也兼容旧导航里出现过的 `operations`、`plant_manager`、`procurement`。
+- 支持按用户名称或邮箱搜索。
+- 支持按角色筛选。
+- 支持按 `profiles.status` 筛选，当前页面主要使用 `active` 和 `disabled`。
+- 新增用户资料会写入 `profiles.id`、`full_name`、`email`、`role_id`、`phone` 和 `status`。
+- 当前 schema 没有 `profiles.notes` 字段，所以页面没有备注输入，避免凭空编字段。
+- 邮箱会做简单格式校验，新增和编辑前会检查邮箱是否重复。
+- 因为 `profiles.id` 必须已经存在于 `auth.users.id`，当前新增用户资料时需要填写已存在的 Supabase Auth 用户 ID。
+- 当前页面不调用 Supabase Auth Admin API，不使用 service_role key，也不在前端创建登录账号。
+- 编辑用户资料支持修改用户名称、邮箱、角色、手机号和状态，不修改用户 ID。
+- 分配角色通过编辑 `profiles.role_id` 实现。
+- 启用/停用用户通过更新 `profiles.status` 实现。
+- 角色列表只读展示 `roles.code`、`roles.name`、`roles.description` 和创建时间，当前阶段不新增角色。
+
+本次修改文件：
+
+- `src/lib/api/users.ts`
+- `src/app/(app)/admin/users/page.tsx`
+- `src/app/globals.css`
+- `supabase/dev-users-policies.sql`
+- `PROJECT_NOTES.md`
+
+当前阶段和 Supabase Auth 的关系：
+
+- `profiles` 是业务用户资料表，但它的 `id` 外键关联 `auth.users.id`。
+- 当前页面只维护 profiles 资料和角色分配，不负责邀请用户、创建登录账号、重置密码。
+- 后续接 Supabase Auth 登录时，再单独做账号创建、邀请、密码重置和真实权限。
+- 这样做可以避免把 `service_role` key 放进前端，也避免浏览器直接调用 Supabase Auth Admin API。
+
+测试方式：
+
+- 运行 `npm run typecheck`。
+- 运行 `npm run build`。
+- 打开 `/admin/users`，确认用户列表和角色列表能读取真实数据。
+- 使用搜索框按用户名称或邮箱筛选。
+- 按角色、状态筛选。
+- 如果 Supabase Auth 里已有测试用户，复制这个用户的 Auth 用户 ID，在页面新增 profiles 用户资料，确认写入 `profiles` 并刷新列表。
+- 编辑用户名称、邮箱、角色、手机号或状态，确认保存后刷新列表。
+- 点击“分配角色”，修改角色并保存，确认 `profiles.role_id` 变化。
+- 点击启用/停用，确认 `profiles.status` 变化。
+
+如果页面读不到或写不进去，优先检查：
+
+- `.env.local` 里的 `NEXT_PUBLIC_SUPABASE_URL` 和 `NEXT_PUBLIC_SUPABASE_ANON_KEY` 是否正确。
+- Supabase 里是否已经执行基础 `dev-policies.sql`。
+- 如果读取或写入 profiles、roles 报 RLS 权限问题，请在 Supabase SQL Editor 执行 `supabase/dev-users-policies.sql`。
+- `roles` 表里是否已经有 `admin`、`operator`、`factory_manager`、`purchaser`、`warehouse` 这些测试角色。
+- 新增 profiles 时填写的用户 ID 是否真的存在于 Supabase Auth 的 `auth.users.id`；如果不存在，数据库外键会阻止新增。
+- `profiles.role_id` 是否正确关联到 `roles.id`。
+- 如果邮箱重复，页面会阻止新增或编辑，请换一个邮箱。
+
+后续待优化：
+
+- 接入 Supabase Auth 登录后，补正式的创建账号、邀请用户、重置密码流程。
+- 登录后读取当前用户的 `profiles` 和 `roles`，替换当前 mock 角色切换。
+- 正式环境按管理员角色收紧 profiles 和 roles 的 RLS 策略。
+- 后续如果要给用户加备注、部门、岗位等资料，需要先确认是否真的需要改 schema。
+
+### 4.18 后台整体 UI 和侧边栏
+
+已完成第一版。
+
+本次优化重点：
+
+- 后台整体视觉改成更简洁、圆润、浅灰白的现代内部管理系统风格。
+- 侧边栏改为分组折叠菜单，不再把所有子菜单默认全部展开。
+- 当前页面所在分组会自动展开，当前页面对应菜单项会高亮。
+- 刷新页面后，会根据当前 URL 重新判断应该展开哪个分组。
+- 保持现有业务页面、Supabase 查询和数据库 schema 不变。
+- `/debug/master-data` 调试页保留不删除。
+
+当前菜单分组：
+
+| 一级菜单 | 子菜单 |
+| --- | --- |
+| 首页 | 后台首页 `/dashboard` |
+| FBA 备货 | FBA 备货需求 `/replenishment`、创建 FBA 备货 `/replenishment/new` |
+| 生产管理 | 厂长排产 `/production/planning`、生产任务 `/production/orders`、BOM 管理 `/bom`、物料需求 `/materials/requirements` |
+| 采购管理 | 采购单 `/purchase/orders`、供应商管理 `/admin/suppliers` |
+| 仓库库存 | 入库管理 `/inventory/inbound`、FBA 出库 `/inventory/fba-outbound`、原材料库存 `/inventory/materials`、成品库存 `/inventory/products`、库存流水 `/inventory/transactions` |
+| 基础资料 | 产品管理 `/admin/products`、SKU 管理 `/admin/skus`、仓库管理 `/admin/warehouses` |
+| 系统管理 | 用户管理 `/admin/users` |
+
+侧边栏实现说明：
+
+- 菜单配置集中在 `src/lib/navigation.ts`。
+- 折叠交互在 `src/components/layout/sidebar.tsx`。
+- Sidebar 会读取当前 `pathname`，先找出最精确匹配的菜单链接。
+- 例如访问 `/inventory/products` 时，会匹配到“成品库存”，并自动展开“仓库库存”分组。
+- 点击一级菜单可以展开或收起；首页这类直接链接会直接跳转。
+- 当前仍沿用开发阶段的 mock 角色菜单过滤。
+
+本次修改文件：
+
+- `src/lib/navigation.ts`
+- `src/components/layout/sidebar.tsx`
+- `src/components/layout/header.tsx`
+- `src/app/globals.css`
+- `PROJECT_NOTES.md`
+
+测试方式：
+
+- 运行 `npm run typecheck`。
+- 运行 `npm run build`。
+- 打开 `/dashboard`，确认首页入口高亮。
+- 打开 `/inventory/products`，确认“仓库库存”自动展开，“成品库存”高亮。
+- 点击其他一级菜单，确认可以展开和收起，且不会影响业务页面。
+- 切换模拟角色，确认菜单仍按角色过滤。
+
+如果菜单不展开或高亮不对，优先检查：
+
+- `src/lib/navigation.ts` 里的菜单 `href` 是否和真实页面路由一致。
+- `src/components/layout/sidebar.tsx` 里的当前路径匹配逻辑是否匹配到了更短的父级路径。
+- 当前模拟角色是否有权限看到这个菜单。
+- 页面是否真的在 `src/app/(app)` 下存在。
+
+后续 UI 待优化：
+
+- 后续可以继续逐页细化表格列宽、详情区信息密度和表单校验文案。
+- 后续接入真实登录后，可以把 Header 的 mock 角色切换替换为真实用户入口。
+- 如果移动端使用频率变高，可以再补更完整的小屏侧边栏开关。
+
 ## 5. Supabase 相关文件说明
 
 `supabase` 目录当前文件用途如下：
@@ -457,6 +716,9 @@
 | `dev-bom-policies.sql` | 开发阶段允许 BOM 管理页面读取产品/SKU/BOM，并新增或更新 BOM 主表和 BOM 明细。不开放 delete。 |
 | `dev-products-policies.sql` | 开发阶段允许产品管理页面读取产品和 SKU，并新增、编辑、启用/停用产品。不开放 delete。 |
 | `dev-skus-policies.sql` | 开发阶段允许 SKU 管理页面读取产品、SKU、库存、BOM 关联，并新增、编辑、启用/停用 SKU。不开放 delete。 |
+| `dev-suppliers-policies.sql` | 开发阶段允许供应商管理页面读取供应商和采购单，并新增、编辑、启用/停用供应商。不开放 delete。 |
+| `dev-warehouses-policies.sql` | 开发阶段允许仓库管理页面读取仓库、库存、流水和 SKU，并新增、编辑、启用/停用仓库。不开放 delete。 |
+| `dev-users-policies.sql` | 开发阶段允许用户管理页面读取 roles、profiles，并新增、编辑、启用/停用 profiles。不开放 delete，也不创建 Supabase Auth 账号。 |
 | `dev-purchase-policies.sql` | 开发阶段允许采购页面读取缺料、创建采购单、写采购明细、更新采购单和物料需求状态。 |
 | `dev-inventory-inbound-policies.sql` | 开发阶段允许入库页面写库存流水、更新当前库存、更新采购单/采购明细/物料需求/生产任务。 |
 | `dev-fba-outbound-policies.sql` | 开发阶段允许 FBA 出库页面读取待出库需求、写出库流水、扣减成品库存、标记已发往 FBA。 |
@@ -576,7 +838,7 @@ FBA 出库是单独动作，不能把成品入库自动等同于发往 FBA。
 后续需要接入：
 
 - Supabase Auth 登录。
-- 用户资料 `profiles`。
+- 登录后读取当前用户资料 `profiles` 和角色 `roles`。
 - 角色菜单权限。
 - 生产级 RLS 策略。
 
@@ -656,36 +918,34 @@ FBA 出库是单独动作，不能把成品入库自动等同于发往 FBA。
    - 如需允许修改 `sku_type`，先补业务占用检查。
    - 按需要补 Amazon SKU、FNSKU 的编辑入口。
 
-4. 供应商管理 `/admin/suppliers`
-   - 当前还未看到页面文件。
-   - 后续需要新增供应商列表、新增、编辑、启用/停用。
+4. 仓库管理后续优化 `/admin/warehouses`
+   - 正式登录后按管理员/仓库角色收紧仓库写入权限。
+   - 如果确实需要仓库备注、负责人或库位字段，先确认业务是否需要改 schema。
+   - 给仓库库存详情增加更多筛选。
 
-5. 仓库管理 `/admin/warehouses`
-   - 当前还未看到页面文件。
-   - 后续需要新增仓库列表、新增、编辑、启用/停用。
+5. 用户管理后续优化 `/admin/users`
+   - 当前已完成 profiles / roles 管理第一版。
+   - 后续接入 Supabase Auth 创建账号、邀请用户、重置密码。
+   - 登录后用真实用户资料和角色替换 mock 角色。
+   - 正式环境按管理员权限收紧 profiles / roles RLS。
 
-6. 用户管理 `/admin/users`
-   - 当前只是占位页。
-   - 后续接入 Supabase Auth 和 `profiles`。
-   - 支持用户角色分配、账号启停。
-
-7. Supabase Auth 登录
+6. Supabase Auth 登录
    - 替换当前 mock 登录。
    - 登录后读取当前用户资料和角色。
 
-8. 角色菜单权限
+7. 角色菜单权限
    - 现在只是前端 mock 角色控制菜单。
    - 后续需要结合真实登录和 RLS。
 
-9. 生产领料 / 原材料出库
+8. 生产领料 / 原材料出库
    - 当前 `inventory_transactions` 支持 `material_out` 类型。
    - 但还没有正式页面处理生产领料和扣减原材料库存。
 
-10. 库存调整
+9. 库存调整
    - 当前 `inventory_transactions` 支持 `adjustment` 类型。
    - 但还没有正式库存调整页面。
 
-11. 页面细节优化
+10. 页面细节优化
    - 表单校验。
    - 弹窗交互。
    - 状态文案。
@@ -693,7 +953,7 @@ FBA 出库是单独动作，不能把成品入库自动等同于发往 FBA。
    - 移动端和窄屏适配。
    - 更完整的错误提示。
 
-12. 部署上线
+11. 部署上线
    - 整理环境变量。
    - 收紧 Supabase RLS。
    - 区分开发、测试、生产环境。

@@ -11,7 +11,7 @@ export function Header() {
   return (
     <header className="header">
       <div>
-        <p className="eyebrow">当前阶段：基础结构</p>
+        <p className="eyebrow">内部管理系统</p>
         <h1>FBA 备货生产管理后台</h1>
       </div>
 
@@ -19,6 +19,7 @@ export function Header() {
         <label className="roleSwitch">
           <span>模拟角色</span>
           <select
+            aria-label="切换模拟角色"
             value={user.role}
             onChange={(event) => setRole(event.target.value as UserRole)}
           >

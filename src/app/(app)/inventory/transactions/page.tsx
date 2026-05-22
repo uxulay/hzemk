@@ -185,13 +185,18 @@ export default function InventoryTransactionsPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const initialSkuKeyword = params.get("skuKeyword") ?? "";
+    const initialWarehouseId = params.get("warehouseId") ?? "";
     const initialFilters: InventoryTransactionFilters = {
       transactionType: "all",
-      warehouseId: "",
+      warehouseId: initialWarehouseId,
       skuKeyword: initialSkuKeyword,
       startDate: "",
       endDate: ""
     };
+
+    if (initialWarehouseId) {
+      setWarehouseId(initialWarehouseId);
+    }
 
     if (initialSkuKeyword) {
       setSkuKeyword(initialSkuKeyword);
