@@ -513,6 +513,12 @@ select {
   opacity: 0.65;
 }
 
+.fieldHint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .fullField,
 .formActions {
   grid-column: 1 / -1;
@@ -533,6 +539,19 @@ select {
 }
 
 .successNotice p {
+  margin: 8px 0 0;
+}
+
+.warningNotice {
+  background: #fff7e6;
+  border: 1px solid #f0d49b;
+  border-radius: 8px;
+  color: var(--warning);
+  margin-top: 18px;
+  padding: 18px;
+}
+
+.warningNotice p {
   margin: 8px 0 0;
 }
 
@@ -808,6 +827,17 @@ select {
   width: 140px;
 }
 
+.tableTextarea {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  min-height: 72px;
+  padding: 10px;
+  resize: vertical;
+  width: 220px;
+}
+
 .tabBar {
   border-bottom: 1px solid var(--line);
   display: flex;
@@ -899,6 +929,110 @@ select {
   min-width: 1680px;
 }
 
+.currentInventoryToolbar {
+  grid-template-columns: 220px minmax(260px, 1fr) auto;
+}
+
+.materialInventoryToolbar {
+  grid-template-columns: 220px 220px minmax(260px, 1fr) auto;
+}
+
+.currentInventoryTable {
+  min-width: 1320px;
+}
+
+.bomHeaderForm,
+.bomItemForm {
+  margin-top: 18px;
+}
+
+.productForm {
+  margin-top: 18px;
+}
+
+.skuForm {
+  margin-top: 18px;
+}
+
+.productToolbar {
+  grid-template-columns: minmax(260px, 1fr) 220px auto;
+  margin-top: 18px;
+}
+
+.skuToolbar {
+  grid-template-columns:
+    minmax(240px, 1fr)
+    180px
+    minmax(220px, 1fr)
+    160px
+    auto;
+  margin-top: 18px;
+}
+
+.productTable {
+  min-width: 1380px;
+}
+
+.skuTable {
+  min-width: 1760px;
+}
+
+.productSkuTable {
+  min-width: 900px;
+}
+
+.skuBomTable {
+  min-width: 1120px;
+}
+
+.product-status-active {
+  background: #eef7f1;
+  color: var(--success);
+}
+
+.product-status-inactive {
+  background: #eef3f8;
+  color: #4c5d70;
+}
+
+.sku-status-active {
+  background: #eef7f1;
+  color: var(--success);
+}
+
+.sku-status-inactive {
+  background: #eef3f8;
+  color: #4c5d70;
+}
+
+.sku-type-finished_good {
+  background: #eef6ff;
+  color: var(--primary);
+}
+
+.sku-type-material {
+  background: #fff7e6;
+  color: var(--warning);
+}
+
+.bomTable {
+  min-width: 1420px;
+}
+
+.bomDetailTable {
+  min-width: 1180px;
+}
+
+.bom-status-active {
+  background: #eef7f1;
+  color: var(--success);
+}
+
+.bom-status-inactive {
+  background: #eef3f8;
+  color: #4c5d70;
+}
+
 .quantityCell {
   font-weight: 800;
   white-space: nowrap;
@@ -921,10 +1055,30 @@ select {
   color: var(--primary);
 }
 
+.inventory-status-out_of_stock {
+  background: #fff3f3;
+  color: #8a1f1f;
+}
+
+.inventory-status-low_stock {
+  background: #fff7e6;
+  color: var(--warning);
+}
+
+.inventory-status-normal {
+  background: #eef7f1;
+  color: var(--success);
+}
+
 .rowActions {
   display: flex;
   gap: 8px;
   white-space: nowrap;
+}
+
+.skuRowActions {
+  flex-wrap: wrap;
+  white-space: normal;
 }
 
 .readonlyField {

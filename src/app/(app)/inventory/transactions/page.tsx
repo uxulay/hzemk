@@ -183,7 +183,21 @@ export default function InventoryTransactionsPage() {
   };
 
   useEffect(() => {
-    loadTransactions();
+    const params = new URLSearchParams(window.location.search);
+    const initialSkuKeyword = params.get("skuKeyword") ?? "";
+    const initialFilters: InventoryTransactionFilters = {
+      transactionType: "all",
+      warehouseId: "",
+      skuKeyword: initialSkuKeyword,
+      startDate: "",
+      endDate: ""
+    };
+
+    if (initialSkuKeyword) {
+      setSkuKeyword(initialSkuKeyword);
+    }
+
+    loadTransactions(initialFilters);
   }, []);
 
   const submitFilters = (event: React.FormEvent<HTMLFormElement>) => {

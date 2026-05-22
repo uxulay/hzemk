@@ -80,6 +80,60 @@ export type InventoryTransactionRow = {
   related_order_no: string | null;
 };
 
+export type InventoryStockStatus = "out_of_stock" | "low_stock" | "normal";
+
+export type InventoryStockStatusFilter = InventoryStockStatus | "all";
+
+export type CurrentInventoryFilters = {
+  warehouseId?: string;
+  skuKeyword?: string;
+  stockStatus?: InventoryStockStatusFilter;
+};
+
+export type CurrentInventoryWarehouse = {
+  id: string;
+  warehouse_code: string;
+  name: string;
+  warehouse_type: string;
+  status: string;
+};
+
+export type CurrentInventoryProduct = {
+  id: string;
+  product_code: string;
+  name: string;
+} | null;
+
+export type CurrentInventorySku = {
+  id: string;
+  product_id: string | null;
+  sku_code: string;
+  sku_name: string;
+  sku_type: string;
+  unit: string;
+  product: CurrentInventoryProduct;
+};
+
+export type CurrentInventoryRow = {
+  id: string;
+  warehouse_id: string;
+  sku_id: string;
+  item_type: string;
+  quantity_on_hand: number;
+  reserved_quantity: number;
+  safety_stock_quantity: number | null;
+  unit: string;
+  updated_at: string;
+  warehouse: CurrentInventoryWarehouse | null;
+  sku: CurrentInventorySku | null;
+};
+
+export type MaterialInventoryRow = CurrentInventoryRow & {
+  stock_status: InventoryStockStatus;
+};
+
+export type ProductInventoryRow = CurrentInventoryRow;
+
 export type PurchaseOrderInboundStatus =
   | "ordered"
   | "partially_received"
@@ -302,6 +356,15 @@ type RawInventoryTransactionRow = Omit<
     InventoryTransactionRow["replenishment_request"]
   >;
   operator: MaybeRelation<InventoryTransactionRow["operator"]>;
+};
+
+type RawCurrentInventoryRow = Omit<CurrentInventoryRow, "warehouse" | "sku"> & {
+  warehouse: MaybeRelation<CurrentInventoryWarehouse>;
+  sku: MaybeRelation<
+    Omit<CurrentInventorySku, "product"> & {
+      product: MaybeRelation<NonNullable<CurrentInventoryProduct>>;
+    }
+  >;
 };
 
 type InventoryItem = {
@@ -559,6 +622,169 @@ function normalizeInventoryTransaction(
     related_order_type: relatedOrder.type,
     related_order_no: relatedOrder.orderNo
   };
+}
+
+function getCurrentInventorySelect() {
+  return `
+    id,
+    warehouse_id,
+    sku_id,
+    item_type,
+    quantity_on_hand,
+    reserved_quantity,
+    safety_stock_quantity,
+    unit,
+    updated_at,
+    warehouse:warehouses!inventory_items_warehouse_id_fkey (
+      id,
+      warehouse_code,
+      name,
+      warehouse_type,
+      status
+    ),
+    sku:skus!inventory_items_sku_id_fkey (
+      id,
+      product_id,
+      sku_code,
+      sku_name,
+      sku_type,
+      unit,
+      product:products!skus_product_id_fkey (
+        id,
+        product_code,
+        name
+      )
+    )
+  `;
+}
+
+function normalizeCurrentInventory(row: RawCurrentInventoryRow): CurrentInventoryRow {
+  const sku = singleRelation(row.sku);
+
+  return {
+    ...row,
+    quantity_on_hand: Number(row.quantity_on_hand),
+    reserved_quantity: Number(row.reserved_quantity),
+    safety_stock_quantity:
+      row.safety_stock_quantity === null
+        ? null
+        : Number(row.safety_stock_quantity),
+    warehouse: singleRelation(row.warehouse),
+    sku: sku
+      ? {
+          ...sku,
+          product: singleRelation(sku.product)
+        }
+      : null
+  };
+}
+
+function sortCurrentInventoryRows<T extends CurrentInventoryRow>(rows: T[]) {
+  return [...rows].sort((a, b) => {
+    const skuCompare = (a.sku?.sku_code ?? "").localeCompare(
+      b.sku?.sku_code ?? "",
+      "zh-CN"
+    );
+
+    if (skuCompare !== 0) {
+      return skuCompare;
+    }
+
+    return (a.warehouse?.warehouse_code ?? "").localeCompare(
+      b.warehouse?.warehouse_code ?? "",
+      "zh-CN"
+    );
+  });
+}
+
+function matchesSkuKeyword(row: CurrentInventoryRow, keyword: string) {
+  const normalizedKeyword = keyword.trim().toLowerCase();
+
+  if (!normalizedKeyword) {
+    return true;
+  }
+
+  return [row.sku?.sku_code, row.sku?.sku_name]
+    .filter(Boolean)
+    .some((value) => value?.toLowerCase().includes(normalizedKeyword));
+}
+
+async function getCurrentInventoryRows(
+  skuType: "material" | "finished_good",
+  filters: CurrentInventoryFilters,
+  action: string
+): Promise<CurrentInventoryRow[]> {
+  const supabase = getSupabaseClient();
+  let query = supabase
+    .from("inventory_items")
+    .select(getCurrentInventorySelect())
+    .order("updated_at", { ascending: false });
+
+  if (filters.warehouseId) {
+    query = query.eq("warehouse_id", filters.warehouseId);
+  }
+
+  const { data, error } = await withTimeout(query, action);
+
+  if (error) {
+    throw formatSupabaseError(action, error);
+  }
+
+  const keyword = filters.skuKeyword ?? "";
+
+  return sortCurrentInventoryRows(
+    ((data ?? []) as unknown as RawCurrentInventoryRow[])
+      .map(normalizeCurrentInventory)
+      .filter((row) => row.sku?.sku_type === skuType)
+      .filter((row) => matchesSkuKeyword(row, keyword))
+  );
+}
+
+export function getMaterialInventoryStatus(
+  row: Pick<CurrentInventoryRow, "quantity_on_hand" | "safety_stock_quantity">
+): InventoryStockStatus {
+  const quantity = Number(row.quantity_on_hand);
+
+  if (quantity <= 0) {
+    return "out_of_stock";
+  }
+
+  if (
+    row.safety_stock_quantity !== null &&
+    quantity < Number(row.safety_stock_quantity)
+  ) {
+    return "low_stock";
+  }
+
+  return "normal";
+}
+
+export async function getMaterialInventory(
+  filters: CurrentInventoryFilters = {}
+): Promise<MaterialInventoryRow[]> {
+  const rows = await getCurrentInventoryRows(
+    "material",
+    filters,
+    "读取原材料库存"
+  );
+  const rowsWithStatus = rows.map((row) => ({
+    ...row,
+    stock_status: getMaterialInventoryStatus(row)
+  }));
+
+  if (filters.stockStatus && filters.stockStatus !== "all") {
+    return rowsWithStatus.filter(
+      (row) => row.stock_status === filters.stockStatus
+    );
+  }
+
+  return rowsWithStatus;
+}
+
+export async function getProductInventory(
+  filters: CurrentInventoryFilters = {}
+): Promise<ProductInventoryRow[]> {
+  return getCurrentInventoryRows("finished_good", filters, "读取成品库存");
 }
 
 async function getSkuIdsByKeyword(keyword: string): Promise<string[]> {

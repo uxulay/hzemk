@@ -1,6 +1,5 @@
-import { ModulePage } from "@/components/pages/module-page";
-import { pageCopy } from "@/lib/page-copy";
+import { CurrentInventoryPage } from "../_components/current-inventory-page";
 
 export default function InventoryMaterialsPage() {
-  return <ModulePage page={pageCopy.inventoryMaterials} />;
+  return <CurrentInventoryPage mode="materials" />;
 }
