@@ -110,6 +110,11 @@ export const navigationGroups: NavigationGroup[] = [
         label: "库存流水",
         href: "/inventory/transactions",
         roles: ["warehouse", "plant_manager", "procurement", "admin"]
+      },
+      {
+        label: "库存调整",
+        href: "/inventory/adjustments",
+        roles: ["warehouse", "plant_manager", "procurement", "admin"]
       }
     ]
   },

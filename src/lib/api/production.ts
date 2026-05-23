@@ -1,4 +1,5 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
+import { createInventoryTransaction } from "@/lib/api/inventory";
 
 export type PlanningRequestStatus =
   | "submitted"
@@ -83,8 +84,17 @@ export type ProductionMaterialStatus =
   | "shortage"
   | "purchased"
   | "received"
+  | "issued"
   | "ready"
   | "pending";
+
+export type ProductionMaterialIssueStatus =
+  | "not_generated"
+  | "issued"
+  | "ready"
+  | "shortage"
+  | "warehouse_adjust_needed"
+  | "blocked";
 
 export type ProductionOrderTrackingRow = {
   id: string;
@@ -152,15 +162,94 @@ export type ProductionOrderTrackingRow = {
       name: string;
     } | null;
   }>;
+  material_issue_transactions: Array<{
+    id: string;
+    transaction_no: string;
+    warehouse_id: string;
+    sku_id: string;
+    quantity: number;
+    occurred_at: string;
+    notes: string | null;
+    warehouse: {
+      id: string;
+      warehouse_code: string;
+      name: string;
+    } | null;
+  }>;
   requested_quantity: number;
   overproduction_quantity: number;
   inbound_quantity: number;
   pending_inbound_quantity: number;
   material_status: ProductionMaterialStatus;
+  materials_issued: boolean;
+  material_issue_status: ProductionMaterialIssueStatus;
+  material_issue_can_issue: boolean;
+  material_issue_block_reason: string | null;
+  material_issue_shortage_count: number;
 };
 
 export type ProductionOrderStatusFilter = ProductionOrderStatus | "all";
 export type ProductionMaterialStatusFilter = ProductionMaterialStatus | "all";
+
+export type ProductionMaterialInventoryOption = {
+  id: string;
+  warehouse_id: string;
+  sku_id: string;
+  item_type: string;
+  quantity_on_hand: number;
+  reserved_quantity: number;
+  available_quantity: number;
+  unit: string;
+  warehouse: {
+    id: string;
+    warehouse_code: string;
+    name: string;
+    warehouse_type: string;
+    status: string;
+  } | null;
+};
+
+export type ProductionIssueMaterialLineStatus =
+  | "enough"
+  | "shortage"
+  | "warehouse_adjust_needed";
+
+export type ProductionIssueMaterialLine = {
+  material_requirement_id: string;
+  material_sku_id: string;
+  sku_code: string;
+  sku_name: string;
+  unit: string;
+  required_quantity: number;
+  total_available_quantity: number;
+  shortage_quantity: number;
+  selected_inventory_item_id: string | null;
+  selected_warehouse_id: string | null;
+  selected_warehouse_code: string | null;
+  selected_warehouse_name: string | null;
+  selected_quantity_on_hand: number | null;
+  selected_reserved_quantity: number | null;
+  current_quantity: number;
+  after_issue_quantity: number | null;
+  status: ProductionIssueMaterialLineStatus;
+  status_label: string;
+  reason: string | null;
+};
+
+export type ProductionOrderIssueMaterialsPreview = {
+  production_order_id: string;
+  production_order_no: string;
+  replenishment_request_id: string | null;
+  sku_code: string;
+  sku_name: string;
+  planned_quantity: number;
+  status: ProductionMaterialIssueStatus;
+  materials_issued: boolean;
+  can_issue: boolean;
+  blocking_reason: string | null;
+  shortage_count: number;
+  materials: ProductionIssueMaterialLine[];
+};
 
 type MaybeRelation<T> = T | T[] | null;
 
@@ -186,6 +275,24 @@ type InventoryItem = {
   sku_id: string;
   quantity_on_hand: number;
   reserved_quantity: number;
+};
+
+type MaterialIssueInventoryItem = {
+  id: string;
+  warehouse_id: string;
+  sku_id: string;
+  quantity_on_hand: number;
+  reserved_quantity: number;
+  unit: string;
+};
+
+type RawProductionMaterialInventoryOption = Omit<
+  ProductionMaterialInventoryOption,
+  "warehouse" | "available_quantity"
+> & {
+  warehouse: MaybeRelation<
+    NonNullable<ProductionMaterialInventoryOption["warehouse"]>
+  >;
 };
 
 type InsertedProductionOrder = {
@@ -223,6 +330,12 @@ type RawProductionOrderTrackingRow = Omit<
   | "inbound_quantity"
   | "pending_inbound_quantity"
   | "material_status"
+  | "material_issue_transactions"
+  | "materials_issued"
+  | "material_issue_status"
+  | "material_issue_can_issue"
+  | "material_issue_block_reason"
+  | "material_issue_shortage_count"
 > & {
   replenishment_request: MaybeRelation<
     NonNullable<ProductionOrderTrackingRow["replenishment_request"]>
@@ -346,6 +459,10 @@ function computeProductionOrderMaterialStatus(
     return "received";
   }
 
+  if (statuses.every((status) => status === "issued")) {
+    return "issued";
+  }
+
   if (statuses.every((status) => ["enough", "ready", "reserved"].includes(status))) {
     return "ready";
   }
@@ -370,10 +487,23 @@ function normalizeProductionOrderTrackingRow(
       ...transaction,
       warehouse: singleRelation(transaction.warehouse)
     }));
+  const materialIssueTransactions = (row.inbound_transactions ?? [])
+    .filter((transaction) => transaction.transaction_type === "material_out")
+    .map((transaction) => ({
+      id: transaction.id,
+      transaction_no: transaction.transaction_no,
+      warehouse_id: transaction.warehouse_id,
+      sku_id: transaction.sku_id,
+      quantity: Number(transaction.quantity),
+      occurred_at: transaction.occurred_at,
+      notes: transaction.notes,
+      warehouse: singleRelation(transaction.warehouse)
+    }));
   const requestedQuantity = Number(replenishmentRequest?.requested_quantity ?? 0);
   const plannedQuantity = Number(row.planned_quantity);
   const inboundQuantity = Number(row.completed_quantity);
   const materialStatus = computeProductionOrderMaterialStatus(materialRequirements);
+  const materialsIssued = materialIssueTransactions.length > 0;
 
   return {
     ...row,
@@ -387,6 +517,7 @@ function normalizeProductionOrderTrackingRow(
     assigned_profile: singleRelation(row.assigned_profile),
     material_requirements: materialRequirements,
     inbound_transactions: inboundTransactions,
+    material_issue_transactions: materialIssueTransactions,
     requested_quantity: requestedQuantity,
     overproduction_quantity: roundQuantity(
       Math.max(0, plannedQuantity - requestedQuantity)
@@ -395,7 +526,14 @@ function normalizeProductionOrderTrackingRow(
     pending_inbound_quantity: roundQuantity(
       Math.max(0, plannedQuantity - inboundQuantity)
     ),
-    material_status: materialStatus
+    material_status: materialStatus,
+    materials_issued: materialsIssued,
+    material_issue_status: materialsIssued ? "issued" : "blocked",
+    material_issue_can_issue: false,
+    material_issue_block_reason: materialsIssued
+      ? "该生产任务已确认领料，不能重复扣减库存。"
+      : null,
+    material_issue_shortage_count: 0
   };
 }
 
@@ -489,6 +627,357 @@ function createProductionOrderNo() {
 
 function roundQuantity(value: number) {
   return Math.round((value + Number.EPSILON) * 10000) / 10000;
+}
+
+function normalizeMaterialInventoryOption(
+  row: RawProductionMaterialInventoryOption
+): ProductionMaterialInventoryOption {
+  const quantityOnHand = Number(row.quantity_on_hand);
+  const reservedQuantity = Number(row.reserved_quantity);
+
+  return {
+    ...row,
+    quantity_on_hand: quantityOnHand,
+    reserved_quantity: reservedQuantity,
+    available_quantity: roundQuantity(
+      Math.max(0, quantityOnHand - reservedQuantity)
+    ),
+    warehouse: singleRelation(row.warehouse)
+  };
+}
+
+function sortMaterialInventoryOptions(
+  first: ProductionMaterialInventoryOption,
+  second: ProductionMaterialInventoryOption
+) {
+  const firstActive = first.warehouse?.status === "active" ? 0 : 1;
+  const secondActive = second.warehouse?.status === "active" ? 0 : 1;
+
+  if (firstActive !== secondActive) {
+    return firstActive - secondActive;
+  }
+
+  const firstMaterialWarehouse =
+    first.warehouse?.warehouse_type === "material" ? 0 : 1;
+  const secondMaterialWarehouse =
+    second.warehouse?.warehouse_type === "material" ? 0 : 1;
+
+  if (firstMaterialWarehouse !== secondMaterialWarehouse) {
+    return firstMaterialWarehouse - secondMaterialWarehouse;
+  }
+
+  return (first.warehouse?.warehouse_code ?? "").localeCompare(
+    second.warehouse?.warehouse_code ?? "",
+    "zh-CN"
+  );
+}
+
+async function getAvailableInventoryForMaterials(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  skuIds: string[]
+): Promise<Map<string, ProductionMaterialInventoryOption[]>> {
+  const inventoryBySku = new Map<string, ProductionMaterialInventoryOption[]>();
+
+  if (skuIds.length === 0) {
+    return inventoryBySku;
+  }
+
+  const { data, error } = await withTimeout(
+    supabase
+      .from("inventory_items")
+      .select(
+        `
+          id,
+          warehouse_id,
+          sku_id,
+          item_type,
+          quantity_on_hand,
+          reserved_quantity,
+          unit,
+          warehouse:warehouses!inventory_items_warehouse_id_fkey (
+            id,
+            warehouse_code,
+            name,
+            warehouse_type,
+            status
+          )
+        `
+      )
+      .in("sku_id", skuIds)
+      .order("created_at", { ascending: true }),
+    "读取原材料当前库存"
+  );
+
+  if (error) {
+    throw formatSupabaseError("读取原材料当前库存", error);
+  }
+
+  for (const row of (data ?? []) as unknown as RawProductionMaterialInventoryOption[]) {
+    const option = normalizeMaterialInventoryOption(row);
+    const current = inventoryBySku.get(option.sku_id) ?? [];
+
+    inventoryBySku.set(option.sku_id, [...current, option]);
+  }
+
+  for (const [skuId, options] of inventoryBySku.entries()) {
+    inventoryBySku.set(skuId, [...options].sort(sortMaterialInventoryOptions));
+  }
+
+  return inventoryBySku;
+}
+
+export async function getAvailableInventoryForMaterial(
+  skuId: string
+): Promise<ProductionMaterialInventoryOption[]> {
+  const supabase = getSupabaseClient();
+  const inventoryBySku = await getAvailableInventoryForMaterials(supabase, [
+    skuId
+  ]);
+
+  return inventoryBySku.get(skuId) ?? [];
+}
+
+function buildIssueMaterialLine(
+  requirement: ProductionOrderTrackingRow["material_requirements"][number],
+  inventoryOptions: ProductionMaterialInventoryOption[]
+): ProductionIssueMaterialLine {
+  const requiredQuantity = roundQuantity(Number(requirement.required_quantity));
+  const sortedOptions = [...inventoryOptions].sort(sortMaterialInventoryOptions);
+  const selectedOption =
+    sortedOptions.find(
+      (option) => option.available_quantity >= requiredQuantity
+    ) ?? null;
+  const totalAvailableQuantity = roundQuantity(
+    sortedOptions.reduce(
+      (sum, option) => sum + Number(option.available_quantity),
+      0
+    )
+  );
+  const bestOption =
+    selectedOption ??
+    [...sortedOptions].sort(
+      (first, second) => second.available_quantity - first.available_quantity
+    )[0] ??
+    null;
+
+  if (selectedOption) {
+    return {
+      material_requirement_id: requirement.id,
+      material_sku_id: requirement.material_sku_id,
+      sku_code: requirement.material_sku?.sku_code ?? "-",
+      sku_name: requirement.material_sku?.sku_name ?? "-",
+      unit: requirement.unit,
+      required_quantity: requiredQuantity,
+      total_available_quantity: totalAvailableQuantity,
+      shortage_quantity: 0,
+      selected_inventory_item_id: selectedOption.id,
+      selected_warehouse_id: selectedOption.warehouse_id,
+      selected_warehouse_code: selectedOption.warehouse?.warehouse_code ?? null,
+      selected_warehouse_name: selectedOption.warehouse?.name ?? null,
+      selected_quantity_on_hand: selectedOption.quantity_on_hand,
+      selected_reserved_quantity: selectedOption.reserved_quantity,
+      current_quantity: selectedOption.quantity_on_hand,
+      after_issue_quantity: roundQuantity(
+        selectedOption.quantity_on_hand - requiredQuantity
+      ),
+      status: "enough",
+      status_label: "足够",
+      reason: null
+    };
+  }
+
+  if (totalAvailableQuantity >= requiredQuantity) {
+    return {
+      material_requirement_id: requirement.id,
+      material_sku_id: requirement.material_sku_id,
+      sku_code: requirement.material_sku?.sku_code ?? "-",
+      sku_name: requirement.material_sku?.sku_name ?? "-",
+      unit: requirement.unit,
+      required_quantity: requiredQuantity,
+      total_available_quantity: totalAvailableQuantity,
+      shortage_quantity: 0,
+      selected_inventory_item_id: null,
+      selected_warehouse_id: bestOption?.warehouse_id ?? null,
+      selected_warehouse_code: bestOption?.warehouse?.warehouse_code ?? null,
+      selected_warehouse_name: bestOption?.warehouse?.name ?? null,
+      selected_quantity_on_hand: bestOption?.quantity_on_hand ?? null,
+      selected_reserved_quantity: bestOption?.reserved_quantity ?? null,
+      current_quantity: totalAvailableQuantity,
+      after_issue_quantity: null,
+      status: "warehouse_adjust_needed",
+      status_label: "单仓不足",
+      reason: "该原材料所有仓库合计够用，但没有一个仓库单独够扣，请先手动调整仓库库存。"
+    };
+  }
+
+  return {
+    material_requirement_id: requirement.id,
+    material_sku_id: requirement.material_sku_id,
+    sku_code: requirement.material_sku?.sku_code ?? "-",
+    sku_name: requirement.material_sku?.sku_name ?? "-",
+    unit: requirement.unit,
+    required_quantity: requiredQuantity,
+    total_available_quantity: totalAvailableQuantity,
+    shortage_quantity: roundQuantity(requiredQuantity - totalAvailableQuantity),
+    selected_inventory_item_id: null,
+    selected_warehouse_id: bestOption?.warehouse_id ?? null,
+    selected_warehouse_code: bestOption?.warehouse?.warehouse_code ?? null,
+    selected_warehouse_name: bestOption?.warehouse?.name ?? null,
+    selected_quantity_on_hand: bestOption?.quantity_on_hand ?? null,
+    selected_reserved_quantity: bestOption?.reserved_quantity ?? null,
+    current_quantity: totalAvailableQuantity,
+    after_issue_quantity: null,
+    status: "shortage",
+    status_label: "不足",
+    reason: "当前可用库存不足，不能确认领料。"
+  };
+}
+
+function buildIssuePreviewForOrder(
+  order: ProductionOrderTrackingRow,
+  inventoryBySku: Map<string, ProductionMaterialInventoryOption[]>
+): ProductionOrderIssueMaterialsPreview {
+  if (order.materials_issued) {
+    return {
+      production_order_id: order.id,
+      production_order_no: order.production_order_no,
+      replenishment_request_id: order.replenishment_request_id,
+      sku_code: order.sku?.sku_code ?? "-",
+      sku_name: order.sku?.sku_name ?? "-",
+      planned_quantity: Number(order.planned_quantity),
+      status: "issued",
+      materials_issued: true,
+      can_issue: false,
+      blocking_reason: "该生产任务已确认领料，不能重复扣减库存。",
+      shortage_count: 0,
+      materials: []
+    };
+  }
+
+  if (order.status === "cancelled") {
+    return {
+      production_order_id: order.id,
+      production_order_no: order.production_order_no,
+      replenishment_request_id: order.replenishment_request_id,
+      sku_code: order.sku?.sku_code ?? "-",
+      sku_name: order.sku?.sku_name ?? "-",
+      planned_quantity: Number(order.planned_quantity),
+      status: "blocked",
+      materials_issued: false,
+      can_issue: false,
+      blocking_reason: "该生产任务已取消，不能确认领料。",
+      shortage_count: 0,
+      materials: []
+    };
+  }
+
+  if (order.material_requirements.length === 0) {
+    return {
+      production_order_id: order.id,
+      production_order_no: order.production_order_no,
+      replenishment_request_id: order.replenishment_request_id,
+      sku_code: order.sku?.sku_code ?? "-",
+      sku_name: order.sku?.sku_name ?? "-",
+      planned_quantity: Number(order.planned_quantity),
+      status: "not_generated",
+      materials_issued: false,
+      can_issue: false,
+      blocking_reason: "该生产任务还没有生成物料需求。",
+      shortage_count: 0,
+      materials: []
+    };
+  }
+
+  const materials = order.material_requirements.map((requirement) =>
+    buildIssueMaterialLine(
+      requirement,
+      inventoryBySku.get(requirement.material_sku_id) ?? []
+    )
+  );
+  const shortageCount = materials.filter(
+    (material) => material.status !== "enough"
+  ).length;
+  const hasShortage = materials.some((material) => material.status === "shortage");
+  const hasWarehouseAdjustNeeded = materials.some(
+    (material) => material.status === "warehouse_adjust_needed"
+  );
+
+  if (hasShortage) {
+    return {
+      production_order_id: order.id,
+      production_order_no: order.production_order_no,
+      replenishment_request_id: order.replenishment_request_id,
+      sku_code: order.sku?.sku_code ?? "-",
+      sku_name: order.sku?.sku_name ?? "-",
+      planned_quantity: Number(order.planned_quantity),
+      status: "shortage",
+      materials_issued: false,
+      can_issue: false,
+      blocking_reason: "原材料库存不足，请先采购入库或调整库存后再领料。",
+      shortage_count: shortageCount,
+      materials
+    };
+  }
+
+  if (hasWarehouseAdjustNeeded) {
+    return {
+      production_order_id: order.id,
+      production_order_no: order.production_order_no,
+      replenishment_request_id: order.replenishment_request_id,
+      sku_code: order.sku?.sku_code ?? "-",
+      sku_name: order.sku?.sku_name ?? "-",
+      planned_quantity: Number(order.planned_quantity),
+      status: "warehouse_adjust_needed",
+      materials_issued: false,
+      can_issue: false,
+      blocking_reason: "有原材料合计库存够，但单个仓库不够扣。第一版不跨仓扣料，请先手动调整仓库库存。",
+      shortage_count: shortageCount,
+      materials
+    };
+  }
+
+  return {
+    production_order_id: order.id,
+    production_order_no: order.production_order_no,
+    replenishment_request_id: order.replenishment_request_id,
+    sku_code: order.sku?.sku_code ?? "-",
+    sku_name: order.sku?.sku_name ?? "-",
+    planned_quantity: Number(order.planned_quantity),
+    status: "ready",
+    materials_issued: false,
+    can_issue: true,
+    blocking_reason: null,
+    shortage_count: 0,
+    materials
+  };
+}
+
+async function hydrateProductionOrderIssueStatuses(
+  orders: ProductionOrderTrackingRow[]
+): Promise<ProductionOrderTrackingRow[]> {
+  const skuIds = [
+    ...new Set(
+      orders.flatMap((order) =>
+        order.materials_issued
+          ? []
+          : order.material_requirements.map((requirement) => requirement.material_sku_id)
+      )
+    )
+  ];
+  const supabase = getSupabaseClient();
+  const inventoryBySku = await getAvailableInventoryForMaterials(supabase, skuIds);
+
+  return orders.map((order) => {
+    const preview = buildIssuePreviewForOrder(order, inventoryBySku);
+
+    return {
+      ...order,
+      material_issue_status: preview.status,
+      material_issue_can_issue: preview.can_issue,
+      material_issue_block_reason: preview.blocking_reason,
+      material_issue_shortage_count: preview.shortage_count
+    };
+  });
 }
 
 async function getActiveBomHeader(
@@ -756,9 +1245,11 @@ export async function getProductionOrders(): Promise<ProductionOrderTrackingRow[
     throw formatSupabaseError("读取生产任务列表", error);
   }
 
-  return ((data ?? []) as unknown as RawProductionOrderTrackingRow[]).map(
+  const rows = ((data ?? []) as unknown as RawProductionOrderTrackingRow[]).map(
     normalizeProductionOrderTrackingRow
   );
+
+  return hydrateProductionOrderIssueStatuses(rows);
 }
 
 export async function getProductionOrderDetail(
@@ -778,9 +1269,12 @@ export async function getProductionOrderDetail(
     throw formatSupabaseError("读取生产任务详情", error);
   }
 
-  return normalizeProductionOrderTrackingRow(
+  const row = normalizeProductionOrderTrackingRow(
     data as unknown as RawProductionOrderTrackingRow
   );
+  const [hydratedRow] = await hydrateProductionOrderIssueStatuses([row]);
+
+  return hydratedRow;
 }
 
 export async function getProductionOrderInboundQuantity(
@@ -835,6 +1329,216 @@ export async function getProductionOrderMaterialStatus(
       material_sku: null
     }))
   );
+}
+
+export async function hasProductionOrderIssuedMaterials(
+  productionOrderId: string
+): Promise<boolean> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase
+      .from("inventory_transactions")
+      .select("id")
+      .eq("production_order_id", productionOrderId)
+      .eq("transaction_type", "material_out")
+      .limit(1),
+    "检查生产任务是否已领料"
+  );
+
+  if (error) {
+    throw formatSupabaseError("检查生产任务是否已领料", error);
+  }
+
+  return (data ?? []).length > 0;
+}
+
+export async function getProductionOrderIssueMaterialsPreview(
+  productionOrderId: string
+): Promise<ProductionOrderIssueMaterialsPreview> {
+  const supabase = getSupabaseClient();
+  const order = await getProductionOrderDetail(productionOrderId);
+  const materialSkuIds = [
+    ...new Set(
+      order.material_requirements.map(
+        (requirement) => requirement.material_sku_id
+      )
+    )
+  ];
+  const inventoryBySku = await getAvailableInventoryForMaterials(
+    supabase,
+    materialSkuIds
+  );
+
+  return buildIssuePreviewForOrder(order, inventoryBySku);
+}
+
+async function getMaterialInventoryItemForIssue(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  inventoryItemId: string,
+  materialSkuId: string
+): Promise<MaterialIssueInventoryItem> {
+  const { data, error } = await withTimeout(
+    supabase
+      .from("inventory_items")
+      .select("id, warehouse_id, sku_id, quantity_on_hand, reserved_quantity, unit")
+      .eq("id", inventoryItemId)
+      .eq("sku_id", materialSkuId)
+      .single(),
+    "重新读取原材料库存"
+  );
+
+  if (error) {
+    throw formatSupabaseError("重新读取原材料库存", error);
+  }
+
+  return data as MaterialIssueInventoryItem;
+}
+
+async function deductMaterialInventory(input: {
+  inventoryItem: MaterialIssueInventoryItem;
+  quantity: number;
+  materialLabel: string;
+}) {
+  const supabase = getSupabaseClient();
+  const availableQuantity = roundQuantity(
+    Number(input.inventoryItem.quantity_on_hand) -
+      Number(input.inventoryItem.reserved_quantity)
+  );
+
+  if (availableQuantity < input.quantity) {
+    throw new Error(
+      `${input.materialLabel} 库存不足：需要 ${input.quantity}，当前可用 ${availableQuantity}，缺 ${roundQuantity(
+        input.quantity - availableQuantity
+      )}。`
+    );
+  }
+
+  const nextQuantity = roundQuantity(
+    Number(input.inventoryItem.quantity_on_hand) - input.quantity
+  );
+  const { error } = await withTimeout(
+    supabase
+      .from("inventory_items")
+      .update({ quantity_on_hand: nextQuantity })
+      .eq("id", input.inventoryItem.id),
+    "扣减原材料库存"
+  );
+
+  if (error) {
+    throw formatSupabaseError("扣减原材料库存", error);
+  }
+}
+
+export async function createMaterialOutTransaction(input: {
+  warehouseId: string;
+  skuId: string;
+  quantity: number;
+  productionOrderId: string;
+  replenishmentRequestId?: string | null;
+  notes?: string | null;
+}) {
+  await createInventoryTransaction({
+    warehouseId: input.warehouseId,
+    skuId: input.skuId,
+    transactionType: "material_out",
+    quantity: input.quantity,
+    productionOrderId: input.productionOrderId,
+    replenishmentRequestId: input.replenishmentRequestId ?? null,
+    notes: input.notes ?? "生产任务自动领料"
+  });
+}
+
+async function markMaterialRequirementsIssued(productionOrderId: string) {
+  const supabase = getSupabaseClient();
+  const { error } = await withTimeout(
+    supabase
+      .from("material_requirements")
+      .update({ status: "issued" })
+      .eq("production_order_id", productionOrderId),
+    "更新物料需求为已领料"
+  );
+
+  if (error) {
+    throw formatSupabaseError("更新物料需求为已领料", error);
+  }
+}
+
+export async function issueMaterialsForProductionOrder(
+  productionOrderId: string
+): Promise<ProductionOrderIssueMaterialsPreview> {
+  const preview = await getProductionOrderIssueMaterialsPreview(productionOrderId);
+
+  if (preview.materials_issued) {
+    throw new Error("该生产任务已确认领料，不能重复扣减库存。");
+  }
+
+  if (!preview.can_issue) {
+    throw new Error(preview.blocking_reason ?? "当前生产任务不能确认领料。");
+  }
+
+  const alreadyIssued = await hasProductionOrderIssuedMaterials(productionOrderId);
+
+  if (alreadyIssued) {
+    throw new Error("该生产任务已确认领料，不能重复扣减库存。");
+  }
+
+  const supabase = getSupabaseClient();
+
+  for (const material of preview.materials) {
+    if (!material.selected_inventory_item_id || !material.selected_warehouse_id) {
+      throw new Error(
+        `${material.sku_code} 没有可扣减的单仓库存，不能确认领料。`
+      );
+    }
+
+    const inventoryItem = await getMaterialInventoryItemForIssue(
+      supabase,
+      material.selected_inventory_item_id,
+      material.material_sku_id
+    );
+    const materialLabel = `${material.sku_code} / ${material.sku_name}`;
+
+    await deductMaterialInventory({
+      inventoryItem,
+      quantity: material.required_quantity,
+      materialLabel
+    });
+
+    try {
+      await createMaterialOutTransaction({
+        warehouseId: inventoryItem.warehouse_id,
+        skuId: material.material_sku_id,
+        quantity: material.required_quantity,
+        productionOrderId: productionOrderId,
+        replenishmentRequestId: preview.replenishment_request_id,
+        notes: [
+          "生产任务自动领料",
+          `生产任务：${preview.production_order_no}`,
+          `原材料：${materialLabel}`,
+          `应领数量：${material.required_quantity}${material.unit}`
+        ].join("\n")
+      });
+    } catch (error) {
+      await withTimeout(
+        supabase
+          .from("inventory_items")
+          .update({ quantity_on_hand: inventoryItem.quantity_on_hand })
+          .eq("id", inventoryItem.id),
+        "恢复原材料库存"
+      );
+
+      throw new Error(
+        `写入 ${materialLabel} 的领料流水失败，库存已尝试恢复：${getErrorMessage(
+          error
+        )}`
+      );
+    }
+  }
+
+  await markMaterialRequirementsIssued(productionOrderId);
+  await updateProductionOrderStatus(productionOrderId, "in_progress");
+
+  return getProductionOrderIssueMaterialsPreview(productionOrderId);
 }
 
 export async function updateProductionOrderStatus(

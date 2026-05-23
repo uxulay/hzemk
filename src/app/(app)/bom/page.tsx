@@ -1,6 +1,18 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { BulkActionBar } from "@/components/BulkActionBar";
+import { BulkImportDialog } from "@/components/BulkImportDialog";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import {
+  bulkImportBomRows,
+  deactivateBomHeadersByIds,
+  deleteBomHeadersByIds,
+  deleteBomItemsByIds,
+  validateBomImportRows,
+  type BomImportInput
+} from "@/lib/api/bulk-management";
+import type { BulkImportValidationRow } from "@/lib/bulk-types";
 import {
   addBomItem,
   createBomHeader,
@@ -16,6 +28,7 @@ import {
   type BomSkuOption,
   type BomStatus
 } from "@/lib/api/bom";
+import { downloadCsvTemplate, type CsvTemplateField } from "@/lib/utils/csv";
 
 const bomStatusLabels: Record<BomStatus, string> = {
   active: "启用",
@@ -56,6 +69,48 @@ const initialItemForm: BomItemFormState = {
   lossRate: "0",
   notes: ""
 };
+
+const bomImportFields: CsvTemplateField[] = [
+  {
+    key: "finished_sku_code",
+    label: "成品 SKU 编码",
+    required: true,
+    example: "FINISHED-001"
+  },
+  {
+    key: "bom_version",
+    label: "BOM 版本",
+    required: true,
+    example: "v1"
+  },
+  {
+    key: "material_sku_code",
+    label: "原材料 SKU 编码",
+    required: true,
+    example: "MAT-001"
+  },
+  {
+    key: "quantity_per_unit",
+    label: "每生产 1 个成品需要数量",
+    required: true,
+    example: "2"
+  },
+  {
+    key: "loss_rate",
+    label: "损耗率",
+    example: "0.03"
+  },
+  {
+    key: "remark",
+    label: "备注",
+    example: "用量说明"
+  },
+  {
+    key: "status",
+    label: "状态",
+    example: "active"
+  }
+];
 
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) {
@@ -105,6 +160,39 @@ function getItemUnit(item: BomItemRow) {
   return item.component_sku?.unit ?? item.unit;
 }
 
+function renderBomImportSummary(
+  rows: BulkImportValidationRow<BomImportInput>[]
+) {
+  const validRows = rows.filter((row) => row.errors.length === 0 && row.data);
+  const groups = new Map<string, BomImportInput[]>();
+
+  validRows.forEach((row) => {
+    if (!row.data) {
+      return;
+    }
+
+    const groupRows = groups.get(row.data.groupKey) ?? [];
+
+    groupRows.push(row.data);
+    groups.set(row.data.groupKey, groupRows);
+  });
+
+  const newHeaderCount = [...groups.values()].filter((groupRows) =>
+    groupRows.some((row) => row.willCreateHeader)
+  ).length;
+  const existingHeaderCount = groups.size - newHeaderCount;
+
+  return (
+    <div className="debugNotice">
+      <strong>BOM 分组预览</strong>
+      <p>
+        会处理 {groups.size} 个 BOM 主表，其中新建 {newHeaderCount} 个，写入已有{" "}
+        {existingHeaderCount} 个；会导入 {validRows.length} 条 BOM 明细。
+      </p>
+    </div>
+  );
+}
+
 export default function BomPage() {
   const [boms, setBoms] = useState<BomListRow[]>([]);
   const [bomDetail, setBomDetail] = useState<BomDetail | null>(null);
@@ -116,12 +204,18 @@ export default function BomPage() {
   const [itemForm, setItemForm] = useState<BomItemFormState>(initialItemForm);
   const [editingItem, setEditingItem] = useState<EditingBomItem | null>(null);
   const [showItemForm, setShowItemForm] = useState(false);
+  const [selectedBomIds, setSelectedBomIds] = useState<string[]>([]);
+  const [importOpen, setImportOpen] = useState(false);
+  const [bomToDelete, setBomToDelete] = useState<BomListRow | null>(null);
+  const [bomItemToDelete, setBomItemToDelete] = useState<BomItemRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [submittingHeader, setSubmittingHeader] = useState(false);
   const [submittingItem, setSubmittingItem] = useState(false);
   const [statusUpdatingId, setStatusUpdatingId] = useState("");
   const [updatingItemId, setUpdatingItemId] = useState("");
+  const [deletingBomId, setDeletingBomId] = useState("");
+  const [deletingBomItemId, setDeletingBomItemId] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
@@ -151,6 +245,13 @@ export default function BomPage() {
     );
   }, [bomDetail, itemForm.componentSkuId]);
 
+  const selectedBoms = useMemo(
+    () => boms.filter((bom) => selectedBomIds.includes(bom.id)),
+    [boms, selectedBomIds]
+  );
+  const allBomsSelected =
+    boms.length > 0 && boms.every((bom) => selectedBomIds.includes(bom.id));
+
   const loadBomDetail = async (bomHeaderId: string) => {
     try {
       setDetailLoading(true);
@@ -179,6 +280,9 @@ export default function BomPage() {
       setBoms(bomData);
       setFinishedGoodSkus(finishedGoodData);
       setMaterialSkus(materialData);
+      setSelectedBomIds((current) =>
+        current.filter((bomId) => bomData.some((bom) => bom.id === bomId))
+      );
 
       if (selectedBomId && !bomData.some((bom) => bom.id === selectedBomId)) {
         setSelectedBomId("");
@@ -189,6 +293,7 @@ export default function BomPage() {
       setBoms([]);
       setFinishedGoodSkus([]);
       setMaterialSkus([]);
+      setSelectedBomIds([]);
       setBomDetail(null);
     } finally {
       setLoading(false);
@@ -288,6 +393,104 @@ export default function BomPage() {
       setErrorMessage(getErrorMessage(error));
     } finally {
       setStatusUpdatingId("");
+    }
+  };
+
+  const toggleBomSelection = (bomId: string) => {
+    setSelectedBomIds((current) =>
+      current.includes(bomId)
+        ? current.filter((id) => id !== bomId)
+        : [...current, bomId]
+    );
+  };
+
+  const toggleAllBoms = () => {
+    if (allBomsSelected) {
+      setSelectedBomIds([]);
+      return;
+    }
+
+    setSelectedBomIds(boms.map((bom) => bom.id));
+  };
+
+  const importBomRows = async (rows: Array<{ data?: BomImportInput }>) => {
+    const result = await bulkImportBomRows(
+      rows
+        .map((row) => row.data)
+        .filter((row): row is BomImportInput => Boolean(row))
+    );
+
+    await refreshAll();
+    setSuccessMessage(
+      `BOM 批量导入完成：成功 ${result.successCount} 条明细，失败 ${result.failedCount} 条。`
+    );
+
+    return result;
+  };
+
+  const batchDeactivateBoms = async (items: BomListRow[]) => {
+    const results = await deactivateBomHeadersByIds(items.map((item) => item.id));
+    await refreshAll();
+    return results;
+  };
+
+  const batchDeleteBoms = async (items: BomListRow[]) => {
+    const results = await deleteBomHeadersByIds(items.map((item) => item.id));
+    await refreshAll();
+    return results;
+  };
+
+  const confirmDeleteBom = async () => {
+    if (!bomToDelete) {
+      return;
+    }
+
+    try {
+      setDeletingBomId(bomToDelete.id);
+      setErrorMessage("");
+      setSuccessMessage("");
+
+      const [result] = await deleteBomHeadersByIds([bomToDelete.id]);
+
+      if (result?.success) {
+        setSuccessMessage(`BOM ${bomToDelete.bom_code} 已删除。`);
+      } else {
+        setErrorMessage(result?.message ?? "BOM 删除失败，请刷新后再试。");
+      }
+
+      setBomToDelete(null);
+      await refreshAll();
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setDeletingBomId("");
+    }
+  };
+
+  const confirmDeleteBomItem = async () => {
+    if (!bomItemToDelete) {
+      return;
+    }
+
+    try {
+      setDeletingBomItemId(bomItemToDelete.id);
+      setErrorMessage("");
+      setSuccessMessage("");
+
+      const [result] = await deleteBomItemsByIds([bomItemToDelete.id]);
+
+      if (result?.success) {
+        setSuccessMessage("BOM 明细已删除。");
+      } else {
+        setErrorMessage(result?.message ?? "BOM 明细删除失败，请刷新后再试。");
+      }
+
+      setBomItemToDelete(null);
+      await refreshAll();
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setDeletingBomItemId("");
     }
   };
 
@@ -462,10 +665,32 @@ export default function BomPage() {
             <p className="eyebrow">BOM 列表</p>
             <h3>所有 BOM</h3>
           </div>
-          <button className="secondaryButton" type="button" onClick={refreshAll}>
-            {loading ? "正在刷新..." : "刷新"}
-          </button>
+          <div className="rowActions">
+            <button
+              type="button"
+              onClick={() =>
+                downloadCsvTemplate("bom-import-template.csv", bomImportFields)
+              }
+            >
+              下载模板
+            </button>
+            <button type="button" onClick={() => setImportOpen(true)}>
+              批量导入
+            </button>
+            <button type="button" onClick={refreshAll}>
+              {loading ? "正在刷新..." : "刷新"}
+            </button>
+          </div>
         </div>
+
+        <BulkActionBar
+          selectedItems={selectedBoms}
+          getItemLabel={(bom) => `${bom.bom_code} / ${bom.version}`}
+          entityName="BOM"
+          onClearSelection={() => setSelectedBomIds([])}
+          onDeactivateSelected={batchDeactivateBoms}
+          onDeleteSelected={batchDeleteBoms}
+        />
 
         {loading ? <div className="debugNotice">正在读取 BOM 数据...</div> : null}
 
@@ -478,6 +703,15 @@ export default function BomPage() {
             <table className="dataTable bomTable">
               <thead>
                 <tr>
+                  <th className="selectColumn">
+                    <input
+                      aria-label="全选 BOM"
+                      className="tableCheckbox"
+                      type="checkbox"
+                      checked={allBomsSelected}
+                      onChange={toggleAllBoms}
+                    />
+                  </th>
                   <th>BOM 编号</th>
                   <th>成品 SKU 编码</th>
                   <th>成品 SKU 名称</th>
@@ -495,6 +729,15 @@ export default function BomPage() {
 
                   return (
                     <tr key={bom.id}>
+                      <td>
+                        <input
+                          aria-label={`选择 BOM ${bom.bom_code}`}
+                          className="tableCheckbox"
+                          type="checkbox"
+                          checked={selectedBomIds.includes(bom.id)}
+                          onChange={() => toggleBomSelection(bom.id)}
+                        />
+                      </td>
                       <td>{bom.bom_code}</td>
                       <td>{bom.product_sku?.sku_code ?? "-"}</td>
                       <td>{bom.product_sku?.sku_name ?? "-"}</td>
@@ -536,6 +779,14 @@ export default function BomPage() {
                           </button>
                           <button type="button" disabled>
                             编辑（预留）
+                          </button>
+                          <button
+                            className="dangerButton"
+                            type="button"
+                            onClick={() => setBomToDelete(bom)}
+                            disabled={deletingBomId === bom.id}
+                          >
+                            删除
                           </button>
                         </div>
                       </td>
@@ -812,12 +1063,22 @@ export default function BomPage() {
                                 </button>
                               </>
                             ) : (
-                              <button
-                                type="button"
-                                onClick={() => startEditItem(item)}
-                              >
-                                编辑用量/损耗/备注
-                              </button>
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => startEditItem(item)}
+                                >
+                                  编辑用量/损耗/备注
+                                </button>
+                                <button
+                                  className="dangerButton"
+                                  type="button"
+                                  onClick={() => setBomItemToDelete(item)}
+                                  disabled={deletingBomItemId === item.id}
+                                >
+                                  删除明细
+                                </button>
+                              </>
                             )}
                           </div>
                         </td>
@@ -830,6 +1091,58 @@ export default function BomPage() {
           )}
         </section>
       ) : null}
+
+      <BulkImportDialog<BomImportInput>
+        open={importOpen}
+        title="BOM 批量导入"
+        description="请按模板填写成品 SKU、BOM 版本、原材料 SKU、单位用量、损耗率、备注和状态。系统会按成品 SKU + BOM 版本分组预览。"
+        templateFileName="bom-import-template.csv"
+        fields={bomImportFields}
+        validateRows={validateBomImportRows}
+        onImport={importBomRows}
+        onClose={() => setImportOpen(false)}
+        renderPreviewSummary={renderBomImportSummary}
+      />
+
+      <ConfirmDialog
+        open={Boolean(bomToDelete)}
+        title="确认删除 BOM"
+        description={
+          <p>
+            删除 BOM 主表会同时删除它下面的 BOM 明细。系统会先检查是否已有生产任务或物料需求使用过该 BOM；已使用过的 BOM 不能物理删除，只能停用。
+          </p>
+        }
+        confirmLabel="确认删除"
+        danger
+        loading={Boolean(deletingBomId)}
+        items={bomToDelete ? [`${bomToDelete.bom_code} / ${bomToDelete.version}`] : []}
+        onClose={() => setBomToDelete(null)}
+        onConfirm={confirmDeleteBom}
+      />
+
+      <ConfirmDialog
+        open={Boolean(bomItemToDelete)}
+        title="确认删除 BOM 明细"
+        description={
+          <p>
+            删除明细会改变这个 BOM 的原材料清单。系统会先检查该 BOM 是否已被生产任务使用；已使用过的 BOM 不允许删除明细。
+          </p>
+        }
+        confirmLabel="确认删除明细"
+        danger
+        loading={Boolean(deletingBomItemId)}
+        items={
+          bomItemToDelete
+            ? [
+                `${bomItemToDelete.component_sku?.sku_code ?? "-"} / ${
+                  bomItemToDelete.component_sku?.sku_name ?? "-"
+                }`
+              ]
+            : []
+        }
+        onClose={() => setBomItemToDelete(null)}
+        onConfirm={confirmDeleteBomItem}
+      />
     </main>
   );
 }

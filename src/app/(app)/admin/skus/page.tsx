@@ -2,6 +2,16 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { BulkActionBar } from "@/components/BulkActionBar";
+import { BulkImportDialog } from "@/components/BulkImportDialog";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import {
+  bulkImportSkus,
+  deactivateSkusByIds,
+  deleteSkusByIds,
+  validateSkuImportRows,
+  type SkuImportInput
+} from "@/lib/api/bulk-management";
 import {
   createSku,
   getProductsForSkuForm,
@@ -15,6 +25,7 @@ import {
   type SkuProductOption,
   type SkuStatus
 } from "@/lib/api/skus";
+import { downloadCsvTemplate, type CsvTemplateField } from "@/lib/utils/csv";
 
 const skuTypeLabels: Record<string, string> = {
   finished_good: "成品",
@@ -72,6 +83,47 @@ const initialStats: SkuStats = {
   inStockSkus: 0,
   outOfStockSkus: 0
 };
+
+const skuImportFields: CsvTemplateField[] = [
+  {
+    key: "sku_code",
+    label: "SKU 编码",
+    required: true,
+    example: "SKU-001"
+  },
+  {
+    key: "sku_name",
+    label: "SKU 名称",
+    required: true,
+    example: "折叠收纳箱 黑色"
+  },
+  {
+    key: "sku_type",
+    label: "SKU 类型",
+    required: true,
+    example: "finished_good"
+  },
+  {
+    key: "product_code",
+    label: "所属产品编码",
+    example: "PROD-001"
+  },
+  {
+    key: "unit",
+    label: "单位",
+    example: "pcs"
+  },
+  {
+    key: "remark",
+    label: "备注",
+    example: "规格说明"
+  },
+  {
+    key: "status",
+    label: "状态",
+    example: "active"
+  }
+];
 
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) {
@@ -174,10 +226,14 @@ export default function AdminSkusPage() {
   const [skuTypeFilter, setSkuTypeFilter] = useState("all");
   const [productFilter, setProductFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [selectedSkuIds, setSelectedSkuIds] = useState<string[]>([]);
+  const [importOpen, setImportOpen] = useState(false);
+  const [skuToDelete, setSkuToDelete] = useState<SkuListRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [statusUpdatingId, setStatusUpdatingId] = useState("");
+  const [deletingSkuId, setDeletingSkuId] = useState("");
   const [bomUsageLoading, setBomUsageLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -224,6 +280,14 @@ export default function AdminSkusPage() {
     });
   }, [skus, searchKeyword, skuTypeFilter, productFilter, statusFilter]);
 
+  const selectedSkuRows = useMemo(
+    () => skus.filter((sku) => selectedSkuIds.includes(sku.id)),
+    [skus, selectedSkuIds]
+  );
+  const allFilteredSelected =
+    filteredSkus.length > 0 &&
+    filteredSkus.every((sku) => selectedSkuIds.includes(sku.id));
+
   const loadPageData = async () => {
     try {
       setLoading(true);
@@ -236,6 +300,9 @@ export default function AdminSkusPage() {
 
       setSkus(skuData);
       setProducts(productData);
+      setSelectedSkuIds((current) =>
+        current.filter((skuId) => skuData.some((sku) => sku.id === skuId))
+      );
       setSelectedBomSku((current) => {
         if (!current) {
           return null;
@@ -247,6 +314,7 @@ export default function AdminSkusPage() {
       setErrorMessage(getErrorMessage(error));
       setSkus([]);
       setProducts([]);
+      setSelectedSkuIds([]);
       setSelectedBomSku(null);
       setBomUsage(null);
     } finally {
@@ -341,6 +409,81 @@ export default function AdminSkusPage() {
       setErrorMessage(getErrorMessage(error));
     } finally {
       setStatusUpdatingId("");
+    }
+  };
+
+  const toggleSkuSelection = (skuId: string) => {
+    setSelectedSkuIds((current) =>
+      current.includes(skuId)
+        ? current.filter((id) => id !== skuId)
+        : [...current, skuId]
+    );
+  };
+
+  const toggleAllFilteredSkus = () => {
+    if (allFilteredSelected) {
+      setSelectedSkuIds((current) =>
+        current.filter((skuId) => !filteredSkus.some((sku) => sku.id === skuId))
+      );
+      return;
+    }
+
+    setSelectedSkuIds((current) =>
+      Array.from(new Set([...current, ...filteredSkus.map((sku) => sku.id)]))
+    );
+  };
+
+  const importSkus = async (rows: Array<{ data?: SkuImportInput }>) => {
+    const result = await bulkImportSkus(
+      rows
+        .map((row) => row.data)
+        .filter((row): row is SkuImportInput => Boolean(row))
+    );
+
+    await loadPageData();
+    setSuccessMessage(
+      `SKU 批量导入完成：成功 ${result.successCount} 条，失败 ${result.failedCount} 条。`
+    );
+
+    return result;
+  };
+
+  const batchDeactivateSkus = async (items: SkuListRow[]) => {
+    const results = await deactivateSkusByIds(items.map((item) => item.id));
+    await loadPageData();
+    return results;
+  };
+
+  const batchDeleteSkus = async (items: SkuListRow[]) => {
+    const results = await deleteSkusByIds(items.map((item) => item.id));
+    await loadPageData();
+    return results;
+  };
+
+  const confirmDeleteSku = async () => {
+    if (!skuToDelete) {
+      return;
+    }
+
+    try {
+      setDeletingSkuId(skuToDelete.id);
+      setErrorMessage("");
+      setSuccessMessage("");
+
+      const [result] = await deleteSkusByIds([skuToDelete.id]);
+
+      if (result?.success) {
+        setSuccessMessage(`SKU ${skuToDelete.sku_code} 已删除。`);
+      } else {
+        setErrorMessage(result?.message ?? "SKU 删除失败，请刷新后再试。");
+      }
+
+      setSkuToDelete(null);
+      await loadPageData();
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setDeletingSkuId("");
     }
   };
 
@@ -718,9 +861,22 @@ export default function AdminSkusPage() {
             <p className="eyebrow">SKU 列表</p>
             <h3>所有 SKU</h3>
           </div>
-          <button className="secondaryButton" type="button" onClick={refreshAll}>
-            {loading ? "正在刷新..." : "刷新列表"}
-          </button>
+          <div className="rowActions">
+            <button
+              type="button"
+              onClick={() =>
+                downloadCsvTemplate("skus-import-template.csv", skuImportFields)
+              }
+            >
+              下载模板
+            </button>
+            <button type="button" onClick={() => setImportOpen(true)}>
+              批量导入
+            </button>
+            <button type="button" onClick={refreshAll}>
+              {loading ? "正在刷新..." : "刷新列表"}
+            </button>
+          </div>
         </div>
 
         <div className="listToolbar skuToolbar">
@@ -778,6 +934,15 @@ export default function AdminSkusPage() {
           </button>
         </div>
 
+        <BulkActionBar
+          selectedItems={selectedSkuRows}
+          getItemLabel={(sku) => `${sku.sku_code} / ${sku.sku_name}`}
+          entityName="SKU"
+          onClearSelection={() => setSelectedSkuIds([])}
+          onDeactivateSelected={batchDeactivateSkus}
+          onDeleteSelected={batchDeleteSkus}
+        />
+
         {loading ? <div className="debugNotice">正在读取 SKU 数据...</div> : null}
 
         {!loading && filteredSkus.length === 0 ? (
@@ -789,6 +954,15 @@ export default function AdminSkusPage() {
             <table className="dataTable skuTable">
               <thead>
                 <tr>
+                  <th className="selectColumn">
+                    <input
+                      aria-label="全选当前页 SKU"
+                      className="tableCheckbox"
+                      type="checkbox"
+                      checked={allFilteredSelected}
+                      onChange={toggleAllFilteredSkus}
+                    />
+                  </th>
                   <th>SKU 编码</th>
                   <th>SKU 名称</th>
                   <th>SKU 类型</th>
@@ -808,6 +982,15 @@ export default function AdminSkusPage() {
 
                   return (
                     <tr key={sku.id}>
+                      <td>
+                        <input
+                          aria-label={`选择 SKU ${sku.sku_code}`}
+                          className="tableCheckbox"
+                          type="checkbox"
+                          checked={selectedSkuIds.includes(sku.id)}
+                          onChange={() => toggleSkuSelection(sku.id)}
+                        />
+                      </td>
                       <td>
                         <strong>{sku.sku_code}</strong>
                       </td>
@@ -867,6 +1050,14 @@ export default function AdminSkusPage() {
                             disabled={bomUsageLoading}
                           >
                             查看 BOM
+                          </button>
+                          <button
+                            className="dangerButton"
+                            type="button"
+                            onClick={() => setSkuToDelete(sku)}
+                            disabled={deletingSkuId === sku.id}
+                          >
+                            删除
                           </button>
                         </div>
                       </td>
@@ -1002,6 +1193,33 @@ export default function AdminSkusPage() {
           ) : null}
         </section>
       ) : null}
+
+      <BulkImportDialog<SkuImportInput>
+        open={importOpen}
+        title="SKU 批量导入"
+        description="原材料也写入 skus 表，通过 sku_type = material 区分；不会新增 materials 表。成品 SKU 必须填写所属产品编码。"
+        templateFileName="skus-import-template.csv"
+        fields={skuImportFields}
+        validateRows={validateSkuImportRows}
+        onImport={importSkus}
+        onClose={() => setImportOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={Boolean(skuToDelete)}
+        title="确认删除 SKU"
+        description={
+          <p>
+            删除前会检查 BOM、FBA 备货、生产任务、物料需求、采购单、当前库存和库存流水。只要已有任何引用，就不能物理删除，建议改为停用。
+          </p>
+        }
+        confirmLabel="确认删除"
+        danger
+        loading={Boolean(deletingSkuId)}
+        items={skuToDelete ? [`${skuToDelete.sku_code} / ${skuToDelete.sku_name}`] : []}
+        onClose={() => setSkuToDelete(null)}
+        onConfirm={confirmDeleteSku}
+      />
     </main>
   );
 }

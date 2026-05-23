@@ -2,6 +2,16 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { BulkActionBar } from "@/components/BulkActionBar";
+import { BulkImportDialog } from "@/components/BulkImportDialog";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import {
+  bulkImportWarehouses,
+  deactivateWarehousesByIds,
+  deleteWarehousesByIds,
+  validateWarehouseImportRows,
+  type WarehouseImportInput
+} from "@/lib/api/bulk-management";
 import {
   createWarehouse,
   getWarehouseInventory,
@@ -14,6 +24,7 @@ import {
   type WarehouseStats,
   type WarehouseStatus
 } from "@/lib/api/warehouses";
+import { downloadCsvTemplate, type CsvTemplateField } from "@/lib/utils/csv";
 
 const warehouseStatusLabels: Record<string, string> = {
   active: "启用",
@@ -72,6 +83,36 @@ const initialStats: WarehouseStats = {
   fbaStagingWarehouses: 0,
   warehousesWithInventory: 0
 };
+
+const warehouseImportFields: CsvTemplateField[] = [
+  {
+    key: "warehouse_code",
+    label: "仓库编码",
+    required: true,
+    example: "WH-MATERIAL"
+  },
+  {
+    key: "warehouse_name",
+    label: "仓库名称",
+    required: true,
+    example: "原材料仓"
+  },
+  {
+    key: "warehouse_type",
+    label: "仓库类型",
+    example: "material"
+  },
+  {
+    key: "address",
+    label: "地址",
+    example: "广东省深圳市"
+  },
+  {
+    key: "status",
+    label: "状态",
+    example: "active"
+  }
+];
 
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) {
@@ -151,11 +192,16 @@ export default function AdminWarehousesPage() {
   const [searchKeyword, setSearchKeyword] = useState("");
   const [warehouseTypeFilter, setWarehouseTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [selectedWarehouseIds, setSelectedWarehouseIds] = useState<string[]>([]);
+  const [importOpen, setImportOpen] = useState(false);
+  const [warehouseToDelete, setWarehouseToDelete] =
+    useState<WarehouseListRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [inventoryLoading, setInventoryLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [statusUpdatingId, setStatusUpdatingId] = useState("");
+  const [deletingWarehouseId, setDeletingWarehouseId] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
@@ -177,6 +223,19 @@ export default function AdminWarehousesPage() {
     });
   }, [warehouses, searchKeyword, warehouseTypeFilter, statusFilter]);
 
+  const selectedWarehouses = useMemo(
+    () =>
+      warehouses.filter((warehouse) =>
+        selectedWarehouseIds.includes(warehouse.id)
+      ),
+    [warehouses, selectedWarehouseIds]
+  );
+  const allFilteredSelected =
+    filteredWarehouses.length > 0 &&
+    filteredWarehouses.every((warehouse) =>
+      selectedWarehouseIds.includes(warehouse.id)
+    );
+
   const loadPageData = async () => {
     try {
       setLoading(true);
@@ -189,6 +248,11 @@ export default function AdminWarehousesPage() {
 
       setWarehouses(warehouseData);
       setStats(statsData);
+      setSelectedWarehouseIds((current) =>
+        current.filter((warehouseId) =>
+          warehouseData.some((warehouse) => warehouse.id === warehouseId)
+        )
+      );
       setSelectedWarehouse((current) => {
         if (!current) {
           return null;
@@ -204,6 +268,7 @@ export default function AdminWarehousesPage() {
       setErrorMessage(getErrorMessage(error));
       setWarehouses([]);
       setStats(initialStats);
+      setSelectedWarehouseIds([]);
       setSelectedWarehouse(null);
       setWarehouseInventory([]);
 
@@ -308,6 +373,91 @@ export default function AdminWarehousesPage() {
       setErrorMessage(getErrorMessage(error));
     } finally {
       setStatusUpdatingId("");
+    }
+  };
+
+  const toggleWarehouseSelection = (warehouseId: string) => {
+    setSelectedWarehouseIds((current) =>
+      current.includes(warehouseId)
+        ? current.filter((id) => id !== warehouseId)
+        : [...current, warehouseId]
+    );
+  };
+
+  const toggleAllFilteredWarehouses = () => {
+    if (allFilteredSelected) {
+      setSelectedWarehouseIds((current) =>
+        current.filter(
+          (warehouseId) =>
+            !filteredWarehouses.some((warehouse) => warehouse.id === warehouseId)
+        )
+      );
+      return;
+    }
+
+    setSelectedWarehouseIds((current) =>
+      Array.from(
+        new Set([
+          ...current,
+          ...filteredWarehouses.map((warehouse) => warehouse.id)
+        ])
+      )
+    );
+  };
+
+  const importWarehouses = async (
+    rows: Array<{ data?: WarehouseImportInput }>
+  ) => {
+    const result = await bulkImportWarehouses(
+      rows
+        .map((row) => row.data)
+        .filter((row): row is WarehouseImportInput => Boolean(row))
+    );
+
+    await loadPageData();
+    setSuccessMessage(
+      `仓库批量导入完成：成功 ${result.successCount} 条，失败 ${result.failedCount} 条。`
+    );
+
+    return result;
+  };
+
+  const batchDeactivateWarehouses = async (items: WarehouseListRow[]) => {
+    const results = await deactivateWarehousesByIds(items.map((item) => item.id));
+    await loadPageData();
+    return results;
+  };
+
+  const batchDeleteWarehouses = async (items: WarehouseListRow[]) => {
+    const results = await deleteWarehousesByIds(items.map((item) => item.id));
+    await loadPageData();
+    return results;
+  };
+
+  const confirmDeleteWarehouse = async () => {
+    if (!warehouseToDelete) {
+      return;
+    }
+
+    try {
+      setDeletingWarehouseId(warehouseToDelete.id);
+      setErrorMessage("");
+      setSuccessMessage("");
+
+      const [result] = await deleteWarehousesByIds([warehouseToDelete.id]);
+
+      if (result?.success) {
+        setSuccessMessage(`仓库 ${warehouseToDelete.warehouse_code} 已删除。`);
+      } else {
+        setErrorMessage(result?.message ?? "仓库删除失败，请刷新后再试。");
+      }
+
+      setWarehouseToDelete(null);
+      await loadPageData();
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setDeletingWarehouseId("");
     }
   };
 
@@ -618,9 +768,25 @@ export default function AdminWarehousesPage() {
             <p className="eyebrow">仓库列表</p>
             <h3>所有仓库</h3>
           </div>
-          <button className="secondaryButton" type="button" onClick={refreshAll}>
-            {loading ? "正在刷新..." : "刷新列表"}
-          </button>
+          <div className="rowActions">
+            <button
+              type="button"
+              onClick={() =>
+                downloadCsvTemplate(
+                  "warehouses-import-template.csv",
+                  warehouseImportFields
+                )
+              }
+            >
+              下载模板
+            </button>
+            <button type="button" onClick={() => setImportOpen(true)}>
+              批量导入
+            </button>
+            <button type="button" onClick={refreshAll}>
+              {loading ? "正在刷新..." : "刷新列表"}
+            </button>
+          </div>
         </div>
 
         <div className="listToolbar warehouseToolbar">
@@ -665,6 +831,17 @@ export default function AdminWarehousesPage() {
           </button>
         </div>
 
+        <BulkActionBar
+          selectedItems={selectedWarehouses}
+          getItemLabel={(warehouse) =>
+            `${warehouse.warehouse_code} / ${warehouse.name}`
+          }
+          entityName="仓库"
+          onClearSelection={() => setSelectedWarehouseIds([])}
+          onDeactivateSelected={batchDeactivateWarehouses}
+          onDeleteSelected={batchDeleteWarehouses}
+        />
+
         {loading ? (
           <div className="debugNotice">正在读取仓库数据...</div>
         ) : null}
@@ -678,6 +855,15 @@ export default function AdminWarehousesPage() {
             <table className="dataTable warehouseTable">
               <thead>
                 <tr>
+                  <th className="selectColumn">
+                    <input
+                      aria-label="全选当前页仓库"
+                      className="tableCheckbox"
+                      type="checkbox"
+                      checked={allFilteredSelected}
+                      onChange={toggleAllFilteredWarehouses}
+                    />
+                  </th>
                   <th>仓库编码</th>
                   <th>仓库名称</th>
                   <th>仓库类型</th>
@@ -696,6 +882,15 @@ export default function AdminWarehousesPage() {
 
                   return (
                     <tr key={warehouse.id}>
+                      <td>
+                        <input
+                          aria-label={`选择仓库 ${warehouse.warehouse_code}`}
+                          className="tableCheckbox"
+                          type="checkbox"
+                          checked={selectedWarehouseIds.includes(warehouse.id)}
+                          onChange={() => toggleWarehouseSelection(warehouse.id)}
+                        />
+                      </td>
                       <td>
                         <strong>{warehouse.warehouse_code}</strong>
                       </td>
@@ -758,6 +953,14 @@ export default function AdminWarehousesPage() {
                           >
                             查看流水
                           </Link>
+                          <button
+                            className="dangerButton"
+                            type="button"
+                            onClick={() => setWarehouseToDelete(warehouse)}
+                            disabled={deletingWarehouseId === warehouse.id}
+                          >
+                            删除
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -830,6 +1033,37 @@ export default function AdminWarehousesPage() {
           )}
         </section>
       ) : null}
+
+      <BulkImportDialog<WarehouseImportInput>
+        open={importOpen}
+        title="仓库批量导入"
+        description="请按模板填写仓库编码、仓库名称、仓库类型、地址和状态。当前真实 schema 没有仓库备注字段，所以模板不包含 remark。"
+        templateFileName="warehouses-import-template.csv"
+        fields={warehouseImportFields}
+        validateRows={validateWarehouseImportRows}
+        onImport={importWarehouses}
+        onClose={() => setImportOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={Boolean(warehouseToDelete)}
+        title="确认删除仓库"
+        description={
+          <p>
+            删除前会检查当前库存、库存流水、FBA 备货目标仓和采购单引用。已有任何业务记录的仓库不能物理删除，建议改为停用。
+          </p>
+        }
+        confirmLabel="确认删除"
+        danger
+        loading={Boolean(deletingWarehouseId)}
+        items={
+          warehouseToDelete
+            ? [`${warehouseToDelete.warehouse_code} / ${warehouseToDelete.name}`]
+            : []
+        }
+        onClose={() => setWarehouseToDelete(null)}
+        onConfirm={confirmDeleteWarehouse}
+      />
     </main>
   );
 }

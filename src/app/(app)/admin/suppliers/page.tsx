@@ -1,6 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { BulkActionBar } from "@/components/BulkActionBar";
+import { BulkImportDialog } from "@/components/BulkImportDialog";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import {
+  bulkImportSuppliers,
+  deactivateSuppliersByIds,
+  deleteSuppliersByIds,
+  validateSupplierImportRows,
+  type SupplierImportInput
+} from "@/lib/api/bulk-management";
 import {
   createSupplier,
   getSupplierPurchaseOrders,
@@ -13,6 +23,7 @@ import {
   type SupplierStats,
   type SupplierStatus
 } from "@/lib/api/suppliers";
+import { downloadCsvTemplate, type CsvTemplateField } from "@/lib/utils/csv";
 
 const supplierStatusLabels: Record<string, string> = {
   active: "启用",
@@ -59,6 +70,51 @@ const initialStats: SupplierStats = {
   inactiveSuppliers: 0,
   suppliersWithPurchaseOrders: 0
 };
+
+const supplierImportFields: CsvTemplateField[] = [
+  {
+    key: "supplier_code",
+    label: "供应商编码",
+    required: true,
+    example: "SUP-001"
+  },
+  {
+    key: "supplier_name",
+    label: "供应商名称",
+    required: true,
+    example: "深圳某某包装有限公司"
+  },
+  {
+    key: "contact_name",
+    label: "联系人",
+    example: "张三"
+  },
+  {
+    key: "phone",
+    label: "电话",
+    example: "13800000000"
+  },
+  {
+    key: "email",
+    label: "邮箱",
+    example: "buyer@example.com"
+  },
+  {
+    key: "address",
+    label: "地址",
+    example: "广东省深圳市"
+  },
+  {
+    key: "remark",
+    label: "备注",
+    example: "合作说明"
+  },
+  {
+    key: "status",
+    label: "状态",
+    example: "active"
+  }
+];
 
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) {
@@ -115,11 +171,16 @@ export default function AdminSuppliersPage() {
   >([]);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [selectedSupplierIds, setSelectedSupplierIds] = useState<string[]>([]);
+  const [importOpen, setImportOpen] = useState(false);
+  const [supplierToDelete, setSupplierToDelete] =
+    useState<SupplierListRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [purchaseOrdersLoading, setPurchaseOrdersLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [statusUpdatingId, setStatusUpdatingId] = useState("");
+  const [deletingSupplierId, setDeletingSupplierId] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
@@ -139,6 +200,16 @@ export default function AdminSuppliersPage() {
     });
   }, [suppliers, searchKeyword, statusFilter]);
 
+  const selectedSuppliers = useMemo(
+    () => suppliers.filter((supplier) => selectedSupplierIds.includes(supplier.id)),
+    [suppliers, selectedSupplierIds]
+  );
+  const allFilteredSelected =
+    filteredSuppliers.length > 0 &&
+    filteredSuppliers.every((supplier) =>
+      selectedSupplierIds.includes(supplier.id)
+    );
+
   const loadPageData = async () => {
     try {
       setLoading(true);
@@ -151,6 +222,11 @@ export default function AdminSuppliersPage() {
 
       setSuppliers(supplierData);
       setStats(statsData);
+      setSelectedSupplierIds((current) =>
+        current.filter((supplierId) =>
+          supplierData.some((supplier) => supplier.id === supplierId)
+        )
+      );
       setSelectedSupplier((current) => {
         if (!current) {
           return null;
@@ -166,6 +242,7 @@ export default function AdminSuppliersPage() {
       setErrorMessage(getErrorMessage(error));
       setSuppliers([]);
       setStats(initialStats);
+      setSelectedSupplierIds([]);
       setSelectedSupplier(null);
       setPurchaseOrders([]);
 
@@ -273,6 +350,91 @@ export default function AdminSuppliersPage() {
       setErrorMessage(getErrorMessage(error));
     } finally {
       setStatusUpdatingId("");
+    }
+  };
+
+  const toggleSupplierSelection = (supplierId: string) => {
+    setSelectedSupplierIds((current) =>
+      current.includes(supplierId)
+        ? current.filter((id) => id !== supplierId)
+        : [...current, supplierId]
+    );
+  };
+
+  const toggleAllFilteredSuppliers = () => {
+    if (allFilteredSelected) {
+      setSelectedSupplierIds((current) =>
+        current.filter(
+          (supplierId) =>
+            !filteredSuppliers.some((supplier) => supplier.id === supplierId)
+        )
+      );
+      return;
+    }
+
+    setSelectedSupplierIds((current) =>
+      Array.from(
+        new Set([
+          ...current,
+          ...filteredSuppliers.map((supplier) => supplier.id)
+        ])
+      )
+    );
+  };
+
+  const importSuppliers = async (
+    rows: Array<{ data?: SupplierImportInput }>
+  ) => {
+    const result = await bulkImportSuppliers(
+      rows
+        .map((row) => row.data)
+        .filter((row): row is SupplierImportInput => Boolean(row))
+    );
+
+    await loadPageData();
+    setSuccessMessage(
+      `供应商批量导入完成：成功 ${result.successCount} 条，失败 ${result.failedCount} 条。`
+    );
+
+    return result;
+  };
+
+  const batchDeactivateSuppliers = async (items: SupplierListRow[]) => {
+    const results = await deactivateSuppliersByIds(items.map((item) => item.id));
+    await loadPageData();
+    return results;
+  };
+
+  const batchDeleteSuppliers = async (items: SupplierListRow[]) => {
+    const results = await deleteSuppliersByIds(items.map((item) => item.id));
+    await loadPageData();
+    return results;
+  };
+
+  const confirmDeleteSupplier = async () => {
+    if (!supplierToDelete) {
+      return;
+    }
+
+    try {
+      setDeletingSupplierId(supplierToDelete.id);
+      setErrorMessage("");
+      setSuccessMessage("");
+
+      const [result] = await deleteSuppliersByIds([supplierToDelete.id]);
+
+      if (result?.success) {
+        setSuccessMessage(`供应商 ${supplierToDelete.supplier_code} 已删除。`);
+      } else {
+        setErrorMessage(result?.message ?? "供应商删除失败，请刷新后再试。");
+      }
+
+      setSupplierToDelete(null);
+      await loadPageData();
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setDeletingSupplierId("");
     }
   };
 
@@ -667,9 +829,25 @@ export default function AdminSuppliersPage() {
             <p className="eyebrow">供应商列表</p>
             <h3>所有供应商</h3>
           </div>
-          <button className="secondaryButton" type="button" onClick={refreshAll}>
-            {loading ? "正在刷新..." : "刷新列表"}
-          </button>
+          <div className="rowActions">
+            <button
+              type="button"
+              onClick={() =>
+                downloadCsvTemplate(
+                  "suppliers-import-template.csv",
+                  supplierImportFields
+                )
+              }
+            >
+              下载模板
+            </button>
+            <button type="button" onClick={() => setImportOpen(true)}>
+              批量导入
+            </button>
+            <button type="button" onClick={refreshAll}>
+              {loading ? "正在刷新..." : "刷新列表"}
+            </button>
+          </div>
         </div>
 
         <div className="listToolbar supplierToolbar">
@@ -699,6 +877,17 @@ export default function AdminSuppliersPage() {
           </button>
         </div>
 
+        <BulkActionBar
+          selectedItems={selectedSuppliers}
+          getItemLabel={(supplier) =>
+            `${supplier.supplier_code} / ${supplier.name}`
+          }
+          entityName="供应商"
+          onClearSelection={() => setSelectedSupplierIds([])}
+          onDeactivateSelected={batchDeactivateSuppliers}
+          onDeleteSelected={batchDeleteSuppliers}
+        />
+
         {loading ? (
           <div className="debugNotice">正在读取供应商数据...</div>
         ) : null}
@@ -712,6 +901,15 @@ export default function AdminSuppliersPage() {
             <table className="dataTable supplierTable">
               <thead>
                 <tr>
+                  <th className="selectColumn">
+                    <input
+                      aria-label="全选当前页供应商"
+                      className="tableCheckbox"
+                      type="checkbox"
+                      checked={allFilteredSelected}
+                      onChange={toggleAllFilteredSuppliers}
+                    />
+                  </th>
                   <th>供应商编码</th>
                   <th>供应商名称</th>
                   <th>联系人</th>
@@ -732,6 +930,15 @@ export default function AdminSuppliersPage() {
 
                   return (
                     <tr key={supplier.id}>
+                      <td>
+                        <input
+                          aria-label={`选择供应商 ${supplier.supplier_code}`}
+                          className="tableCheckbox"
+                          type="checkbox"
+                          checked={selectedSupplierIds.includes(supplier.id)}
+                          onChange={() => toggleSupplierSelection(supplier.id)}
+                        />
+                      </td>
                       <td>
                         <strong>{supplier.supplier_code}</strong>
                       </td>
@@ -781,6 +988,14 @@ export default function AdminSuppliersPage() {
                             disabled={purchaseOrdersLoading}
                           >
                             查看采购单
+                          </button>
+                          <button
+                            className="dangerButton"
+                            type="button"
+                            onClick={() => setSupplierToDelete(supplier)}
+                            disabled={deletingSupplierId === supplier.id}
+                          >
+                            删除
                           </button>
                         </div>
                       </td>
@@ -860,6 +1075,37 @@ export default function AdminSuppliersPage() {
           )}
         </section>
       ) : null}
+
+      <BulkImportDialog<SupplierImportInput>
+        open={importOpen}
+        title="供应商批量导入"
+        description="请按模板填写供应商编码、名称、联系人、电话、邮箱、地址、备注和状态。邮箱如果填写，会做简单格式校验。"
+        templateFileName="suppliers-import-template.csv"
+        fields={supplierImportFields}
+        validateRows={validateSupplierImportRows}
+        onImport={importSuppliers}
+        onClose={() => setImportOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={Boolean(supplierToDelete)}
+        title="确认删除供应商"
+        description={
+          <p>
+            删除前会检查是否已有采购单引用。已有采购单的供应商不能物理删除，建议改为停用。
+          </p>
+        }
+        confirmLabel="确认删除"
+        danger
+        loading={Boolean(deletingSupplierId)}
+        items={
+          supplierToDelete
+            ? [`${supplierToDelete.supplier_code} / ${supplierToDelete.name}`]
+            : []
+        }
+        onClose={() => setSupplierToDelete(null)}
+        onConfirm={confirmDeleteSupplier}
+      />
     </main>
   );
 }

@@ -4,11 +4,14 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
   getProductionOrderDetail,
+  getProductionOrderIssueMaterialsPreview,
   getProductionOrders,
-  updateProductionOrderStatus,
+  issueMaterialsForProductionOrder,
+  type ProductionMaterialIssueStatus,
   type ProductionMaterialStatus,
   type ProductionMaterialStatusFilter,
   type ProductionOrderStatus,
+  type ProductionOrderIssueMaterialsPreview,
   type ProductionOrderStatusFilter,
   type ProductionOrderTrackingRow
 } from "@/lib/api/production";
@@ -34,6 +37,7 @@ const materialStatusOptions: Array<{
   { value: "shortage", label: "缺料" },
   { value: "purchased", label: "已采购待到货" },
   { value: "received", label: "物料已到货" },
+  { value: "issued", label: "已领料" },
   { value: "ready", label: "物料齐套" },
   { value: "pending", label: "待处理" }
 ];
@@ -51,8 +55,18 @@ const materialStatusLabels: Record<ProductionMaterialStatus, string> = {
   shortage: "缺料",
   purchased: "已采购待到货",
   received: "物料已到货",
+  issued: "已领料",
   ready: "物料齐套",
   pending: "待处理"
+};
+
+const materialIssueStatusLabels: Record<ProductionMaterialIssueStatus, string> = {
+  not_generated: "未生成物料需求",
+  issued: "已领料",
+  ready: "可领料",
+  shortage: "库存不足",
+  warehouse_adjust_needed: "单仓不足",
+  blocked: "不可领料"
 };
 
 function getErrorMessage(error: unknown) {
@@ -87,6 +101,30 @@ function formatDateTime(value: string | null | undefined) {
   });
 }
 
+function getIssueButtonLabel(order: ProductionOrderTrackingRow) {
+  if (order.materials_issued) {
+    return "已领料";
+  }
+
+  if (order.material_issue_status === "not_generated") {
+    return "未生成物料需求";
+  }
+
+  if (order.material_issue_status === "shortage") {
+    return "库存不足";
+  }
+
+  if (order.material_issue_status === "warehouse_adjust_needed") {
+    return "单仓不足";
+  }
+
+  if (order.material_issue_status === "blocked") {
+    return "不可领料";
+  }
+
+  return "确认领料";
+}
+
 export default function ProductionOrdersPage() {
   const [orders, setOrders] = useState<ProductionOrderTrackingRow[]>([]);
   const [statusFilter, setStatusFilter] =
@@ -96,9 +134,12 @@ export default function ProductionOrdersPage() {
   const [skuKeyword, setSkuKeyword] = useState("");
   const [selectedDetail, setSelectedDetail] =
     useState<ProductionOrderTrackingRow | null>(null);
+  const [issuePreview, setIssuePreview] =
+    useState<ProductionOrderIssueMaterialsPreview | null>(null);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [updatingOrderId, setUpdatingOrderId] = useState("");
+  const [issuePreviewLoadingId, setIssuePreviewLoadingId] = useState("");
+  const [issuingOrderId, setIssuingOrderId] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
@@ -157,19 +198,38 @@ export default function ProductionOrdersPage() {
     }
   };
 
-  const markInProgress = async (order: ProductionOrderTrackingRow) => {
+  const openIssuePreview = async (order: ProductionOrderTrackingRow) => {
     try {
-      setUpdatingOrderId(order.id);
+      setIssuePreviewLoadingId(order.id);
       setErrorMessage("");
       setSuccessMessage("");
 
-      await updateProductionOrderStatus(order.id, "in_progress");
-      await loadOrders();
-      setSuccessMessage(`生产任务 ${order.production_order_no} 已标记为生产中。`);
+      setIssuePreview(await getProductionOrderIssueMaterialsPreview(order.id));
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
     } finally {
-      setUpdatingOrderId("");
+      setIssuePreviewLoadingId("");
+    }
+  };
+
+  const confirmIssueMaterials = async () => {
+    if (!issuePreview) {
+      return;
+    }
+
+    try {
+      setIssuingOrderId(issuePreview.production_order_id);
+      setErrorMessage("");
+      setSuccessMessage("");
+
+      await issueMaterialsForProductionOrder(issuePreview.production_order_id);
+      setIssuePreview(null);
+      await loadOrders();
+      setSuccessMessage("领料成功，生产任务已进入生产中。");
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setIssuingOrderId("");
     }
   };
 
@@ -282,6 +342,7 @@ export default function ProductionOrdersPage() {
                   <th>已入库数量</th>
                   <th>待入库数量</th>
                   <th>物料状态</th>
+                  <th>领料状态</th>
                   <th>生产状态</th>
                   <th>计划开始日期</th>
                   <th>预计完成日期</th>
@@ -319,6 +380,13 @@ export default function ProductionOrdersPage() {
                       </span>
                     </td>
                     <td>
+                      <span
+                        className={`tablePill issue-status-${order.material_issue_status}`}
+                      >
+                        {materialIssueStatusLabels[order.material_issue_status]}
+                      </span>
+                    </td>
+                    <td>
                       <span className={`tablePill production-status-${order.status}`}>
                         {productionStatusLabels[order.status] ?? order.status}
                       </span>
@@ -344,13 +412,15 @@ export default function ProductionOrdersPage() {
                         </Link>
                         <button
                           type="button"
-                          onClick={() => markInProgress(order)}
+                          onClick={() => openIssuePreview(order)}
                           disabled={
-                            updatingOrderId === order.id ||
-                            order.status !== "planned"
+                            issuePreviewLoadingId === order.id ||
+                            !order.material_issue_can_issue
                           }
                         >
-                          标记为生产中
+                          {issuePreviewLoadingId === order.id
+                            ? "检查库存..."
+                            : getIssueButtonLabel(order)}
                         </button>
                       </div>
                     </td>
@@ -369,13 +439,27 @@ export default function ProductionOrdersPage() {
               <p className="eyebrow">生产任务详情</p>
               <h3>{selectedDetail.production_order_no}</h3>
             </div>
-            <button
-              className="secondaryButton"
-              type="button"
-              onClick={() => setSelectedDetail(null)}
-            >
-              收起详情
-            </button>
+            <div className="rowActions">
+              <button
+                type="button"
+                onClick={() => openIssuePreview(selectedDetail)}
+                disabled={
+                  issuePreviewLoadingId === selectedDetail.id ||
+                  !selectedDetail.material_issue_can_issue
+                }
+              >
+                {issuePreviewLoadingId === selectedDetail.id
+                  ? "检查库存..."
+                  : getIssueButtonLabel(selectedDetail)}
+              </button>
+              <button
+                className="secondaryButton"
+                type="button"
+                onClick={() => setSelectedDetail(null)}
+              >
+                收起详情
+              </button>
+            </div>
           </div>
 
           <div className="detailGrid">
@@ -421,6 +505,12 @@ export default function ProductionOrdersPage() {
               <strong>
                 {productionStatusLabels[selectedDetail.status] ??
                   selectedDetail.status}
+              </strong>
+            </div>
+            <div className="detailItem">
+              <span>领料状态</span>
+              <strong>
+                {materialIssueStatusLabels[selectedDetail.material_issue_status]}
               </strong>
             </div>
             <div className="detailItem detailItemWide">
@@ -484,8 +574,179 @@ export default function ProductionOrdersPage() {
                 </ul>
               )}
             </section>
+
+            <section className="panel">
+              <h3>领料记录摘要</h3>
+              {selectedDetail.material_issue_transactions.length === 0 ? (
+                <p>暂无原材料领料流水</p>
+              ) : (
+                <ul className="debugList">
+                  {selectedDetail.material_issue_transactions.map((transaction) => (
+                    <li key={transaction.id}>
+                      <strong>{transaction.transaction_no}</strong>
+                      <span>
+                        {formatQuantity(transaction.quantity)} /{" "}
+                        {transaction.warehouse?.name ?? "-"} /{" "}
+                        {formatDateTime(transaction.occurred_at)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
           </div>
         </section>
+      ) : null}
+
+      {issuePreview ? (
+        <div className="modalBackdrop" role="presentation">
+          <section
+            className="modalPanel"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="issue-materials-title"
+          >
+            <div className="detailHeader">
+              <div>
+                <p className="eyebrow">确认领料</p>
+                <h3 id="issue-materials-title">
+                  {issuePreview.production_order_no}
+                </h3>
+              </div>
+              <button
+                className="secondaryButton"
+                type="button"
+                onClick={() => setIssuePreview(null)}
+                disabled={Boolean(issuingOrderId)}
+              >
+                关闭
+              </button>
+            </div>
+
+            <div className="detailGrid">
+              <div className="detailItem">
+                <span>成品 SKU</span>
+                <strong>
+                  {issuePreview.sku_code} / {issuePreview.sku_name}
+                </strong>
+              </div>
+              <div className="detailItem">
+                <span>计划生产数量</span>
+                <strong>{formatQuantity(issuePreview.planned_quantity)}</strong>
+              </div>
+              <div className="detailItem">
+                <span>领料状态</span>
+                <strong>
+                  {materialIssueStatusLabels[issuePreview.status]}
+                </strong>
+              </div>
+              <div className="detailItem">
+                <span>异常材料数</span>
+                <strong>{formatQuantity(issuePreview.shortage_count)}</strong>
+              </div>
+            </div>
+
+            {issuePreview.blocking_reason ? (
+              <div className="warningNotice">
+                <strong>暂时不能确认领料</strong>
+                <p>{issuePreview.blocking_reason}</p>
+              </div>
+            ) : null}
+
+            {issuePreview.materials.length === 0 ? (
+              <div className="emptyState">没有可领料的原材料清单</div>
+            ) : (
+              <div className="tableWrap">
+                <table className="dataTable">
+                  <thead>
+                    <tr>
+                      <th>原材料 SKU 编码</th>
+                      <th>原材料名称</th>
+                      <th>应领数量</th>
+                      <th>当前库存</th>
+                      <th>领料后库存</th>
+                      <th>扣减仓库</th>
+                      <th>状态</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {issuePreview.materials.map((material) => (
+                      <tr
+                        key={material.material_requirement_id}
+                        className={
+                          material.status === "enough" ? undefined : "shortageRow"
+                        }
+                      >
+                        <td>{material.sku_code}</td>
+                        <td>{material.sku_name}</td>
+                        <td>
+                          {formatQuantity(material.required_quantity)}
+                          {material.unit}
+                        </td>
+                        <td>
+                          {formatQuantity(material.current_quantity)}
+                          {material.unit}
+                        </td>
+                        <td>
+                          {material.after_issue_quantity === null
+                            ? "-"
+                            : `${formatQuantity(material.after_issue_quantity)}${
+                                material.unit
+                              }`}
+                        </td>
+                        <td>
+                          {material.selected_warehouse_name
+                            ? `${material.selected_warehouse_name} / ${
+                                material.selected_warehouse_code ?? "-"
+                              }`
+                            : "-"}
+                        </td>
+                        <td>
+                          <span
+                            className={`tablePill issue-line-status-${material.status}`}
+                          >
+                            {material.status_label}
+                          </span>
+                          {material.reason ? (
+                            <p className="tableHint">{material.reason}</p>
+                          ) : null}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div className="modalFooter">
+              <p>
+                系统会按上面的应领数量自动扣库存，不需要厂长手动输入数量。
+              </p>
+              <div className="rowActions">
+                <button
+                  className="secondaryButton"
+                  type="button"
+                  onClick={() => setIssuePreview(null)}
+                  disabled={Boolean(issuingOrderId)}
+                >
+                  取消
+                </button>
+                <button
+                  className="primaryButton"
+                  type="button"
+                  onClick={confirmIssueMaterials}
+                  disabled={
+                    Boolean(issuingOrderId) || !issuePreview.can_issue
+                  }
+                >
+                  {issuingOrderId
+                    ? "正在确认..."
+                    : "确认领料并开始生产"}
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
       ) : null}
     </main>
   );

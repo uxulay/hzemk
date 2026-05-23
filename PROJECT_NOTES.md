@@ -1,6 +1,6 @@
 # 项目进度说明
 
-最后整理日期：2026-05-22
+最后整理日期：2026-05-23
 
 本文档根据当前项目代码、页面路由、`src/lib/api`、`supabase` 目录、`schema.sql`、`seed.sql` 和已实现页面整理。后续 Codex 开发前请先阅读本文件。
 
@@ -40,19 +40,20 @@
 | `/replenishment` | 已完成列表第一版 | FBA 备货需求列表。支持按状态筛选、SKU 搜索、查看详情。编辑和删除按钮目前禁用，当前阶段不做修改和删除。 |
 | `/replenishment/new` | 已完成创建第一版 | 运营创建 FBA 备货需求。读取产品、成品 SKU、仓库，提交后写入 `fba_replenishment_requests`，状态为 `submitted`。当前还没有真实登录，所以 `requested_by` 暂时写 `null`。 |
 | `/production/planning` | 已完成排产第一版 | 厂长查看已提交/已接单的 FBA 备货需求，可以接单、拒绝、创建生产任务。创建生产任务时会按 BOM 自动生成物料需求，并把 FBA 备货需求状态更新为 `in_production`。 |
-| `/production/orders` | 已完成跟踪第一版 | 生产任务列表。显示 FBA 备货需求数量、计划生产数量、超量生产数量、已入库数量、待入库数量、物料状态、生产状态。支持查看详情和把 `planned` 标记为 `in_progress`。 |
-| `/bom` | 已完成管理第一版 | BOM 管理页面。读取 `bom_headers` 和 `bom_items`，支持新增 BOM、查看明细、添加原材料、编辑 BOM 明细的单位用量/损耗率/备注，以及启用/停用 BOM。 |
+| `/production/orders` | 已完成跟踪和领料第一版 | 生产任务列表。显示 FBA 备货需求数量、计划生产数量、超量生产数量、已入库数量、待入库数量、物料状态、领料状态、生产状态。支持查看详情、确认领料弹窗、自动扣原材料库存、写 `material_out` 库存流水，并把生产任务更新为 `in_progress`。 |
+| `/bom` | 已完成管理和批量维护第一版 | BOM 管理页面。读取 `bom_headers` 和 `bom_items`，支持新增 BOM、查看明细、添加原材料、编辑 BOM 明细的单位用量/损耗率/备注、启用/停用 BOM、CSV 批量导入、删除明细、删除/批量删除或停用 BOM，并在删除前检查生产任务引用。 |
 | `/materials/requirements` | 已完成查询第一版 | 物料需求列表。读取 `material_requirements`，并回查 `bom_items` 显示 BOM 单位用量和损耗率。支持按状态筛选。当前是查询页，不直接新增、编辑、删除。 |
 | `/purchase/orders` | 已完成采购第一版 | 采购单页面。可以从缺料物料生成采购单，写入 `purchase_orders` 和 `purchase_order_items`，并把对应物料需求状态更新为 `purchased`。支持采购单列表、详情和状态按钮。实际库存入库建议走 `/inventory/inbound`。 |
 | `/inventory/inbound` | 已完成入库第一版 | 入库管理。分为采购入库和生产入库。采购入库会写 `material_in` 库存流水、更新 `inventory_items`、采购明细到货数量、采购单状态和物料需求状态。生产入库会写 `product_in` 库存流水、更新成品库存、更新生产任务 `completed_quantity` 和状态。 |
 | `/inventory/fba-outbound` | 已完成 FBA 出库第一版 | FBA 出库单独处理。读取可出库 FBA 备货需求，按成品库存和已出库数量计算待出库数量。提交后写 `product_out` 库存流水、扣减 `inventory_items`，累计出库数量达到备货需求数量后把备货需求标记为 `shipped`。 |
 | `/inventory/transactions` | 已完成查询第一版 | 库存流水页面。读取 `inventory_transactions`，支持按流水类型、仓库、SKU、日期筛选，显示关联采购单、生产任务或 FBA 备货单。当前只查询，不新增、编辑、删除。 |
+| `/inventory/adjustments` | 已完成调整第一版 | 库存调整页面。读取当前库存，支持增加库存、减少库存、直接修正库存，每次调整都会更新 `inventory_items.quantity_on_hand` 并写入 `transaction_type = adjustment` 的库存流水。 |
 | `/inventory/materials` | 已完成查询第一版 | 原材料当前库存页面。读取 `inventory_items`，按 SKU 类型筛选原材料，显示当前库存、安全库存、库存状态、仓库和查看流水入口。 |
 | `/inventory/products` | 已完成查询第一版 | 成品当前库存页面。读取 `inventory_items`，按成品 SKU 筛选，显示当前成品库存、仓库和查看流水入口。 |
-| `/admin/products` | 已完成管理第一版 | 产品基础资料管理页面。读取 `products` 和 `skus`，支持产品列表、搜索、状态筛选、汇总卡片、新增产品、编辑产品、启用/停用产品、查看产品关联 SKU。 |
-| `/admin/skus` | 已完成管理第一版 | SKU 基础资料管理页面。读取 `skus`、`products`、`inventory_items`、`bom_headers`、`bom_items`，支持 SKU 列表、搜索筛选、汇总卡片、新增 SKU、编辑 SKU、启用/停用 SKU、查看库存入口和查看 BOM 关联。 |
-| `/admin/suppliers` | 已完成管理第一版 | 供应商基础资料管理页面。读取 `suppliers` 和 `purchase_orders`，支持供应商列表、搜索、状态筛选、汇总卡片、新增供应商、编辑供应商、启用/停用供应商、查看关联采购单。 |
-| `/admin/warehouses` | 已完成管理第一版 | 仓库基础资料管理页面。读取 `warehouses`、`inventory_items`、`inventory_transactions` 和 `skus`，支持仓库列表、搜索筛选、汇总卡片、新增仓库、编辑仓库、启用/停用仓库、查看仓库库存和跳转查看流水。 |
+| `/admin/products` | 已完成管理和批量维护第一版 | 产品基础资料管理页面。读取 `products` 和 `skus`，支持产品列表、搜索、状态筛选、汇总卡片、新增产品、编辑产品、启用/停用产品、查看产品关联 SKU、CSV 批量导入、删除/批量删除或停用，并在删除前检查 SKU 引用。 |
+| `/admin/skus` | 已完成管理和批量维护第一版 | SKU 基础资料管理页面。读取 `skus`、`products`、`inventory_items`、`bom_headers`、`bom_items`，支持 SKU 列表、搜索筛选、汇总卡片、新增 SKU、编辑 SKU、启用/停用 SKU、查看库存入口、查看 BOM 关联、CSV 批量导入、删除/批量删除或停用，并在删除前检查 BOM、FBA、生产、采购、库存和库存流水引用。 |
+| `/admin/suppliers` | 已完成管理和批量维护第一版 | 供应商基础资料管理页面。读取 `suppliers` 和 `purchase_orders`，支持供应商列表、搜索、状态筛选、汇总卡片、新增供应商、编辑供应商、启用/停用供应商、查看关联采购单、CSV 批量导入、删除/批量删除或停用，并在删除前检查采购单引用。 |
+| `/admin/warehouses` | 已完成管理和批量维护第一版 | 仓库基础资料管理页面。读取 `warehouses`、`inventory_items`、`inventory_transactions` 和 `skus`，支持仓库列表、搜索筛选、汇总卡片、新增仓库、编辑仓库、启用/停用仓库、查看仓库库存、跳转查看流水、CSV 批量导入、删除/批量删除或停用，并在删除前检查库存、流水、FBA 备货和采购单引用。 |
 | `/admin/users` | 已完成管理第一版 | 用户管理页面。读取 `profiles` 和 `roles`，支持用户资料列表、搜索筛选、汇总卡片、新增/编辑 profiles、启用/停用用户、分配角色，并只读展示角色列表。当前不创建 Supabase Auth 登录账号。 |
 
 ### 当前还是占位或待完善的页面
@@ -172,6 +173,63 @@
 - 根据是否全部到货，更新采购单状态为 `partially_received` 或 `received`。
 - 关联物料需求到货后，更新 `material_requirements.status` 为 `received`。
 
+### 4.6.1 生产领料 / 原材料出库
+
+已完成第一版。
+
+入口：`/production/orders`
+
+当前逻辑：
+
+- 厂长在生产任务页面点击“确认领料”，不需要手动输入领料数量。
+- 系统读取该生产任务已经生成的 `material_requirements`，按 `required_quantity` 作为应领数量。
+- 领料状态优先通过 `inventory_transactions` 判断：同一生产任务只要已经存在 `transaction_type = material_out` 且 `production_order_id = production_orders.id` 的流水，就视为已领料。
+- 确认前会弹出领料清单，显示生产任务单号、成品 SKU、计划生产数量、原材料 SKU、原材料名称、应领数量、当前库存、领料后库存、扣减仓库和足够/不足状态。
+- 库存足够判断使用 `inventory_items.quantity_on_hand - inventory_items.reserved_quantity` 作为可用库存。
+- 扣库存时按真实字段使用 `inventory_items.warehouse_id + sku_id` 的库存记录。优先选择 `warehouse_type = material` 的原材料仓；如果没有明确原材料仓，则选择第一条单仓可用库存足够的库存记录。
+- 第一版不跨仓扣料。如果所有仓库合计够，但没有单个仓库够扣，会提示先手动调整仓库库存。
+- 确认领料时会再次检查是否已经有 `material_out` 流水，防止重复扣料。
+- 确认领料时会再次读取库存，防止页面打开后库存发生变化。
+- 每一种原材料都会扣减对应 `inventory_items.quantity_on_hand`。
+- 每一种原材料都会写一条 `inventory_transactions`，`transaction_type = material_out`，`quantity` 按现有出库逻辑继续记录正数，并通过 `production_order_id` 关联生产任务。
+- 领料成功后，`production_orders.status` 更新为 `in_progress`。
+- 领料成功后，`material_requirements.status` 更新为 `issued`。真实 schema 中 `status` 是 `text`，没有额外枚举限制，所以当前可以写入 `issued`。
+
+本次修改文件：
+
+- `src/lib/api/production.ts`
+- `src/app/(app)/production/orders/page.tsx`
+- `src/app/globals.css`
+- `supabase/dev-material-out-policies.sql`
+- `PROJECT_NOTES.md`
+
+测试方式：
+
+- 运行 `npm run typecheck`。
+- 运行 `npm run build`。
+- 打开 `/production/orders`，确认列表显示领料状态。
+- 对未领料且库存足够的生产任务点击“确认领料”，确认弹窗显示原材料领料清单。
+- 点击“确认领料并开始生产”，确认原材料库存减少、生成 `material_out` 流水、生产任务变为 `in_progress`、物料需求变为 `issued`。
+- 再次打开同一生产任务，确认按钮显示“已领料”且不能重复扣库存。
+
+如果页面读不到或写不进去，优先检查：
+
+- `.env.local` 里的 `NEXT_PUBLIC_SUPABASE_URL` 和 `NEXT_PUBLIC_SUPABASE_ANON_KEY` 是否正确。
+- Supabase 里是否已经执行基础 `dev-policies.sql`。
+- 如果确认领料报 RLS 权限问题，请在 Supabase SQL Editor 执行 `supabase/dev-material-out-policies.sql`。
+- `material_requirements` 是否已经按生产任务生成。
+- `inventory_items` 是否有对应原材料 SKU 的库存记录。
+- `warehouses.warehouse_type` 是否有 `material` 原材料仓；如果没有，系统会退回选择第一条单仓足够的库存记录。
+- `inventory_transactions` 是否已经存在该生产任务的 `material_out` 流水；如果存在，系统会禁止重复领料。
+
+后续待优化：
+
+- 增加补料流程，例如生产过程中发现损耗超出 BOM 时追加领料。
+- 增加退料流程，例如生产结束后把多领原材料退回库存。
+- 增加跨仓扣料能力，但需要先设计仓库调拨或批次规则，避免账务混乱。
+- 正式登录后按厂长/管理员角色收紧确认领料权限。
+- 后续可以把扣库存、写流水、更新状态收进数据库事务或 RPC，进一步降低中途失败造成的数据不一致风险。
+
 ### 4.7 生产入库
 
 已完成第一版。
@@ -219,15 +277,69 @@
 当前逻辑：
 
 - 采购入库写 `material_in`。
+- 生产领料写 `material_out`。
 - 生产入库写 `product_in`。
 - FBA 出库写 `product_out`。
 - 页面可以查看流水类型、SKU、仓库、数量、关联单据、操作时间、备注。
 - 关联单据通过真实字段判断：`purchase_order_id`、`production_order_id`、`replenishment_request_id`。
+- 库存调整写 `adjustment`，调整原因、调整方式、调整前库存、调整后库存、调整差异和操作备注写入 `notes`，方便后续追溯。
 
-待完善：
+### 4.9.1 库存调整
 
-- `material_out` 原材料出库，也就是生产领料，目前还没有正式操作页面。
-- `adjustment` 库存调整，目前还没有正式操作页面。
+已完成第一版。
+
+入口：`/inventory/adjustments`
+
+当前逻辑：
+
+- 页面先读取 `inventory_items` 当前库存，并关联 `skus`、`products`、`warehouses` 显示 SKU 编码、名称、类型、产品、仓库、库存数量、单位和最后更新时间。
+- 支持按 SKU 编码 / 名称搜索，按 SKU 类型筛选全部 / 原材料 / 成品，按仓库筛选，并支持刷新列表。
+- SKU 类型展示规则：`material` 显示为“原材料”，`finished_good` / `finished_product` 显示为“成品”，其他值按原值显示。
+- 点击“调整库存”后打开调整表单，显示 SKU、仓库、当前库存和单位等只读信息。
+- 支持三种调整方式：增加库存、减少库存、直接修正为指定库存。
+- 增加库存时，调整数量必须大于 0，调整后库存 = 当前库存 + 调整数量。
+- 减少库存时，调整数量必须大于 0，且不能大于当前库存，调整后库存 = 当前库存 - 调整数量。
+- 直接修正库存时，用户输入调整后库存，系统计算差异数量 = 调整后库存 - 当前库存；差异为 0 时禁止提交。
+- 不允许调整后库存小于 0。
+- 调整提交时先按真实库存记录重新读取当前库存，再更新 `inventory_items.quantity_on_hand`，并写入一条 `inventory_transactions.transaction_type = adjustment` 的流水。
+- 当前 schema 中 `inventory_transactions.quantity` 的注释说明是“入库为正数，出库也先记录正数，由类型判断方向”，所以库存调整流水的 `quantity` 也继续记录正数；实际增加或减少通过 `notes` 里的“调整差异：+数量 / -数量”追溯。
+- 当前没有真实登录，`operator_id` 仍暂时写 `null`；页面最近调整记录会兼容显示操作人。
+- 页面下方显示最近 `adjustment` 流水，包含操作时间、SKU、仓库、调整数量、调整原因、备注和操作人。
+
+本次修改文件：
+
+- `src/lib/api/inventory.ts`
+- `src/app/(app)/inventory/adjustments/page.tsx`
+- `src/lib/navigation.ts`
+- `src/app/globals.css`
+- `supabase/dev-inventory-adjustment-policies.sql`
+- `PROJECT_NOTES.md`
+
+测试方式：
+
+- 运行 `npm run typecheck`。
+- 运行 `npm run build`。
+- 打开 `/inventory/adjustments`，确认当前库存列表能读取真实数据。
+- 使用 SKU 搜索、SKU 类型筛选、仓库筛选和刷新列表。
+- 对一条库存执行增加库存，确认 `inventory_items.quantity_on_hand` 增加，并新增 `adjustment` 流水。
+- 对一条库存执行减少库存，确认不能超过当前库存，成功后当前库存减少，并新增 `adjustment` 流水。
+- 对一条库存执行直接修正库存，确认系统按目标库存自动计算差异，目标库存不能小于 0，数量不变时不能提交。
+- 在页面下方最近调整记录和 Supabase Table Editor 中确认流水备注里有调整原因、方式、调整前库存、调整后库存、调整差异和操作备注。
+
+如果页面读不到或写不进去，优先检查：
+
+- `.env.local` 里的 `NEXT_PUBLIC_SUPABASE_URL` 和 `NEXT_PUBLIC_SUPABASE_ANON_KEY` 是否正确。
+- Supabase 里是否已经执行基础 `dev-policies.sql`。
+- 如果读取或写入库存调整报 RLS 权限问题，请在 Supabase SQL Editor 执行 `supabase/dev-inventory-adjustment-policies.sql`。
+- `inventory_items` 是否有对应仓库和 SKU 的库存记录。
+- `inventory_transactions` 是否有 `transaction_no`、`warehouse_id`、`sku_id`、`transaction_type`、`quantity`、`operator_id`、`occurred_at`、`notes` 等真实字段。
+- 如果页面提示“这条库存刚刚发生了变化”，说明提交期间库存被其他操作改过，需要刷新页面后重新调整。
+
+后续待优化：
+
+- 正式登录后把 `operator_id` 写成当前登录用户。
+- 后续可以把更新当前库存和写库存流水收进数据库事务或 RPC，进一步降低中途失败导致的数据不一致风险。
+- 如需审批流，可以后续增加库存调整单据表；当前 schema 已支持第一版直接调整和留痕。
 
 ### 4.10 当前库存查看
 
@@ -565,7 +677,103 @@
 - 如果后续要加仓库负责人、库位、备注等字段，需要先确认业务是否真的需要改 schema。
 - 可以给仓库库存详情增加按 SKU 类型或 SKU 关键词筛选。
 
-### 4.17 用户管理
+### 4.17 基础资料批量导入和删除保护
+
+已完成第一版。
+
+入口：
+
+- `/admin/products`
+- `/admin/skus`
+- `/bom`
+- `/admin/suppliers`
+- `/admin/warehouses`
+
+通用能力：
+
+- 新增 `src/lib/utils/csv.ts`，提供 `parseCsv()`、`generateCsvTemplate()`、`downloadCsvTemplate()`、`normalizeCsvValue()`。
+- 新增 `src/components/BulkImportDialog.tsx`，统一处理 CSV 上传、前端解析、预览、行级校验、确认导入和导入结果展示。
+- 新增 `src/components/BulkActionBar.tsx`，统一处理表格勾选、全选当前页、批量停用、批量删除、二次确认和逐条结果展示。
+- 新增 `src/components/ConfirmDialog.tsx`，统一处理删除等危险操作的二次确认。
+- 新增 `src/lib/api/bulk-management.ts`，集中放产品、SKU、BOM、供应商、仓库的批量导入校验、批量写入、删除保护、批量停用和批量删除逻辑。
+
+批量导入规则：
+
+- 当前第一版支持 CSV，不引入额外 Excel 依赖。
+- 每个页面都有“下载模板”和“批量导入”按钮。
+- 上传 CSV 后先预览，不会直接写入数据库。
+- 预览表格显示每一行数据和行级错误。
+- 有错误时不能确认导入，用户需要修改 CSV 后重新上传。
+- 用户点击“确认导入”后才写入 Supabase。
+- 导入完成后显示成功数量和失败数量，并刷新当前列表。
+
+各页面模板字段：
+
+- 产品：`product_code`、`product_name`、`remark`、`status`。
+- SKU：`sku_code`、`sku_name`、`sku_type`、`product_code`、`unit`、`remark`、`status`。
+- BOM：`finished_sku_code`、`bom_version`、`material_sku_code`、`quantity_per_unit`、`loss_rate`、`remark`、`status`。
+- 供应商：`supplier_code`、`supplier_name`、`contact_name`、`phone`、`email`、`address`、`remark`、`status`。
+- 仓库：`warehouse_code`、`warehouse_name`、`warehouse_type`、`address`、`status`。当前 `warehouses` 真实表没有备注字段，所以模板不包含 `remark`。
+
+导入校验重点：
+
+- 产品：产品编码和产品名称必填；产品编码不能和已有 `products.product_code` 重复，也不能在同一个 CSV 内重复；状态只能是 `active` 或 `inactive`。
+- SKU：SKU 编码、名称、类型必填；`sku_type` 只能是 `finished_good` 或 `material`；成品 SKU 必须填写已存在的 `product_code`；原材料仍写入 `skus`，不新增 `materials` 表；SKU 编码不能重复。
+- BOM：按 `finished_sku_code + bom_version` 分组；成品 SKU 必须是 `sku_type = finished_good`；原材料 SKU 必须是 `sku_type = material`；同一个 BOM 内不能重复同一个原材料；`quantity_per_unit` 必须大于 0；`loss_rate` 不能小于 0；预览会显示会创建几个 BOM 主表和多少条 BOM 明细。
+- 供应商：供应商编码和名称必填；供应商编码不能重复；邮箱如果填写会做简单格式校验。
+- 仓库：仓库编码和名称必填；仓库编码不能重复；仓库类型支持 `material`、`finished_good`、`finished_product`、`semi_finished`、`fba_staging`、`fba`、`internal`。
+
+删除和批量处理规则：
+
+- 五个页面都支持单条删除、勾选后批量删除、勾选后批量停用。
+- 所有删除都会先弹出确认框，批量删除会显示将要处理的数据列表。
+- 批量删除逐条校验，能删除的删除，不能删除的显示具体失败原因。
+- 因为这些基础资料表都有 `status` 字段，被业务使用过的数据优先停用，不允许硬删。
+
+删除保护规则：
+
+- 产品：如果已经有 `skus.product_id` 关联 SKU，不允许物理删除，建议停用。
+- SKU：如果被 `bom_headers.product_sku_id`、`bom_items.component_sku_id`、`fba_replenishment_requests.sku_id`、`production_orders.sku_id`、`material_requirements.material_sku_id`、`purchase_order_items.sku_id`、`inventory_items.sku_id`、`inventory_transactions.sku_id` 任意引用，不允许物理删除，建议停用。
+- BOM：如果已有 `production_orders.bom_header_id` 引用，不允许物理删除 BOM 主表或 BOM 明细，建议停用 BOM。未被使用时，删除 BOM 主表会先删 `bom_items`，再删 `bom_headers`。
+- 供应商：如果已有 `purchase_orders.supplier_id` 引用，不允许物理删除，建议停用。
+- 仓库：如果已有 `inventory_items.warehouse_id`、`inventory_transactions.warehouse_id`、`fba_replenishment_requests.target_warehouse_id`、`purchase_orders.warehouse_id` 任意引用，不允许物理删除，建议停用。
+
+库存流水规则：
+
+- `inventory_transactions` 是库存历史账本，绝对不能删除。
+- 库存流水页面仍只做查看和筛选，不增加删除、编辑、批量删除、批量编辑。
+- `inventory_items` 是当前库存，基础资料删除功能不删除它。
+- 库存数量变化必须继续通过入库、出库和库存调整流程写流水，不绕过库存流水直接删库存。
+
+测试批量导入：
+
+- 打开对应页面，点击“下载模板”。
+- 填写 CSV 后点击“批量导入”，选择 CSV 文件。
+- 确认预览表格能显示每行数据和校验结果。
+- 故意填重复编码、缺必填项、错误状态或不存在的外键，确认行级错误能显示，并且不能确认导入。
+- 修正 CSV 后重新上传，确认可以点击“确认导入”。
+- 导入完成后确认成功/失败数量显示正确，列表刷新后能看到新增数据。
+
+测试删除和批量删除：
+
+- 先对没有任何业务引用的测试数据点“删除”，确认二次确认后可以删除。
+- 对已有 SKU 的产品、已有库存或流水的 SKU、已有采购单的供应商、已有库存或流水的仓库、已有生产任务引用的 BOM 点“删除”，确认会被阻止并提示建议停用。
+- 勾选多条数据后点击“批量删除”，确认每条会单独处理，成功和失败原因都能显示。
+- 勾选多条数据后点击“批量停用”，确认 `status` 更新为 `inactive`，历史业务数据不受影响。
+
+RLS 策略：
+
+- 如果批量导入、删除或停用报权限问题，请在 Supabase SQL Editor 执行 `supabase/dev-bulk-import-delete-policies.sql`。
+- 这个策略文件只用于开发阶段，生产环境必须按真实用户、角色和操作权限收紧。
+- 该策略文件不开放 `inventory_transactions`、`inventory_items`、采购单、生产任务、FBA 备货需求等业务流水/业务单据的 delete 权限。
+
+后续待完善：
+
+- `/admin/users` 用户资料批量导入先不完整实现。当前阶段仍只管理 `profiles`，不创建 Supabase Auth 用户，不使用 `service_role`。
+- `/replenishment` FBA 备货需求批量导入先预留。业务单据不建议随便删除，后续实现时必须校验 SKU、仓库、数量和流程状态。
+- `/inventory/adjustments` 库存调整批量导入先预留。后续实现时必须写 `inventory_transactions`，不能只改 `inventory_items`。
+
+### 4.18 用户管理
 
 已完成第一版。
 
@@ -657,7 +865,7 @@
 | FBA 备货 | FBA 备货需求 `/replenishment`、创建 FBA 备货 `/replenishment/new` |
 | 生产管理 | 厂长排产 `/production/planning`、生产任务 `/production/orders`、BOM 管理 `/bom`、物料需求 `/materials/requirements` |
 | 采购管理 | 采购单 `/purchase/orders`、供应商管理 `/admin/suppliers` |
-| 仓库库存 | 入库管理 `/inventory/inbound`、FBA 出库 `/inventory/fba-outbound`、原材料库存 `/inventory/materials`、成品库存 `/inventory/products`、库存流水 `/inventory/transactions` |
+| 仓库库存 | 入库管理 `/inventory/inbound`、FBA 出库 `/inventory/fba-outbound`、原材料库存 `/inventory/materials`、成品库存 `/inventory/products`、库存流水 `/inventory/transactions`、库存调整 `/inventory/adjustments` |
 | 基础资料 | 产品管理 `/admin/products`、SKU 管理 `/admin/skus`、仓库管理 `/admin/warehouses` |
 | 系统管理 | 用户管理 `/admin/users` |
 
@@ -684,6 +892,7 @@
 - 运行 `npm run build`。
 - 打开 `/dashboard`，确认首页入口高亮。
 - 打开 `/inventory/products`，确认“仓库库存”自动展开，“成品库存”高亮。
+- 打开 `/inventory/adjustments`，确认“仓库库存”自动展开，“库存调整”高亮。
 - 点击其他一级菜单，确认可以展开和收起，且不会影响业务页面。
 - 切换模拟角色，确认菜单仍按角色过滤。
 
@@ -724,6 +933,8 @@
 | `dev-fba-outbound-policies.sql` | 开发阶段允许 FBA 出库页面读取待出库需求、写出库流水、扣减成品库存、标记已发往 FBA。 |
 | `dev-production-orders-policies.sql` | 开发阶段允许生产任务页面读取生产任务、物料需求、入库流水，并更新生产任务状态。 |
 | `dev-inventory-transactions-policies.sql` | 开发阶段允许库存流水页面读取库存流水和关联基础资料，只开放查询，不开放新增、更新、删除。 |
+| `dev-inventory-adjustment-policies.sql` | 开发阶段允许库存调整页面读取当前库存和调整流水、更新当前库存、写入 adjustment 流水。不开放删除，也不开放直接修改库存流水。 |
+| `dev-bulk-import-delete-policies.sql` | 开发阶段允许产品、SKU、供应商、仓库、BOM 做批量导入、停用和受保护删除；业务流水和库存流水只开放读取用于删除保护检查，不开放 delete。 |
 
 重要提醒：
 
@@ -937,13 +1148,14 @@ FBA 出库是单独动作，不能把成品入库自动等同于发往 FBA。
    - 现在只是前端 mock 角色控制菜单。
    - 后续需要结合真实登录和 RLS。
 
-8. 生产领料 / 原材料出库
-   - 当前 `inventory_transactions` 支持 `material_out` 类型。
-   - 但还没有正式页面处理生产领料和扣减原材料库存。
+8. 生产领料 / 原材料出库后续优化
+   - 当前 `/production/orders` 已完成确认领料第一版。
+   - 后续补补料、退料、跨仓扣料和更严格的数据库事务处理。
 
-9. 库存调整
-   - 当前 `inventory_transactions` 支持 `adjustment` 类型。
-   - 但还没有正式库存调整页面。
+9. 库存调整后续优化
+   - 当前 `/inventory/adjustments` 已完成第一版。
+   - 正式登录后写入真实 `operator_id`。
+   - 后续可增加审批流、附件和数据库事务/RPC。
 
 10. 页面细节优化
    - 表单校验。

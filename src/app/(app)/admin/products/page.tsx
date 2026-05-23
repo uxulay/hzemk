@@ -1,6 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { BulkActionBar } from "@/components/BulkActionBar";
+import { BulkImportDialog } from "@/components/BulkImportDialog";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import {
+  bulkImportProducts,
+  deactivateProductsByIds,
+  deleteProductsByIds,
+  validateProductImportRows,
+  type ProductImportInput
+} from "@/lib/api/bulk-management";
 import {
   createProduct,
   getProductSkus,
@@ -13,6 +23,7 @@ import {
   type ProductStats,
   type ProductStatus
 } from "@/lib/api/products";
+import { downloadCsvTemplate, type CsvTemplateField } from "@/lib/utils/csv";
 
 const productStatusLabels: Record<string, string> = {
   active: "启用",
@@ -52,6 +63,31 @@ const initialStats: ProductStats = {
   inactiveProducts: 0,
   totalSkus: 0
 };
+
+const productImportFields: CsvTemplateField[] = [
+  {
+    key: "product_code",
+    label: "产品编码",
+    required: true,
+    example: "PROD-001"
+  },
+  {
+    key: "product_name",
+    label: "产品名称",
+    required: true,
+    example: "折叠收纳箱"
+  },
+  {
+    key: "remark",
+    label: "备注",
+    example: "产品说明"
+  },
+  {
+    key: "status",
+    label: "状态",
+    example: "active"
+  }
+];
 
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) {
@@ -94,11 +130,16 @@ export default function AdminProductsPage() {
   const [selectedSkus, setSelectedSkus] = useState<ProductSkuRow[]>([]);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
+  const [importOpen, setImportOpen] = useState(false);
+  const [productToDelete, setProductToDelete] =
+    useState<ProductListRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [skuLoading, setSkuLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [statusUpdatingId, setStatusUpdatingId] = useState("");
+  const [deletingProductId, setDeletingProductId] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
@@ -117,6 +158,14 @@ export default function AdminProductsPage() {
     });
   }, [products, searchKeyword, statusFilter]);
 
+  const selectedProducts = useMemo(
+    () => products.filter((product) => selectedProductIds.includes(product.id)),
+    [products, selectedProductIds]
+  );
+  const allFilteredSelected =
+    filteredProducts.length > 0 &&
+    filteredProducts.every((product) => selectedProductIds.includes(product.id));
+
   const loadPageData = async () => {
     try {
       setLoading(true);
@@ -129,6 +178,11 @@ export default function AdminProductsPage() {
 
       setProducts(productData);
       setStats(statsData);
+      setSelectedProductIds((current) =>
+        current.filter((productId) =>
+          productData.some((product) => product.id === productId)
+        )
+      );
       setSelectedProduct((current) => {
         if (!current) {
           return null;
@@ -140,6 +194,7 @@ export default function AdminProductsPage() {
       setErrorMessage(getErrorMessage(error));
       setProducts([]);
       setStats(initialStats);
+      setSelectedProductIds([]);
       setSelectedProduct(null);
       setSelectedSkus([]);
     } finally {
@@ -231,6 +286,90 @@ export default function AdminProductsPage() {
       setErrorMessage(getErrorMessage(error));
     } finally {
       setStatusUpdatingId("");
+    }
+  };
+
+  const toggleProductSelection = (productId: string) => {
+    setSelectedProductIds((current) =>
+      current.includes(productId)
+        ? current.filter((id) => id !== productId)
+        : [...current, productId]
+    );
+  };
+
+  const toggleAllFilteredProducts = () => {
+    if (allFilteredSelected) {
+      setSelectedProductIds((current) =>
+        current.filter(
+          (productId) =>
+            !filteredProducts.some((product) => product.id === productId)
+        )
+      );
+      return;
+    }
+
+    setSelectedProductIds((current) =>
+      Array.from(
+        new Set([...current, ...filteredProducts.map((product) => product.id)])
+      )
+    );
+  };
+
+  const importProducts = async (
+    rows: Array<{ data?: ProductImportInput }>
+  ) => {
+    const result = await bulkImportProducts(
+      rows
+        .map((row) => row.data)
+        .filter((row): row is ProductImportInput => Boolean(row))
+    );
+
+    await loadPageData();
+    setSuccessMessage(
+      `产品批量导入完成：成功 ${result.successCount} 条，失败 ${result.failedCount} 条。`
+    );
+
+    return result;
+  };
+
+  const batchDeactivateProducts = async (items: ProductListRow[]) => {
+    const results = await deactivateProductsByIds(items.map((item) => item.id));
+    await loadPageData();
+    return results;
+  };
+
+  const batchDeleteProducts = async (items: ProductListRow[]) => {
+    const results = await deleteProductsByIds(items.map((item) => item.id));
+    await loadPageData();
+    return results;
+  };
+
+  const confirmDeleteProduct = async () => {
+    if (!productToDelete) {
+      return;
+    }
+
+    try {
+      setDeletingProductId(productToDelete.id);
+      setErrorMessage("");
+      setSuccessMessage("");
+
+      const [result] = await deleteProductsByIds([productToDelete.id]);
+
+      if (result?.success) {
+        setSuccessMessage(`产品 ${productToDelete.product_code} 已删除。`);
+      } else {
+        setErrorMessage(
+          result?.message ?? "产品删除失败，请刷新后再试。"
+        );
+      }
+
+      setProductToDelete(null);
+      await loadPageData();
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setDeletingProductId("");
     }
   };
 
@@ -480,9 +619,25 @@ export default function AdminProductsPage() {
             <p className="eyebrow">产品列表</p>
             <h3>所有产品</h3>
           </div>
-          <button className="secondaryButton" type="button" onClick={refreshAll}>
-            {loading ? "正在刷新..." : "刷新列表"}
-          </button>
+          <div className="rowActions">
+            <button
+              type="button"
+              onClick={() =>
+                downloadCsvTemplate(
+                  "products-import-template.csv",
+                  productImportFields
+                )
+              }
+            >
+              下载模板
+            </button>
+            <button type="button" onClick={() => setImportOpen(true)}>
+              批量导入
+            </button>
+            <button type="button" onClick={refreshAll}>
+              {loading ? "正在刷新..." : "刷新列表"}
+            </button>
+          </div>
         </div>
 
         <div className="listToolbar productToolbar">
@@ -512,6 +667,15 @@ export default function AdminProductsPage() {
           </button>
         </div>
 
+        <BulkActionBar
+          selectedItems={selectedProducts}
+          getItemLabel={(product) => `${product.product_code} / ${product.name}`}
+          entityName="产品"
+          onClearSelection={() => setSelectedProductIds([])}
+          onDeactivateSelected={batchDeactivateProducts}
+          onDeleteSelected={batchDeleteProducts}
+        />
+
         {loading ? <div className="debugNotice">正在读取产品数据...</div> : null}
 
         {!loading && filteredProducts.length === 0 ? (
@@ -523,6 +687,15 @@ export default function AdminProductsPage() {
             <table className="dataTable productTable">
               <thead>
                 <tr>
+                  <th className="selectColumn">
+                    <input
+                      aria-label="全选当前页产品"
+                      className="tableCheckbox"
+                      type="checkbox"
+                      checked={allFilteredSelected}
+                      onChange={toggleAllFilteredProducts}
+                    />
+                  </th>
                   <th>产品编码</th>
                   <th>产品名称</th>
                   <th>产品状态</th>
@@ -539,6 +712,15 @@ export default function AdminProductsPage() {
 
                   return (
                     <tr key={product.id}>
+                      <td>
+                        <input
+                          aria-label={`选择产品 ${product.product_code}`}
+                          className="tableCheckbox"
+                          type="checkbox"
+                          checked={selectedProductIds.includes(product.id)}
+                          onChange={() => toggleProductSelection(product.id)}
+                        />
+                      </td>
                       <td>{product.product_code}</td>
                       <td>{product.name}</td>
                       <td>
@@ -576,6 +758,14 @@ export default function AdminProductsPage() {
                             disabled={skuLoading}
                           >
                             查看 SKU
+                          </button>
+                          <button
+                            className="dangerButton"
+                            type="button"
+                            onClick={() => setProductToDelete(product)}
+                            disabled={deletingProductId === product.id}
+                          >
+                            删除
                           </button>
                         </div>
                       </td>
@@ -647,6 +837,37 @@ export default function AdminProductsPage() {
           )}
         </section>
       ) : null}
+
+      <BulkImportDialog<ProductImportInput>
+        open={importOpen}
+        title="产品批量导入"
+        description="请按模板填写产品编码、产品名称、备注和状态。上传后会先逐行校验，确认导入后才写入 Supabase。"
+        templateFileName="products-import-template.csv"
+        fields={productImportFields}
+        validateRows={validateProductImportRows}
+        onImport={importProducts}
+        onClose={() => setImportOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={Boolean(productToDelete)}
+        title="确认删除产品"
+        description={
+          <p>
+            删除前会检查这个产品下面是否已有 SKU。只要已有 SKU 或业务引用，就不会物理删除，建议改为停用。
+          </p>
+        }
+        confirmLabel="确认删除"
+        danger
+        loading={Boolean(deletingProductId)}
+        items={
+          productToDelete
+            ? [`${productToDelete.product_code} / ${productToDelete.name}`]
+            : []
+        }
+        onClose={() => setProductToDelete(null)}
+        onConfirm={confirmDeleteProduct}
+      />
     </main>
   );
 }

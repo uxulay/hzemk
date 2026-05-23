@@ -90,6 +90,29 @@ export type CurrentInventoryFilters = {
   stockStatus?: InventoryStockStatusFilter;
 };
 
+export type InventoryAdjustmentSkuTypeFilter =
+  | "all"
+  | "material"
+  | "finished_good";
+
+export type InventoryAdjustmentFilters = {
+  warehouseId?: string;
+  skuKeyword?: string;
+  skuType?: InventoryAdjustmentSkuTypeFilter;
+};
+
+export type InventoryAdjustmentMode = "increase" | "decrease" | "set_to";
+
+export type InventoryAdjustmentReason =
+  | "stocktake_gain"
+  | "stocktake_loss"
+  | "damage_loss"
+  | "sample_use"
+  | "data_correction"
+  | "other";
+
+export type InventoryAdjustmentRow = CurrentInventoryRow;
+
 export type CurrentInventoryWarehouse = {
   id: string;
   warehouse_code: string;
@@ -275,6 +298,25 @@ export type CreateFbaOutboundInput = {
   operationNotes?: string;
 };
 
+export type AdjustInventoryItemInput = {
+  inventoryItemId: string;
+  adjustmentMode: InventoryAdjustmentMode;
+  adjustmentQuantity?: number;
+  targetQuantity?: number;
+  reason: InventoryAdjustmentReason;
+  notes?: string;
+};
+
+export type CreateAdjustmentTransactionInput = {
+  inventoryItem: InventoryAdjustmentRow;
+  adjustmentMode: InventoryAdjustmentMode;
+  reason: InventoryAdjustmentReason;
+  beforeQuantity: number;
+  afterQuantity: number;
+  signedDifference: number;
+  notes?: string;
+};
+
 type MaybeRelation<T> = T | T[] | null;
 
 type RawReceivablePurchaseOrderItem = Omit<
@@ -431,6 +473,29 @@ function createInventoryTransactionNo() {
   const randomPart = Math.random().toString(36).slice(2, 8).toUpperCase();
 
   return `INV-${datePart}-${randomPart}`;
+}
+
+const inventoryAdjustmentModeLabels: Record<InventoryAdjustmentMode, string> = {
+  increase: "增加库存",
+  decrease: "减少库存",
+  set_to: "直接修正库存"
+};
+
+const inventoryAdjustmentReasonLabels: Record<InventoryAdjustmentReason, string> = {
+  stocktake_gain: "盘盈",
+  stocktake_loss: "盘亏",
+  damage_loss: "破损报废",
+  sample_use: "样品领用",
+  data_correction: "数据修正",
+  other: "其他"
+};
+
+function getInventoryAdjustmentModeLabel(mode: InventoryAdjustmentMode) {
+  return inventoryAdjustmentModeLabels[mode];
+}
+
+function getInventoryAdjustmentReasonLabel(reason: InventoryAdjustmentReason) {
+  return inventoryAdjustmentReasonLabels[reason];
 }
 
 function getPurchaseOrderSelect() {
@@ -658,6 +723,60 @@ function getCurrentInventorySelect() {
   `;
 }
 
+function getInventoryTransactionSelect() {
+  return `
+    id,
+    transaction_no,
+    warehouse_id,
+    sku_id,
+    transaction_type,
+    quantity,
+    production_order_id,
+    purchase_order_id,
+    replenishment_request_id,
+    operator_id,
+    occurred_at,
+    notes,
+    created_at,
+    warehouse:warehouses!inventory_transactions_warehouse_id_fkey (
+      id,
+      warehouse_code,
+      name,
+      warehouse_type,
+      status
+    ),
+    sku:skus!inventory_transactions_sku_id_fkey (
+      id,
+      sku_code,
+      sku_name,
+      sku_type,
+      unit,
+      product:products!skus_product_id_fkey (
+        id,
+        product_code,
+        name
+      )
+    ),
+    purchase_order:purchase_orders!inventory_transactions_purchase_order_id_fkey (
+      id,
+      purchase_order_no
+    ),
+    production_order:production_orders!inventory_transactions_production_order_id_fkey (
+      id,
+      production_order_no
+    ),
+    replenishment_request:fba_replenishment_requests!inventory_transactions_replenishment_request_id_fkey (
+      id,
+      request_no
+    ),
+    operator:profiles!inventory_transactions_operator_id_fkey (
+      id,
+      full_name,
+      email
+    )
+  `;
+}
+
 function normalizeCurrentInventory(row: RawCurrentInventoryRow): CurrentInventoryRow {
   const sku = singleRelation(row.sku);
 
@@ -707,6 +826,24 @@ function matchesSkuKeyword(row: CurrentInventoryRow, keyword: string) {
   return [row.sku?.sku_code, row.sku?.sku_name]
     .filter(Boolean)
     .some((value) => value?.toLowerCase().includes(normalizedKeyword));
+}
+
+function matchesAdjustmentSkuType(
+  row: CurrentInventoryRow,
+  skuType: InventoryAdjustmentSkuTypeFilter = "all"
+) {
+  if (skuType === "all") {
+    return true;
+  }
+
+  if (skuType === "finished_good") {
+    return (
+      row.sku?.sku_type === "finished_good" ||
+      row.sku?.sku_type === "finished_product"
+    );
+  }
+
+  return row.sku?.sku_type === skuType;
 }
 
 async function getCurrentInventoryRows(
@@ -787,6 +924,33 @@ export async function getProductInventory(
   return getCurrentInventoryRows("finished_good", filters, "读取成品库存");
 }
 
+export async function getInventoryForAdjustment(
+  filters: InventoryAdjustmentFilters = {}
+): Promise<InventoryAdjustmentRow[]> {
+  const supabase = getSupabaseClient();
+  let query = supabase
+    .from("inventory_items")
+    .select(getCurrentInventorySelect())
+    .order("updated_at", { ascending: false });
+
+  if (filters.warehouseId) {
+    query = query.eq("warehouse_id", filters.warehouseId);
+  }
+
+  const { data, error } = await withTimeout(query, "读取可调整库存");
+
+  if (error) {
+    throw formatSupabaseError("读取可调整库存", error);
+  }
+
+  return sortCurrentInventoryRows(
+    ((data ?? []) as unknown as RawCurrentInventoryRow[])
+      .map(normalizeCurrentInventory)
+      .filter((row) => matchesAdjustmentSkuType(row, filters.skuType ?? "all"))
+      .filter((row) => matchesSkuKeyword(row, filters.skuKeyword ?? ""))
+  );
+}
+
 async function getSkuIdsByKeyword(keyword: string): Promise<string[]> {
   const trimmedKeyword = keyword.trim();
 
@@ -845,59 +1009,7 @@ export async function getInventoryTransactions(
 
   let query = supabase
     .from("inventory_transactions")
-    .select(
-      `
-        id,
-        transaction_no,
-        warehouse_id,
-        sku_id,
-        transaction_type,
-        quantity,
-        production_order_id,
-        purchase_order_id,
-        replenishment_request_id,
-        operator_id,
-        occurred_at,
-        notes,
-        created_at,
-        warehouse:warehouses!inventory_transactions_warehouse_id_fkey (
-          id,
-          warehouse_code,
-          name,
-          warehouse_type,
-          status
-        ),
-        sku:skus!inventory_transactions_sku_id_fkey (
-          id,
-          sku_code,
-          sku_name,
-          sku_type,
-          unit,
-          product:products!skus_product_id_fkey (
-            id,
-            product_code,
-            name
-          )
-        ),
-        purchase_order:purchase_orders!inventory_transactions_purchase_order_id_fkey (
-          id,
-          purchase_order_no
-        ),
-        production_order:production_orders!inventory_transactions_production_order_id_fkey (
-          id,
-          production_order_no
-        ),
-        replenishment_request:fba_replenishment_requests!inventory_transactions_replenishment_request_id_fkey (
-          id,
-          request_no
-        ),
-        operator:profiles!inventory_transactions_operator_id_fkey (
-          id,
-          full_name,
-          email
-        )
-      `
-    )
+    .select(getInventoryTransactionSelect())
     .order("occurred_at", { ascending: false });
 
   if (filters.transactionType && filters.transactionType !== "all") {
@@ -927,6 +1039,29 @@ export async function getInventoryTransactions(
 
   if (error) {
     throw formatSupabaseError("读取库存流水", error);
+  }
+
+  return ((data ?? []) as unknown as RawInventoryTransactionRow[]).map(
+    normalizeInventoryTransaction
+  );
+}
+
+export async function getRecentAdjustmentTransactions(
+  limit = 20
+): Promise<InventoryTransactionRow[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase
+      .from("inventory_transactions")
+      .select(getInventoryTransactionSelect())
+      .eq("transaction_type", "adjustment")
+      .order("occurred_at", { ascending: false })
+      .limit(limit),
+    "读取最近库存调整流水"
+  );
+
+  if (error) {
+    throw formatSupabaseError("读取最近库存调整流水", error);
   }
 
   return ((data ?? []) as unknown as RawInventoryTransactionRow[]).map(
@@ -1032,6 +1167,206 @@ export async function createInventoryTransaction(input: {
   if (error) {
     throw formatSupabaseError("写入库存流水", error);
   }
+}
+
+async function getInventoryItemForAdjustment(
+  inventoryItemId: string
+): Promise<InventoryAdjustmentRow> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase
+      .from("inventory_items")
+      .select(getCurrentInventorySelect())
+      .eq("id", inventoryItemId)
+      .single(),
+    "读取要调整的库存"
+  );
+
+  if (error) {
+    throw formatSupabaseError("读取要调整的库存", error);
+  }
+
+  return normalizeCurrentInventory(data as unknown as RawCurrentInventoryRow);
+}
+
+async function updateInventoryItemQuantity(input: {
+  inventoryItemId: string;
+  expectedQuantity: number;
+  nextQuantity: number;
+  action: string;
+}) {
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase
+      .from("inventory_items")
+      .update({ quantity_on_hand: input.nextQuantity })
+      .eq("id", input.inventoryItemId)
+      .eq("quantity_on_hand", input.expectedQuantity)
+      .select("id")
+      .maybeSingle(),
+    input.action
+  );
+
+  if (error) {
+    throw formatSupabaseError(input.action, error);
+  }
+
+  if (!data) {
+    throw new Error("这条库存刚刚发生了变化，请刷新列表后重新调整。");
+  }
+}
+
+function getUnknownErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "未知错误";
+}
+
+function getAdjustmentTarget(input: {
+  currentQuantity: number;
+  adjustmentMode: InventoryAdjustmentMode;
+  adjustmentQuantity?: number;
+  targetQuantity?: number;
+}) {
+  if (input.adjustmentMode === "set_to") {
+    const targetQuantity = Number(input.targetQuantity);
+
+    if (!Number.isFinite(targetQuantity) || targetQuantity < 0) {
+      throw new Error("调整后库存不能小于 0。");
+    }
+
+    const nextQuantity = roundQuantity(targetQuantity);
+    const signedDifference = roundQuantity(nextQuantity - input.currentQuantity);
+
+    if (signedDifference === 0) {
+      throw new Error("库存数量没有变化。");
+    }
+
+    return {
+      nextQuantity,
+      signedDifference
+    };
+  }
+
+  const adjustmentQuantity = Number(input.adjustmentQuantity);
+
+  if (!Number.isFinite(adjustmentQuantity) || adjustmentQuantity <= 0) {
+    throw new Error("调整数量必须大于 0。");
+  }
+
+  if (
+    input.adjustmentMode === "decrease" &&
+    adjustmentQuantity > input.currentQuantity
+  ) {
+    throw new Error("减少库存数量不能大于当前库存。");
+  }
+
+  const signedDifference =
+    input.adjustmentMode === "increase"
+      ? roundQuantity(adjustmentQuantity)
+      : roundQuantity(-adjustmentQuantity);
+  const nextQuantity = roundQuantity(input.currentQuantity + signedDifference);
+
+  if (nextQuantity < 0) {
+    throw new Error("调整后库存不能小于 0。");
+  }
+
+  return {
+    nextQuantity,
+    signedDifference
+  };
+}
+
+export async function createAdjustmentTransaction(
+  input: CreateAdjustmentTransactionInput
+) {
+  const unit = input.inventoryItem.sku?.unit ?? input.inventoryItem.unit;
+  const reasonLabel = getInventoryAdjustmentReasonLabel(input.reason);
+  const modeLabel = getInventoryAdjustmentModeLabel(input.adjustmentMode);
+  const signedDifferenceText =
+    input.signedDifference > 0
+      ? `+${input.signedDifference}`
+      : String(input.signedDifference);
+  const noteParts = [
+    `调整原因：${reasonLabel}（${input.reason}）`,
+    `调整方式：${modeLabel}（${input.adjustmentMode}）`,
+    `调整前库存：${input.beforeQuantity} ${unit}`,
+    `调整后库存：${input.afterQuantity} ${unit}`,
+    `调整差异：${signedDifferenceText} ${unit}`,
+    `操作备注：${input.notes?.trim() || "-"}`
+  ];
+
+  await createInventoryTransaction({
+    warehouseId: input.inventoryItem.warehouse_id,
+    skuId: input.inventoryItem.sku_id,
+    transactionType: "adjustment",
+    quantity: roundQuantity(Math.abs(input.signedDifference)),
+    notes: noteParts.join("\n")
+  });
+}
+
+export async function adjustInventoryItem(input: AdjustInventoryItemInput) {
+  if (!input.inventoryItemId) {
+    throw new Error("请选择要调整的库存。");
+  }
+
+  if (!input.reason) {
+    throw new Error("请选择调整原因。");
+  }
+
+  const inventoryItem = await getInventoryItemForAdjustment(input.inventoryItemId);
+  const currentQuantity = roundQuantity(Number(inventoryItem.quantity_on_hand));
+  const { nextQuantity, signedDifference } = getAdjustmentTarget({
+    currentQuantity,
+    adjustmentMode: input.adjustmentMode,
+    adjustmentQuantity: input.adjustmentQuantity,
+    targetQuantity: input.targetQuantity
+  });
+
+  await updateInventoryItemQuantity({
+    inventoryItemId: inventoryItem.id,
+    expectedQuantity: currentQuantity,
+    nextQuantity,
+    action: "更新当前库存"
+  });
+
+  try {
+    await createAdjustmentTransaction({
+      inventoryItem,
+      adjustmentMode: input.adjustmentMode,
+      reason: input.reason,
+      beforeQuantity: currentQuantity,
+      afterQuantity: nextQuantity,
+      signedDifference,
+      notes: input.notes
+    });
+  } catch (error) {
+    try {
+      await updateInventoryItemQuantity({
+        inventoryItemId: inventoryItem.id,
+        expectedQuantity: nextQuantity,
+        nextQuantity: currentQuantity,
+        action: "回滚当前库存"
+      });
+    } catch (rollbackError) {
+      throw new Error(
+        `库存已经更新，但库存流水写入失败，自动回滚也失败。原始错误：${getUnknownErrorMessage(
+          error
+        )}；回滚错误：${getUnknownErrorMessage(rollbackError)}。请立刻检查库存和流水。`
+      );
+    }
+
+    throw error;
+  }
+
+  return {
+    inventoryItem,
+    beforeQuantity: currentQuantity,
+    afterQuantity: nextQuantity,
+    signedDifference
+  };
 }
 
 async function getPurchaseOrderById(
