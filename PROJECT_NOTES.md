@@ -52,6 +52,7 @@
 | `/inventory/products` | 已完成查询第一版 | 成品当前库存页面。读取 `inventory_items`，按成品 SKU 筛选，显示当前成品库存、仓库和查看流水入口。 |
 | `/admin/products` | 已完成管理和批量维护第一版 | 产品基础资料管理页面。读取 `products` 和 `skus`，支持产品列表、搜索、状态筛选、汇总卡片、新增产品、编辑产品、启用/停用产品、查看产品关联 SKU、CSV 批量导入、删除/批量删除或停用，并在删除前检查 SKU 引用。 |
 | `/admin/skus` | 已完成管理和批量维护第一版 | SKU 基础资料管理页面。读取 `skus`、`products`、`inventory_items`、`bom_headers`、`bom_items`，支持 SKU 列表、搜索筛选、汇总卡片、新增 SKU、编辑 SKU、启用/停用 SKU、查看库存入口、查看 BOM 关联、CSV 批量导入、删除/批量删除或停用，并在删除前检查 BOM、FBA、生产、采购、库存和库存流水引用。 |
+| `/admin/materials` | 已完成管理和批量维护第一版 | 辅料管理页面。直接读取 `skus.sku_type = material` 的辅料资料，支持搜索筛选、汇总卡片、新增辅料、编辑辅料、启用/停用、查看库存/BOM/采购/流水详情、CSV 批量导入、删除/批量删除或停用，并在删除前检查 BOM、物料需求、采购、库存和库存流水引用。 |
 | `/admin/suppliers` | 已完成管理和批量维护第一版 | 供应商基础资料管理页面。读取 `suppliers` 和 `purchase_orders`，支持供应商列表、搜索、状态筛选、汇总卡片、新增供应商、编辑供应商、启用/停用供应商、查看关联采购单、CSV 批量导入、删除/批量删除或停用，并在删除前检查采购单引用。 |
 | `/admin/warehouses` | 已完成管理和批量维护第一版 | 仓库基础资料管理页面。读取 `warehouses`、`inventory_items`、`inventory_transactions` 和 `skus`，支持仓库列表、搜索筛选、汇总卡片、新增仓库、编辑仓库、启用/停用仓库、查看仓库库存、跳转查看流水、CSV 批量导入、删除/批量删除或停用，并在删除前检查库存、流水、FBA 备货和采购单引用。 |
 | `/admin/users` | 已完成管理第一版 | 用户管理页面。读取 `profiles` 和 `roles`，支持用户资料列表、搜索筛选、汇总卡片、新增/编辑 profiles、启用/停用用户、分配角色，并只读展示角色列表。当前不创建 Supabase Auth 登录账号。 |
@@ -62,7 +63,7 @@
 | --- | --- | --- |
 | `/login` | 待完善 | 当前只是登录页面样式，点击后进入后台，还没有真实 Supabase Auth 登录。 |
 
-用户管理页面已经新增到导航，管理员可以看到入口。仓库管理页面已经新增到导航，管理员和仓库角色都可以看到入口。
+用户管理页面已经新增到导航，管理员可以看到入口。仓库管理页面已经新增到导航，管理员和仓库角色都可以看到入口。辅料管理页面已经新增到“基础资料”，管理员、采购和仓库角色可以看到入口，其中仓库当前只做查看。
 
 ### 3.1 列表分页和弹窗详情统一优化（2026-05-24）
 
@@ -177,6 +178,48 @@
 - 入库、出库、库存调整弹窗后续可以增加打印/导出单据能力。
 - 库存流水后续可以增加“导出当前筛选结果”。
 - 浏览器人工检查建议重点看 `/inventory/inbound`、`/inventory/fba-outbound`、`/inventory/adjustments` 和 `/purchase/orders` 的弹窗打开、关闭、提交按钮状态。
+
+### 3.4 辅料管理页面（2026-05-24）
+
+本次新增 `/admin/materials` 辅料管理页面，没有新增数据库表，也没有修改数据库 schema。
+
+当前逻辑：
+
+- 辅料资料继续存在 `skus` 表，通过 `skus.sku_type = material` 和成品 SKU 区分。
+- 页面只展示和维护 `sku_type = material` 的记录，不把辅料做成产品 SPU，也不强制绑定 `products.product_id`。
+- 新增辅料时固定写入 `sku_type = material`、`product_id = null`、`amazon_sku = null`、`fnsku = null`。
+- 编辑辅料时允许修改辅料名称、单位、规格和状态；辅料编码锁定，避免影响 BOM、采购、库存和流水记录。
+- 列表显示辅料编码、辅料名称、从规格里临时解析的分类、单位、规格、状态、当前库存汇总、安全库存汇总、BOM 引用次数和采购引用次数。
+- 顶部支持按辅料编码、名称、规格搜索，支持状态筛选、单位筛选、刷新、新增和批量导入。
+- 汇总卡片显示辅料总数、启用辅料、停用辅料、有库存辅料、低库存辅料。
+- 详情弹窗展示基础资料、当前库存汇总、被哪些 BOM 使用、最近采购记录和最近库存流水。
+- 删除前检查 `bom_items.component_sku_id`、`material_requirements.material_sku_id`、`purchase_order_items.sku_id`、`inventory_items.sku_id`、`inventory_transactions.sku_id`，有引用时禁止硬删除并提示改为停用。
+- 批量导入复用 `BulkImportDialog`，上传后先预览和行级校验，有错误行时可下载错误报告，确认后才写入 Supabase。
+- 批量导入模板中文字段：`辅料编码`、`辅料名称`、`单位`、`规格`、`状态`。
+- 批量导入也兼容英文表头：`sku_code`、`sku_name`、`unit`、`specs`、`status`。
+- 批量导入规则：辅料编码和辅料名称必填，单位为空默认 `pcs`，状态为空默认 `active`，辅料编码重复时阻止导入并提示。
+- 导航位置：基础资料 -> 辅料管理；角色可见范围为 `admin`、`procurement`、`warehouse`。当前页面里 admin 和 procurement 可新增/编辑/导入/删除，warehouse 只查看。
+
+本次修改文件：
+
+- `src/app/(app)/admin/materials/page.tsx`
+- `src/lib/api/materials.ts`
+- `src/lib/navigation.ts`
+- `src/components/BulkImportDialog.tsx`
+- `src/lib/utils/csv.ts`
+- `PROJECT_NOTES.md`
+
+本次验证：
+
+- 已运行 `npm run typecheck`，通过。
+- 已运行 `npm run build`，通过。
+- 用户要求不要自动打开浏览器检查，所以本次不做浏览器自动检查。
+
+如果辅料管理读写失败，优先检查：
+
+- 当前 Supabase RLS 是否已经执行 `supabase/dev-skus-policies.sql` 或 `supabase/dev-bulk-import-delete-policies.sql` 中针对 `skus` 的开发阶段读写策略。
+- `inventory_items.safety_stock_quantity` 是否有数据；没有数据时低库存统计可能为 0。
+- 导入 CSV 是否使用了模板字段，或者英文兼容字段 `sku_code`、`sku_name`、`unit`、`specs`、`status`。
 
 ## 4. 当前已完成的业务流程
 

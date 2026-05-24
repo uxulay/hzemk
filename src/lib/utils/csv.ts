@@ -5,6 +5,7 @@ export type CsvTemplateField = {
   label: string;
   required?: boolean;
   example?: string;
+  aliases?: string[];
 };
 
 export type ParsedCsv = {
@@ -132,6 +133,23 @@ export function generateCsvTemplate(
   );
 
   return [headerLine, ...sampleLines].join("\n");
+}
+
+export function getCsvRowValue(
+  row: CsvDataRow,
+  field: Pick<CsvTemplateField, "key" | "aliases">
+) {
+  const keys = [field.key, ...(field.aliases ?? [])];
+
+  for (const key of keys) {
+    const value = normalizeCsvValue(row[key]);
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return "";
 }
 
 export function downloadCsvTemplate(

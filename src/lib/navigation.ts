@@ -118,6 +118,11 @@ export const navigationGroups: NavigationGroup[] = [
       { label: "产品管理", href: "/admin/products", roles: ["admin"] },
       { label: "SKU 管理", href: "/admin/skus", roles: ["admin"] },
       {
+        label: "辅料管理",
+        href: "/admin/materials",
+        roles: ["admin", "procurement", "warehouse"]
+      },
+      {
         label: "仓库管理",
         href: "/admin/warehouses",
         roles: ["warehouse", "admin"]

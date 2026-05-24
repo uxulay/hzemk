@@ -7,6 +7,7 @@ import type {
 } from "@/lib/bulk-types";
 import {
   downloadCsvTemplate,
+  getCsvRowValue,
   parseCsv,
   type CsvTemplateField
 } from "@/lib/utils/csv";
@@ -29,6 +30,16 @@ type BulkImportDialogProps<TData> = {
     rows: BulkImportValidationRow<TData>[]
   ) => ReactNode;
 };
+
+function escapeCsvCell(value: string | number | null | undefined) {
+  const text = String(value ?? "");
+
+  if (/[",\n\r]/.test(text)) {
+    return `"${text.replace(/"/g, "\"\"")}"`;
+  }
+
+  return text;
+}
 
 export function BulkImportDialog<TData>({
   open,
@@ -77,6 +88,31 @@ export function BulkImportDialog<TData>({
     onClose();
   };
 
+  const downloadErrorReport = () => {
+    const errorRows = previewRows.filter((row) => row.errors.length > 0);
+    const headers = ["行号", ...fields.map((field) => field.key), "错误原因"];
+    const csvRows = errorRows.map((row) => [
+      String(row.rowNumber),
+      ...fields.map((field) => getCsvRowValue(row.rawRow, field)),
+      row.errors.join("；")
+    ]);
+    const csv = [headers, ...csvRows]
+      .map((row) => row.map(escapeCsvCell).join(","))
+      .join("\n");
+    const blob = new Blob([`\uFEFF${csv}`], {
+      type: "text/csv;charset=utf-8"
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = templateFileName.replace(/\.csv$/i, "-errors.csv");
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
   const handleFileChange = async (file: File | undefined) => {
     if (!file) {
       return;
@@ -100,7 +136,13 @@ export function BulkImportDialog<TData>({
 
       const missingHeaders = fields
         .filter((field) => field.required)
-        .filter((field) => !parsed.headers.includes(field.key));
+        .filter((field) => {
+          const acceptedHeaders = [field.key, ...(field.aliases ?? [])];
+
+          return acceptedHeaders.every(
+            (header) => !parsed.headers.includes(header)
+          );
+        });
 
       if (missingHeaders.length > 0) {
         throw new Error(
@@ -203,6 +245,11 @@ export function BulkImportDialog<TData>({
                   ? " 请先修改 CSV 后重新上传，错误行不会被导入。"
                   : " 可以确认导入。"}
               </p>
+              {errorRowCount > 0 ? (
+                <button type="button" onClick={downloadErrorReport}>
+                  下载错误报告
+                </button>
+              ) : null}
             </div>
 
             {renderPreviewSummary ? renderPreviewSummary(previewRows) : null}
@@ -230,7 +277,9 @@ export function BulkImportDialog<TData>({
                     >
                       <td>{row.rowNumber}</td>
                       {fields.map((field) => (
-                        <td key={field.key}>{row.rawRow[field.key] || "-"}</td>
+                        <td key={field.key}>
+                          {getCsvRowValue(row.rawRow, field) || "-"}
+                        </td>
                       ))}
                       <td>
                         {row.errors.length > 0 ? (
