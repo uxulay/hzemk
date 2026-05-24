@@ -1,4 +1,5 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
+import type { BrandSummary } from "@/lib/brand-utils";
 
 export type BomStatus = "active" | "inactive";
 
@@ -12,8 +13,10 @@ export type BomSkuOption = {
   status: string;
   product: {
     id: string;
+    brand_id: string | null;
     product_code: string;
     name: string;
+    brand: BrandSummary | null;
   } | null;
 };
 
@@ -76,7 +79,11 @@ export type UpdateBomItemInput = {
 type MaybeRelation<T> = T | T[] | null;
 
 type RawBomSkuOption = Omit<BomSkuOption, "product"> & {
-  product: MaybeRelation<NonNullable<BomSkuOption["product"]>>;
+  product: MaybeRelation<
+    Omit<NonNullable<BomSkuOption["product"]>, "brand"> & {
+      brand: MaybeRelation<BrandSummary>;
+    }
+  >;
 };
 
 type RawBomHeaderRow = Omit<BomHeaderRow, "product_sku"> & {
@@ -129,9 +136,16 @@ function singleRelation<T>(value: MaybeRelation<T>): T | null {
 }
 
 function normalizeSkuOption(row: RawBomSkuOption): BomSkuOption {
+  const product = singleRelation(row.product);
+
   return {
     ...row,
-    product: singleRelation(row.product)
+    product: product
+      ? {
+          ...product,
+          brand: singleRelation(product.brand)
+        }
+      : null
   };
 }
 
@@ -171,8 +185,17 @@ function getSkuSelect() {
     status,
     product:products!skus_product_id_fkey (
       id,
+      brand_id,
       product_code,
-      name
+      name,
+      brand:brands!products_brand_id_fkey (
+        id,
+        brand_code,
+        name,
+        english_name,
+        logo_url,
+        status
+      )
     )
   `;
 }

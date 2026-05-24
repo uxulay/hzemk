@@ -1,4 +1,5 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
+import type { BrandSummary } from "@/lib/brand-utils";
 
 export type Role = {
   id: string;
@@ -11,6 +12,7 @@ export type Role = {
 
 export type Product = {
   id: string;
+  brand_id: string | null;
   product_code: string;
   name: string;
   category: string | null;
@@ -19,6 +21,7 @@ export type Product = {
   status: string;
   created_at: string;
   updated_at: string;
+  brand: BrandSummary | null;
 };
 
 export type Sku = {
@@ -61,6 +64,12 @@ export type Warehouse = {
   updated_at: string;
 };
 
+type MaybeRelation<T> = T | T[] | null;
+
+type RawProduct = Omit<Product, "brand"> & {
+  brand: MaybeRelation<BrandSummary>;
+};
+
 function formatSupabaseError(action: string, error: { message: string }) {
   return new Error(`${action}失败：${error.message}`);
 }
@@ -83,6 +92,21 @@ async function withTimeout<T>(promise: PromiseLike<T>, action: string) {
   }
 }
 
+function singleRelation<T>(value: MaybeRelation<T>): T | null {
+  if (Array.isArray(value)) {
+    return value[0] ?? null;
+  }
+
+  return value;
+}
+
+function normalizeProduct(row: RawProduct): Product {
+  return {
+    ...row,
+    brand: singleRelation(row.brand)
+  };
+}
+
 export async function getRoles(): Promise<Role[]> {
   const supabase = getSupabaseClient();
   const { data, error } = await withTimeout(
@@ -102,7 +126,19 @@ export async function getProducts(): Promise<Product[]> {
   const { data, error } = await withTimeout(
     supabase
       .from("products")
-      .select("*")
+      .select(
+        `
+          *,
+          brand:brands!products_brand_id_fkey (
+            id,
+            brand_code,
+            name,
+            english_name,
+            logo_url,
+            status
+          )
+        `
+      )
       .order("product_code", { ascending: true }),
     "读取产品列表"
   );
@@ -111,7 +147,7 @@ export async function getProducts(): Promise<Product[]> {
     throw formatSupabaseError("读取产品列表", error);
   }
 
-  return (data ?? []) as Product[];
+  return ((data ?? []) as unknown as RawProduct[]).map(normalizeProduct);
 }
 
 export async function getSkus(): Promise<Sku[]> {

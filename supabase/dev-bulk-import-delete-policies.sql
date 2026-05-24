@@ -8,6 +8,7 @@ begin;
 
 grant usage on schema public to anon, authenticated;
 
+grant select, insert, update, delete on public.brands to anon, authenticated;
 grant select, insert, update, delete on public.products to anon, authenticated;
 grant select, insert, update, delete on public.skus to anon, authenticated;
 grant select, insert, update, delete on public.suppliers to anon, authenticated;
@@ -24,6 +25,7 @@ grant select on public.purchase_order_items to anon, authenticated;
 grant select on public.inventory_items to anon, authenticated;
 grant select on public.inventory_transactions to anon, authenticated;
 
+alter table public.brands enable row level security;
 alter table public.products enable row level security;
 alter table public.skus enable row level security;
 alter table public.suppliers enable row level security;
@@ -37,6 +39,22 @@ alter table public.purchase_orders enable row level security;
 alter table public.purchase_order_items enable row level security;
 alter table public.inventory_items enable row level security;
 alter table public.inventory_transactions enable row level security;
+
+drop policy if exists "dev bulk brands select" on public.brands;
+create policy "dev bulk brands select"
+on public.brands for select to anon, authenticated using (true);
+
+drop policy if exists "dev bulk brands insert" on public.brands;
+create policy "dev bulk brands insert"
+on public.brands for insert to anon, authenticated with check (true);
+
+drop policy if exists "dev bulk brands update" on public.brands;
+create policy "dev bulk brands update"
+on public.brands for update to anon, authenticated using (true) with check (true);
+
+drop policy if exists "dev bulk brands delete" on public.brands;
+create policy "dev bulk brands delete"
+on public.brands for delete to anon, authenticated using (true);
 
 drop policy if exists "dev bulk products select" on public.products;
 create policy "dev bulk products select"

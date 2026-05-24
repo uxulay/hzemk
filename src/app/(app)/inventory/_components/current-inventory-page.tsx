@@ -16,6 +16,8 @@ import {
   type MaterialInventoryRow,
   type ProductInventoryRow
 } from "@/lib/api/inventory";
+import { getBrandOptions, type BrandRow } from "@/lib/api/brands";
+import { getBrandCodeName } from "@/lib/brand-utils";
 import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
 
 type CurrentInventoryPageMode = "materials" | "products";
@@ -144,6 +146,8 @@ export function CurrentInventoryPage({ mode }: CurrentInventoryPageProps) {
   const [items, setItems] = useState<CurrentInventoryRow[]>([]);
   const [warehouses, setWarehouses] = useState<CurrentInventoryWarehouse[]>([]);
   const [warehouseId, setWarehouseId] = useState("");
+  const [brandId, setBrandId] = useState("all");
+  const [brands, setBrands] = useState<BrandRow[]>([]);
   const [skuKeyword, setSkuKeyword] = useState("");
   const [stockStatus, setStockStatus] =
     useState<InventoryStockStatusFilter>("all");
@@ -200,6 +204,7 @@ export function CurrentInventoryPage({ mode }: CurrentInventoryPageProps) {
     warehouseId,
     skuKeyword,
     stockStatus: mode === "materials" ? stockStatus : "all",
+    brandId: mode === "products" ? brandId : "all",
     ...overrides
   });
 
@@ -211,15 +216,17 @@ export function CurrentInventoryPage({ mode }: CurrentInventoryPageProps) {
       setErrorMessage("");
       setPage(1);
 
-      const [inventoryData, warehouseData] = await Promise.all([
+      const [inventoryData, warehouseData, brandData] = await Promise.all([
         mode === "materials"
           ? getMaterialInventory(filters)
           : getProductInventory(filters),
-        getWarehousesForFilter()
+        getWarehousesForFilter(),
+        mode === "products" ? getBrandOptions() : Promise.resolve([])
       ]);
 
       setItems(inventoryData);
       setWarehouses(warehouseData);
+      setBrands(brandData);
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setItems([]);
@@ -234,7 +241,7 @@ export function CurrentInventoryPage({ mode }: CurrentInventoryPageProps) {
 
   useEffect(() => {
     setPage(1);
-  }, [skuKeyword, stockStatus, warehouseId]);
+  }, [brandId, skuKeyword, stockStatus, warehouseId]);
 
   const submitFilters = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -245,10 +252,12 @@ export function CurrentInventoryPage({ mode }: CurrentInventoryPageProps) {
     const nextFilters: CurrentInventoryFilters = {
       warehouseId: "",
       skuKeyword: "",
-      stockStatus: "all"
+      stockStatus: "all",
+      brandId: "all"
     };
 
     setWarehouseId("");
+    setBrandId("all");
     setSkuKeyword("");
     setStockStatus("all");
     loadInventory(nextFilters);
@@ -369,6 +378,25 @@ export function CurrentInventoryPage({ mode }: CurrentInventoryPageProps) {
             </label>
           ) : null}
 
+          {mode === "products" ? (
+            <label>
+              品牌
+              <select
+                value={brandId}
+                onChange={(event) => setBrandId(event.target.value)}
+                disabled={loading}
+              >
+                <option value="all">全部品牌</option>
+                <option value="none">无品牌</option>
+                {brands.map((brand) => (
+                  <option key={brand.id} value={brand.id}>
+                    {getBrandCodeName(brand)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+
           <label>
             {config.keywordLabel}
             <input
@@ -422,6 +450,7 @@ export function CurrentInventoryPage({ mode }: CurrentInventoryPageProps) {
                     <th>成品 SKU 编码</th>
                     <th>SKU 名称</th>
                     <th>产品名称</th>
+                    <th>品牌</th>
                     <th>仓库</th>
                     <th>当前库存数量</th>
                     <th>单位</th>
@@ -437,6 +466,7 @@ export function CurrentInventoryPage({ mode }: CurrentInventoryPageProps) {
                         <td>{item.sku?.sku_code ?? "-"}</td>
                         <td>{item.sku?.sku_name ?? "-"}</td>
                         <td>{item.sku?.product?.name ?? "-"}</td>
+                        <td>{getBrandCodeName(item.sku?.product?.brand)}</td>
                         <td>
                           <strong>{item.warehouse?.name ?? "-"}</strong>
                           <span>{item.warehouse?.warehouse_code ?? "-"}</span>
@@ -543,6 +573,12 @@ export function CurrentInventoryPage({ mode }: CurrentInventoryPageProps) {
               <span>所属产品</span>
               <strong>{selectedItem.sku?.product?.name ?? "-"}</strong>
             </div>
+            {mode === "products" ? (
+              <div className="detailItem">
+                <span>品牌</span>
+                <strong>{getBrandCodeName(selectedItem.sku?.product?.brand)}</strong>
+              </div>
+            ) : null}
             <div className="detailItem">
               <span>仓库</span>
               <strong>

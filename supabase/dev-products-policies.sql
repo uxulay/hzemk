@@ -7,11 +7,35 @@ begin;
 
 grant usage on schema public to anon, authenticated;
 
+grant select, insert, update on public.brands to anon, authenticated;
 grant select, insert, update on public.products to anon, authenticated;
 grant select, insert, update on public.skus to anon, authenticated;
 
+alter table public.brands enable row level security;
 alter table public.products enable row level security;
 alter table public.skus enable row level security;
+
+drop policy if exists "dev products read brands" on public.brands;
+create policy "dev products read brands"
+on public.brands
+for select
+to anon, authenticated
+using (true);
+
+drop policy if exists "dev products insert brands" on public.brands;
+create policy "dev products insert brands"
+on public.brands
+for insert
+to anon, authenticated
+with check (true);
+
+drop policy if exists "dev products update brands" on public.brands;
+create policy "dev products update brands"
+on public.brands
+for update
+to anon, authenticated
+using (true)
+with check (true);
 
 drop policy if exists "dev products read products" on public.products;
 create policy "dev products read products"

@@ -1,4 +1,5 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
+import type { BrandSummary } from "@/lib/brand-utils";
 
 export type InventoryTransactionType =
   | "material_in"
@@ -20,6 +21,7 @@ export type InventoryTransactionFilters = {
   transactionType?: InventoryTransactionTypeFilter;
   warehouseId?: string;
   skuKeyword?: string;
+  brandId?: string;
   startDate?: string;
   endDate?: string;
 };
@@ -55,8 +57,10 @@ export type InventoryTransactionRow = {
     unit: string;
     product: {
       id: string;
+      brand_id: string | null;
       product_code: string;
       name: string;
+      brand: BrandSummary | null;
     } | null;
   } | null;
   purchase_order: {
@@ -88,6 +92,7 @@ export type CurrentInventoryFilters = {
   warehouseId?: string;
   skuKeyword?: string;
   stockStatus?: InventoryStockStatusFilter;
+  brandId?: string;
 };
 
 export type InventoryAdjustmentSkuTypeFilter =
@@ -123,8 +128,10 @@ export type CurrentInventoryWarehouse = {
 
 export type CurrentInventoryProduct = {
   id: string;
+  brand_id: string | null;
   product_code: string;
   name: string;
+  brand: BrandSummary | null;
 } | null;
 
 export type CurrentInventorySku = {
@@ -220,8 +227,10 @@ export type ReceivableProductionOrder = {
     unit: string;
     product: {
       id: string;
+      brand_id: string | null;
       product_code: string;
       name: string;
+      brand: BrandSummary | null;
     } | null;
   } | null;
   replenishment_request: {
@@ -253,8 +262,10 @@ export type FbaOutboundRequest = {
     unit: string;
     product: {
       id: string;
+      brand_id: string | null;
       product_code: string;
       name: string;
+      brand: BrandSummary | null;
     } | null;
   } | null;
   target_warehouse: {
@@ -458,6 +469,19 @@ function singleRelation<T>(value: MaybeRelation<T>): T | null {
   return value;
 }
 
+function normalizeProductBrand<T extends { brand?: MaybeRelation<BrandSummary> }>(
+  product: T | null | undefined
+): (Omit<T, "brand"> & { brand: BrandSummary | null }) | null {
+  if (!product) {
+    return null;
+  }
+
+  return {
+    ...product,
+    brand: singleRelation(product.brand ?? null)
+  };
+}
+
 function roundQuantity(value: number) {
   return Math.round((value + Number.EPSILON) * 10000) / 10000;
 }
@@ -562,13 +586,14 @@ function normalizeProductionOrder(
   order: RawReceivableProductionOrder
 ): ReceivableProductionOrder {
   const sku = singleRelation(order.sku);
+  const product = normalizeProductBrand(singleRelation(sku?.product ?? null));
 
   return {
     ...order,
     sku: sku
       ? {
           ...sku,
-          product: singleRelation(sku.product)
+          product
         }
       : null,
     replenishment_request: singleRelation(order.replenishment_request)
@@ -581,6 +606,7 @@ function normalizeFbaOutboundRequest(
   outboundByRequest: Map<string, number>
 ): FbaOutboundRequest {
   const sku = singleRelation(request.sku);
+  const product = normalizeProductBrand(singleRelation(sku?.product ?? null));
   const outboundQuantity = outboundByRequest.get(request.id) ?? 0;
   const pendingOutboundQuantity = roundQuantity(
     Math.max(0, Number(request.requested_quantity) - outboundQuantity)
@@ -591,7 +617,7 @@ function normalizeFbaOutboundRequest(
     sku: sku
       ? {
           ...sku,
-          product: singleRelation(sku.product)
+          product
         }
       : null,
     target_warehouse: singleRelation(request.target_warehouse),
@@ -659,6 +685,7 @@ function normalizeInventoryTransaction(
   transaction: RawInventoryTransactionRow
 ): InventoryTransactionRow {
   const sku = singleRelation(transaction.sku);
+  const product = normalizeProductBrand(singleRelation(sku?.product ?? null));
   const purchaseOrder = singleRelation(transaction.purchase_order);
   const productionOrder = singleRelation(transaction.production_order);
   const replenishmentRequest = singleRelation(transaction.replenishment_request);
@@ -677,7 +704,7 @@ function normalizeInventoryTransaction(
     sku: sku
       ? {
           ...sku,
-          product: singleRelation(sku.product)
+          product
         }
       : null,
     purchase_order: purchaseOrder,
@@ -716,8 +743,17 @@ function getCurrentInventorySelect() {
       unit,
       product:products!skus_product_id_fkey (
         id,
+        brand_id,
         product_code,
-        name
+        name,
+        brand:brands!products_brand_id_fkey (
+          id,
+          brand_code,
+          name,
+          english_name,
+          logo_url,
+          status
+        )
       )
     )
   `;
@@ -753,8 +789,17 @@ function getInventoryTransactionSelect() {
       unit,
       product:products!skus_product_id_fkey (
         id,
+        brand_id,
         product_code,
-        name
+        name,
+        brand:brands!products_brand_id_fkey (
+          id,
+          brand_code,
+          name,
+          english_name,
+          logo_url,
+          status
+        )
       )
     ),
     purchase_order:purchase_orders!inventory_transactions_purchase_order_id_fkey (
@@ -779,6 +824,7 @@ function getInventoryTransactionSelect() {
 
 function normalizeCurrentInventory(row: RawCurrentInventoryRow): CurrentInventoryRow {
   const sku = singleRelation(row.sku);
+  const product = normalizeProductBrand(singleRelation(sku?.product ?? null));
 
   return {
     ...row,
@@ -792,7 +838,7 @@ function normalizeCurrentInventory(row: RawCurrentInventoryRow): CurrentInventor
     sku: sku
       ? {
           ...sku,
-          product: singleRelation(sku.product)
+          product
         }
       : null
   };
@@ -826,6 +872,16 @@ function matchesSkuKeyword(row: CurrentInventoryRow, keyword: string) {
   return [row.sku?.sku_code, row.sku?.sku_name]
     .filter(Boolean)
     .some((value) => value?.toLowerCase().includes(normalizedKeyword));
+}
+
+function matchesBrand(row: CurrentInventoryRow, brandId?: string) {
+  if (!brandId || brandId === "all") {
+    return true;
+  }
+
+  const currentBrandId = row.sku?.product?.brand?.id ?? null;
+
+  return brandId === "none" ? !currentBrandId : currentBrandId === brandId;
 }
 
 function matchesAdjustmentSkuType(
@@ -873,6 +929,7 @@ async function getCurrentInventoryRows(
     ((data ?? []) as unknown as RawCurrentInventoryRow[])
       .map(normalizeCurrentInventory)
       .filter((row) => row.sku?.sku_type === skuType)
+      .filter((row) => matchesBrand(row, filters.brandId))
       .filter((row) => matchesSkuKeyword(row, keyword))
   );
 }
@@ -1041,9 +1098,19 @@ export async function getInventoryTransactions(
     throw formatSupabaseError("读取库存流水", error);
   }
 
-  return ((data ?? []) as unknown as RawInventoryTransactionRow[]).map(
-    normalizeInventoryTransaction
-  );
+  return ((data ?? []) as unknown as RawInventoryTransactionRow[])
+    .map(normalizeInventoryTransaction)
+    .filter((transaction) => {
+      const brandId = filters.brandId ?? "all";
+
+      if (brandId === "all") {
+        return true;
+      }
+
+      const currentBrandId = transaction.sku?.product?.brand?.id ?? null;
+
+      return brandId === "none" ? !currentBrandId : currentBrandId === brandId;
+    });
 }
 
 export async function getRecentAdjustmentTransactions(
@@ -1559,8 +1626,17 @@ export async function getReceivableProductionOrders(): Promise<
             unit,
             product:products!skus_product_id_fkey (
               id,
+              brand_id,
               product_code,
-              name
+              name,
+              brand:brands!products_brand_id_fkey (
+                id,
+                brand_code,
+                name,
+                english_name,
+                logo_url,
+                status
+              )
             )
           ),
           replenishment_request:fba_replenishment_requests!production_orders_replenishment_request_id_fkey (
@@ -1765,8 +1841,17 @@ export async function getFbaOutboundRequests(options: {
             unit,
             product:products!skus_product_id_fkey (
               id,
+              brand_id,
               product_code,
-              name
+              name,
+              brand:brands!products_brand_id_fkey (
+                id,
+                brand_code,
+                name,
+                english_name,
+                logo_url,
+                status
+              )
             )
           ),
           target_warehouse:warehouses!fba_replenishment_requests_target_warehouse_id_fkey (

@@ -1,9 +1,11 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
+import type { BrandSummary } from "@/lib/brand-utils";
 
 export type ProductStatus = "active" | "inactive";
 
 export type ProductRow = {
   id: string;
+  brand_id: string | null;
   product_code: string;
   name: string;
   category: string | null;
@@ -12,6 +14,7 @@ export type ProductRow = {
   status: string;
   created_at: string;
   updated_at: string;
+  brand: BrandSummary | null;
 };
 
 export type ProductListRow = ProductRow & {
@@ -40,6 +43,7 @@ export type ProductStats = {
 export type CreateProductInput = {
   productCode: string;
   name: string;
+  brandId?: string;
   category?: string;
   description?: string;
   productImageUrl?: string;
@@ -49,6 +53,7 @@ export type CreateProductInput = {
 export type UpdateProductInput = {
   productId: string;
   name: string;
+  brandId?: string;
   category?: string;
   description?: string;
   productImageUrl?: string;
@@ -58,6 +63,12 @@ export type UpdateProductInput = {
 type SkuProductLink = {
   id: string;
   product_id: string | null;
+};
+
+type MaybeRelation<T> = T | T[] | null;
+
+type RawProductRow = Omit<ProductRow, "brand"> & {
+  brand: MaybeRelation<BrandSummary>;
 };
 
 function formatSupabaseError(action: string, error: { message: string }) {
@@ -88,6 +99,20 @@ function normalizeOptionalText(value?: string) {
   const normalized = value?.trim();
 
   return normalized ? normalized : null;
+}
+
+function normalizeOptionalId(value?: string) {
+  const normalized = value?.trim();
+
+  return normalized ? normalized : null;
+}
+
+function singleRelation<T>(value: MaybeRelation<T>): T | null {
+  if (Array.isArray(value)) {
+    return value[0] ?? null;
+  }
+
+  return value;
 }
 
 function assertProductStatus(status: string): asserts status is ProductStatus {
@@ -133,13 +158,43 @@ function countSkusByProduct(skus: SkuProductLink[]) {
   return skuCountByProduct;
 }
 
+function getProductSelect() {
+  return `
+    id,
+    brand_id,
+    product_code,
+    name,
+    category,
+    description,
+    product_image_url,
+    status,
+    created_at,
+    updated_at,
+    brand:brands!products_brand_id_fkey (
+      id,
+      brand_code,
+      name,
+      english_name,
+      logo_url,
+      status
+    )
+  `;
+}
+
+function normalizeProduct(row: RawProductRow): ProductRow {
+  return {
+    ...row,
+    brand: singleRelation(row.brand)
+  };
+}
+
 export async function getProducts(): Promise<ProductListRow[]> {
   const supabase = getSupabaseClient();
   const [productResult, skuResult] = await Promise.all([
     withTimeout(
       supabase
         .from("products")
-        .select("*")
+        .select(getProductSelect())
         .order("product_code", { ascending: true }),
       "读取产品列表"
     ),
@@ -161,10 +216,12 @@ export async function getProducts(): Promise<ProductListRow[]> {
     (skuResult.data ?? []) as SkuProductLink[]
   );
 
-  return ((productResult.data ?? []) as ProductRow[]).map((product) => ({
-    ...product,
-    sku_count: skuCountByProduct.get(product.id) ?? 0
-  }));
+  return ((productResult.data ?? []) as unknown as RawProductRow[])
+    .map(normalizeProduct)
+    .map((product) => ({
+      ...product,
+      sku_count: skuCountByProduct.get(product.id) ?? 0
+    }));
 }
 
 export async function getProductStats(): Promise<ProductStats> {
@@ -220,13 +277,14 @@ export async function createProduct(
       .from("products")
       .insert({
         product_code: productCode,
+        brand_id: normalizeOptionalId(input.brandId),
         name,
         category: normalizeOptionalText(input.category),
         description: normalizeOptionalText(input.description),
         product_image_url: normalizeOptionalText(input.productImageUrl),
         status: input.status
       })
-      .select("*")
+      .select(getProductSelect())
       .single(),
     "新增产品"
   );
@@ -235,7 +293,7 @@ export async function createProduct(
     throw formatSupabaseError("新增产品", error);
   }
 
-  return data as ProductRow;
+  return normalizeProduct(data as unknown as RawProductRow);
 }
 
 export async function updateProduct(input: UpdateProductInput): Promise<void> {
@@ -257,6 +315,7 @@ export async function updateProduct(input: UpdateProductInput): Promise<void> {
       .from("products")
       .update({
         name,
+        brand_id: normalizeOptionalId(input.brandId),
         category: normalizeOptionalText(input.category),
         description: normalizeOptionalText(input.description),
         product_image_url: normalizeOptionalText(input.productImageUrl),

@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Modal } from "@/components/Modal";
 import { Pagination } from "@/components/Pagination";
+import { getBrandOptions, type BrandRow } from "@/lib/api/brands";
+import { getBrandCodeName } from "@/lib/brand-utils";
 import {
   getInventoryTransactions,
   getWarehousesForFilter,
@@ -124,9 +126,11 @@ function isEndDateBeforeStartDate(startDate: string, endDate: string) {
 export default function InventoryTransactionsPage() {
   const [transactions, setTransactions] = useState<InventoryTransactionRow[]>([]);
   const [warehouses, setWarehouses] = useState<InventoryTransactionWarehouse[]>([]);
+  const [brands, setBrands] = useState<BrandRow[]>([]);
   const [transactionType, setTransactionType] =
     useState<InventoryTransactionTypeFilter>("all");
   const [warehouseId, setWarehouseId] = useState("");
+  const [brandId, setBrandId] = useState("all");
   const [skuKeyword, setSkuKeyword] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -161,6 +165,7 @@ export default function InventoryTransactionsPage() {
     filters: InventoryTransactionFilters = {
       transactionType,
       warehouseId,
+      brandId,
       skuKeyword,
       startDate,
       endDate
@@ -179,16 +184,19 @@ export default function InventoryTransactionsPage() {
       setErrorMessage("");
       setPage(1);
 
-      const [transactionData, warehouseData] = await Promise.all([
+      const [transactionData, warehouseData, brandData] = await Promise.all([
         getInventoryTransactions(filters),
-        getWarehousesForFilter()
+        getWarehousesForFilter(),
+        getBrandOptions()
       ]);
 
       setTransactions(transactionData);
       setWarehouses(warehouseData);
+      setBrands(brandData);
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setTransactions([]);
+      setBrands([]);
     } finally {
       setLoading(false);
     }
@@ -201,6 +209,7 @@ export default function InventoryTransactionsPage() {
     const initialFilters: InventoryTransactionFilters = {
       transactionType: "all",
       warehouseId: initialWarehouseId,
+      brandId: "all",
       skuKeyword: initialSkuKeyword,
       startDate: "",
       endDate: ""
@@ -226,6 +235,7 @@ export default function InventoryTransactionsPage() {
     const nextFilters: InventoryTransactionFilters = {
       transactionType: "all",
       warehouseId: "",
+      brandId: "all",
       skuKeyword: "",
       startDate: "",
       endDate: ""
@@ -233,6 +243,7 @@ export default function InventoryTransactionsPage() {
 
     setTransactionType("all");
     setWarehouseId("");
+    setBrandId("all");
     setSkuKeyword("");
     setStartDate("");
     setEndDate("");
@@ -325,6 +336,23 @@ export default function InventoryTransactionsPage() {
           </label>
 
           <label>
+            品牌
+            <select
+              value={brandId}
+              onChange={(event) => setBrandId(event.target.value)}
+              disabled={loading}
+            >
+              <option value="all">全部品牌</option>
+              <option value="none">无品牌 / 辅料</option>
+              {brands.map((brand) => (
+                <option key={brand.id} value={brand.id}>
+                  {getBrandCodeName(brand)}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
             开始日期
             <input
               type="date"
@@ -380,6 +408,7 @@ export default function InventoryTransactionsPage() {
                   <th>SKU 名称</th>
                   <th>SKU 类型</th>
                   <th>产品名称</th>
+                  <th>品牌</th>
                   <th>仓库</th>
                   <th>数量</th>
                   <th>单位</th>
@@ -406,6 +435,7 @@ export default function InventoryTransactionsPage() {
                     <td>{transaction.sku?.sku_name ?? "-"}</td>
                     <td>{getSkuTypeLabel(transaction.sku?.sku_type)}</td>
                     <td>{transaction.sku?.product?.name ?? "-"}</td>
+                    <td>{getBrandCodeName(transaction.sku?.product?.brand)}</td>
                     <td>
                       <strong>{transaction.warehouse?.name ?? "-"}</strong>
                       <span>{transaction.warehouse?.warehouse_code ?? "-"}</span>
@@ -476,6 +506,10 @@ export default function InventoryTransactionsPage() {
             <div className="detailItem">
               <span>SKU 类型</span>
               <strong>{getSkuTypeLabel(selectedTransaction.sku?.sku_type)}</strong>
+            </div>
+            <div className="detailItem">
+              <span>品牌</span>
+              <strong>{getBrandCodeName(selectedTransaction.sku?.product?.brand)}</strong>
             </div>
             <div className="detailItem">
               <span>仓库</span>

@@ -30,6 +30,7 @@ import {
   type BomSkuOption,
   type BomStatus
 } from "@/lib/api/bom";
+import { getBrandCodeName } from "@/lib/brand-utils";
 import { downloadCsvTemplate, type CsvTemplateField } from "@/lib/utils/csv";
 import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
 
@@ -155,8 +156,9 @@ function formatDateTime(value: string | null | undefined) {
 
 function getSkuOptionLabel(sku: BomSkuOption) {
   const productName = sku.product?.name ? ` / ${sku.product.name}` : "";
+  const brandName = sku.product?.brand ? ` / ${getBrandCodeName(sku.product.brand)}` : "";
 
-  return `${sku.sku_code} / ${sku.sku_name}${productName}`;
+  return `${sku.sku_code} / ${sku.sku_name}${productName}${brandName}`;
 }
 
 type BomSkuSearchSelectProps = {
@@ -275,6 +277,7 @@ export default function BomPage() {
     useState<BomHeaderFormState>(initialHeaderForm);
   const [itemForm, setItemForm] = useState<BomItemFormState>(initialItemForm);
   const [editingItem, setEditingItem] = useState<EditingBomItem | null>(null);
+  const [brandFilter, setBrandFilter] = useState("all");
   const [showItemForm, setShowItemForm] = useState(false);
   const [selectedBomIds, setSelectedBomIds] = useState<string[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
@@ -323,13 +326,45 @@ export default function BomPage() {
     () => boms.filter((bom) => selectedBomIds.includes(bom.id)),
     [boms, selectedBomIds]
   );
+  const brandOptions = useMemo(() => {
+    const brandById = new Map<
+      string,
+      NonNullable<NonNullable<BomSkuOption["product"]>["brand"]>
+    >();
+
+    finishedGoodSkus.forEach((sku) => {
+      if (sku.product?.brand) {
+        brandById.set(sku.product.brand.id, sku.product.brand);
+      }
+    });
+
+    return [...brandById.values()].sort((first, second) =>
+      first.brand_code.localeCompare(second.brand_code, "zh-CN")
+    );
+  }, [finishedGoodSkus]);
+  const filteredBoms = useMemo(() => {
+    if (brandFilter === "all") {
+      return boms;
+    }
+
+    return boms.filter((bom) => {
+      const brandId = bom.product_sku?.product?.brand?.id ?? null;
+
+      return brandFilter === "none" ? !brandId : brandId === brandFilter;
+    });
+  }, [boms, brandFilter]);
   const allBomsSelected =
-    boms.length > 0 && boms.every((bom) => selectedBomIds.includes(bom.id));
+    filteredBoms.length > 0 &&
+    filteredBoms.every((bom) => selectedBomIds.includes(bom.id));
 
   const paginatedBoms = useMemo(
-    () => paginateItems(boms, page),
-    [boms, page]
+    () => paginateItems(filteredBoms, page),
+    [filteredBoms, page]
   );
+
+  useEffect(() => {
+    setPage(1);
+  }, [brandFilter]);
 
   const loadBomDetail = async (bomHeaderId: string) => {
     try {
@@ -486,11 +521,15 @@ export default function BomPage() {
 
   const toggleAllBoms = () => {
     if (allBomsSelected) {
-      setSelectedBomIds([]);
+      setSelectedBomIds((current) =>
+        current.filter((bomId) => !filteredBoms.some((bom) => bom.id === bomId))
+      );
       return;
     }
 
-    setSelectedBomIds(boms.map((bom) => bom.id));
+    setSelectedBomIds((current) =>
+      Array.from(new Set([...current, ...filteredBoms.map((bom) => bom.id)]))
+    );
   };
 
   const importBomRows = async (rows: Array<{ data?: BomImportInput }>) => {
@@ -770,13 +809,32 @@ export default function BomPage() {
           onDeleteSelected={batchDeleteBoms}
         />
 
+        <div className="listToolbar">
+          <label>
+            品牌
+            <select
+              value={brandFilter}
+              onChange={(event) => setBrandFilter(event.target.value)}
+              disabled={loading}
+            >
+              <option value="all">全部品牌</option>
+              <option value="none">无品牌</option>
+              {brandOptions.map((brand) => (
+                <option key={brand.id} value={brand.id}>
+                  {getBrandCodeName(brand)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
         {loading ? <div className="debugNotice">正在读取 BOM 数据...</div> : null}
 
-        {!loading && boms.length === 0 ? (
+        {!loading && filteredBoms.length === 0 ? (
           <div className="emptyState">暂无 BOM</div>
         ) : null}
 
-        {!loading && boms.length > 0 ? (
+        {!loading && filteredBoms.length > 0 ? (
           <div className="tableWrap">
             <table className="dataTable bomTable">
               <thead>
@@ -794,6 +852,7 @@ export default function BomPage() {
                   <th>成品 SKU 编码</th>
                   <th>成品 SKU 名称</th>
                   <th>产品名称</th>
+                  <th>品牌</th>
                   <th>BOM 版本</th>
                   <th>BOM 状态</th>
                   <th>原材料数量</th>
@@ -820,6 +879,7 @@ export default function BomPage() {
                       <td>{bom.product_sku?.sku_code ?? "-"}</td>
                       <td>{bom.product_sku?.sku_name ?? "-"}</td>
                       <td>{bom.product_sku?.product?.name ?? "-"}</td>
+                      <td>{getBrandCodeName(bom.product_sku?.product?.brand)}</td>
                       <td>{bom.version}</td>
                       <td>
                         <span className={`tablePill bom-status-${bom.status}`}>
@@ -876,11 +936,11 @@ export default function BomPage() {
           </div>
         ) : null}
 
-        {!loading && boms.length > 0 ? (
+        {!loading && filteredBoms.length > 0 ? (
           <Pagination
             page={page}
             pageSize={DEFAULT_PAGE_SIZE}
-            total={boms.length}
+            total={filteredBoms.length}
             onPageChange={setPage}
           />
         ) : null}
@@ -921,6 +981,10 @@ export default function BomPage() {
             <div className="detailItem">
               <span>成品名称</span>
               <strong>{bomDetail.product_sku?.sku_name ?? "-"}</strong>
+            </div>
+            <div className="detailItem">
+              <span>品牌</span>
+              <strong>{getBrandCodeName(bomDetail.product_sku?.product?.brand)}</strong>
             </div>
             <div className="detailItem">
               <span>BOM 状态</span>

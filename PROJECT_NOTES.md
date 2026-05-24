@@ -37,21 +37,22 @@
 | --- | --- | --- |
 | `/dashboard` | 已完成第一版 | 后台首页数据看板。读取待排产 FBA 备货需求、生产中任务、缺料物料、待采购/待到货物料、待入库采购单、有库存成品 SKU、原材料低库存，并展示最新备货需求、进行中生产任务、缺料提醒、最近库存流水。 |
 | `/debug/master-data` | 已完成调试页 | Supabase 基础资料读取测试页。读取角色、产品、成品 SKU、原材料 SKU、供应商、仓库。这个页面用于排查 Supabase 连接、anon key、RLS 策略问题，后续不要删除。 |
-| `/replenishment` | 已完成列表和创建升级版 | FBA 备货需求列表。支持按状态筛选、SKU 搜索、查看详情；右上角“+ 创建备货单”打开创建弹窗，支持 CSV 模板导入多 SKU 明细、单个添加 SKU、明细编辑和提交整张备货单。编辑和删除按钮目前禁用，当前阶段不做修改和删除。 |
+| `/replenishment` | 已完成列表和创建升级版 | FBA 备货需求列表。支持按状态筛选、品牌筛选、SKU 搜索、查看详情；右上角“+ 创建备货单”打开创建弹窗，支持 CSV 模板导入多 SKU 明细、单个添加 SKU、明细编辑和提交整张备货单。编辑和删除按钮目前禁用，当前阶段不做修改和删除。 |
 | `/replenishment/new` | 过渡提示页 | 当前引导到 `/replenishment` 创建整张 FBA 备货单，避免保留两套创建入口。 |
-| `/production/planning` | 已完成排产第一版 | 厂长查看已提交/已接单的 FBA 备货需求，可以接单、拒绝、创建生产任务。创建生产任务时会按 BOM 自动生成物料需求，并把 FBA 备货需求状态更新为 `in_production`。 |
-| `/production/orders` | 已完成跟踪和领料第一版 | 生产任务列表。显示 FBA 备货需求数量、计划生产数量、超量生产数量、已入库数量、待入库数量、物料状态、领料状态、生产状态。支持查看详情、确认领料弹窗、自动扣原材料库存、写 `material_out` 库存流水，并把生产任务更新为 `in_progress`。 |
-| `/bom` | 已完成管理和批量维护第一版 | BOM 管理页面。读取 `bom_headers` 和 `bom_items`，支持新增 BOM、查看明细、添加原材料、编辑 BOM 明细的单位用量/损耗率/备注、启用/停用 BOM、CSV 批量导入、删除明细、删除/批量删除或停用 BOM，并在删除前检查生产任务引用。 |
+| `/production/planning` | 已完成排产第一版 | 厂长查看已提交/已接单的 FBA 备货需求，可以按品牌筛选，可以接单、拒绝、创建生产任务。创建生产任务时会按 BOM 自动生成物料需求，并把 FBA 备货需求状态更新为 `in_production`。 |
+| `/production/orders` | 已完成跟踪和领料第一版 | 生产任务列表。显示品牌、FBA 备货需求数量、计划生产数量、超量生产数量、已入库数量、待入库数量、物料状态、领料状态、生产状态。支持按品牌筛选、查看详情、确认领料弹窗、自动扣原材料库存、写 `material_out` 库存流水，并把生产任务更新为 `in_progress`。 |
+| `/bom` | 已完成管理和批量维护第一版 | BOM 管理页面。读取 `bom_headers` 和 `bom_items`，显示成品 SKU 所属品牌，支持按品牌筛选、新增 BOM、查看明细、添加原材料、编辑 BOM 明细的单位用量/损耗率/备注、启用/停用 BOM、CSV 批量导入、删除明细、删除/批量删除或停用 BOM，并在删除前检查生产任务引用。 |
 | `/materials/requirements` | 已完成查询第一版 | 物料需求列表。读取 `material_requirements`，并回查 `bom_items` 显示 BOM 单位用量和损耗率。支持按状态筛选。当前是查询页，不直接新增、编辑、删除。 |
 | `/purchase/orders` | 已完成采购升级版 | 采购单页面。支持从缺料物料生成采购单、采购人员手动创建采购单、CSV 批量导入、CSV 导出给供应商、列表分页、详情弹窗和状态按钮。缺料生成仍会写入 `purchase_order_items.material_requirement_id` 并把对应物料需求状态更新为 `purchased`。实际库存入库建议走 `/inventory/inbound`。 |
 | `/inventory/inbound` | 已完成入库第一版 | 入库管理。分为采购入库和生产入库。采购入库会写 `material_in` 库存流水、更新 `inventory_items`、采购明细到货数量、采购单状态和物料需求状态。生产入库会写 `product_in` 库存流水、更新成品库存、更新生产任务 `completed_quantity` 和状态。 |
-| `/inventory/fba-outbound` | 已完成 FBA 出库第一版 | FBA 出库单独处理。读取可出库 FBA 备货需求，按成品库存和已出库数量计算待出库数量。提交后写 `product_out` 库存流水、扣减 `inventory_items`，累计出库数量达到备货需求数量后把备货需求标记为 `shipped`。 |
-| `/inventory/transactions` | 已完成查询第一版 | 库存流水页面。读取 `inventory_transactions`，支持按流水类型、仓库、SKU、日期筛选，显示关联采购单、生产任务或 FBA 备货单。当前只查询，不新增、编辑、删除。 |
+| `/inventory/fba-outbound` | 已完成 FBA 出库第一版 | FBA 出库单独处理。读取可出库 FBA 备货需求，显示并支持按品牌筛选，按成品库存和已出库数量计算待出库数量。提交后写 `product_out` 库存流水、扣减 `inventory_items`，累计出库数量达到备货需求数量后把备货需求标记为 `shipped`。 |
+| `/inventory/transactions` | 已完成查询第一版 | 库存流水页面。读取 `inventory_transactions`，支持按流水类型、仓库、品牌、SKU、日期筛选，显示关联采购单、生产任务或 FBA 备货单。当前只查询，不新增、编辑、删除。 |
 | `/inventory/adjustments` | 已完成调整第一版 | 库存调整页面。读取当前库存，支持增加库存、减少库存、直接修正库存，每次调整都会更新 `inventory_items.quantity_on_hand` 并写入 `transaction_type = adjustment` 的库存流水。 |
 | `/inventory/materials` | 已完成查询第一版 | 原材料当前库存页面。读取 `inventory_items`，按 SKU 类型筛选原材料，显示当前库存、安全库存、库存状态、仓库和查看流水入口。 |
-| `/inventory/products` | 已完成查询第一版 | 成品当前库存页面。读取 `inventory_items`，按成品 SKU 筛选，显示当前成品库存、仓库和查看流水入口。 |
-| `/admin/products` | 已完成管理和批量维护第一版 | 产品基础资料管理页面。读取 `products` 和 `skus`，支持产品列表、搜索、状态筛选、汇总卡片、新增产品、编辑产品、启用/停用产品、查看产品关联 SKU、CSV 批量导入、删除/批量删除或停用，并在删除前检查 SKU 引用。 |
-| `/admin/skus` | 已完成管理和批量维护第一版 | SKU 基础资料管理页面。读取 `skus`、`products`、`inventory_items`、`bom_headers`、`bom_items`，支持 SKU 列表、搜索筛选、汇总卡片、新增 SKU、编辑 SKU、启用/停用 SKU、查看库存入口、查看 BOM 关联、CSV 批量导入、删除/批量删除或停用，并在删除前检查 BOM、FBA、生产、采购、库存和库存流水引用。 |
+| `/inventory/products` | 已完成查询第一版 | 成品当前库存页面。读取 `inventory_items`，按成品 SKU 和品牌筛选，显示当前成品库存、品牌、仓库和查看流水入口。 |
+| `/admin/brands` | 已完成管理和批量维护第一版 | 品牌基础资料管理页面。读取 `brands` 和 `products`，支持品牌列表、搜索、状态筛选、汇总卡片、新增品牌、编辑品牌、查看品牌详情、启用/停用、CSV 批量导入、删除/批量删除或停用，并在删除前检查产品引用。 |
+| `/admin/products` | 已完成管理和批量维护第一版 | 产品基础资料管理页面。读取 `products`、`brands` 和 `skus`，支持产品列表显示品牌、搜索、品牌筛选、状态筛选、汇总卡片、新增产品选择品牌、编辑产品修改品牌、启用/停用产品、查看产品关联 SKU、CSV 批量导入品牌字段、删除/批量删除或停用，并在删除前检查 SKU 引用。 |
+| `/admin/skus` | 已完成管理和批量维护第一版 | SKU 基础资料管理页面。读取 `skus`、`products`、`brands`、`inventory_items`、`bom_headers`、`bom_items`，品牌通过 SKU 所属产品继承，不在 SKU 表重复保存。页面支持 SKU 列表显示品牌、按品牌筛选、搜索筛选、汇总卡片、新增 SKU、编辑 SKU、启用/停用 SKU、查看库存入口、查看 BOM/详情关联、CSV 批量导入、删除/批量删除或停用，并在删除前检查 BOM、FBA、生产、采购、库存和库存流水引用。 |
 | `/admin/materials` | 已完成管理和批量维护第一版 | 辅料管理页面。直接读取 `skus.sku_type = material` 的辅料资料，支持搜索筛选、汇总卡片、新增辅料、编辑辅料、启用/停用、查看库存/BOM/采购/流水详情、CSV 批量导入、删除/批量删除或停用，并在删除前检查 BOM、物料需求、采购、库存和库存流水引用。 |
 | `/admin/suppliers` | 已完成管理和批量维护第一版 | 供应商基础资料管理页面。读取 `suppliers` 和 `purchase_orders`，支持供应商列表、搜索、状态筛选、汇总卡片、新增供应商、编辑供应商、启用/停用供应商、查看关联采购单、CSV 批量导入、删除/批量删除或停用，并在删除前检查采购单引用。 |
 | `/admin/warehouses` | 已完成管理和批量维护第一版 | 仓库基础资料管理页面。读取 `warehouses`、`inventory_items`、`inventory_transactions` 和 `skus`，支持仓库列表、搜索筛选、汇总卡片、新增仓库、编辑仓库、启用/停用仓库、查看仓库库存、跳转查看流水、CSV 批量导入、删除/批量删除或停用，并在删除前检查库存、流水、FBA 备货和采购单引用。 |
@@ -63,7 +64,7 @@
 | --- | --- | --- |
 | `/login` | 待完善 | 当前只是登录页面样式，点击后进入后台，还没有真实 Supabase Auth 登录。 |
 
-用户管理页面已经新增到导航，管理员可以看到入口。仓库管理页面已经新增到导航，管理员和仓库角色都可以看到入口。辅料管理页面已经新增到“基础资料”，管理员、采购和仓库角色可以看到入口，其中仓库当前只做查看。
+用户管理页面已经新增到导航，管理员可以看到入口。品牌管理页面已经新增到“基础资料”，管理员可以看到入口。仓库管理页面已经新增到导航，管理员和仓库角色都可以看到入口。辅料管理页面已经新增到“基础资料”，管理员、采购和仓库角色可以看到入口，其中仓库当前只做查看。
 
 ### 3.1 列表分页和弹窗详情统一优化（2026-05-24）
 
@@ -220,6 +221,70 @@
 - 当前 Supabase RLS 是否已经执行 `supabase/dev-skus-policies.sql` 或 `supabase/dev-bulk-import-delete-policies.sql` 中针对 `skus` 的开发阶段读写策略。
 - `inventory_items.safety_stock_quantity` 是否有数据；没有数据时低库存统计可能为 0。
 - 导入 CSV 是否使用了模板字段，或者英文兼容字段 `sku_code`、`sku_name`、`unit`、`specs`、`status`。
+
+### 3.5 品牌管理和产品品牌关联（2026-05-24）
+
+本次新增品牌管理功能，并把品牌按 SPU 产品维度接入系统。
+
+当前逻辑：
+
+- 新增 `/admin/brands` 品牌管理页面，放在“基础资料”下面。
+- 品牌基础资料存放在 `brands` 表，字段为 `brand_code`、`name`、`english_name`、`logo_url`、`status`、`notes`。
+- 产品通过 `products.brand_id` 关联品牌，`brand_id` 允许为空，兼容已有未绑定品牌的产品。
+- SKU 不新增 `brand_id`。SKU 的品牌从 `skus.product_id -> products.brand_id -> brands` 查出来。
+- 辅料 SKU 一般不绑定产品，页面显示为“无品牌 / 辅料”。
+- BOM、库存、FBA 备货单、生产任务、采购单等业务表没有新增 `brand_id`，需要品牌时都通过 SKU 或产品关联查询。
+- `/admin/brands` 支持列表、搜索、状态筛选、新增、编辑、查看、启用/停用、删除前检查产品引用、批量导入。
+- 品牌批量导入模板字段：`brand_code`、`name`、`english_name`、`logo_url`、`status`、`notes`。
+- `/admin/products` 列表显示品牌，新增/编辑产品可选择品牌，支持按品牌筛选；产品批量导入模板新增 `brand` 字段，可填写品牌编码或品牌名称，匹配不到会报错，不会自动创建品牌。
+- `/admin/skus` 列表显示继承来的品牌，支持按品牌筛选；新增/编辑 SKU 时不选择品牌，只选择所属产品。
+- 已展示或筛选品牌的业务页面：`/replenishment`、`/production/planning`、`/production/orders`、`/bom`、`/inventory/products`、`/inventory/fba-outbound`、`/inventory/transactions`。
+
+本次新增 SQL 脚本：
+
+- `scripts/add-brands.sql`：创建 `brands` 表，给 `products` 增加可空 `brand_id`，增加索引、更新时间触发器、开发阶段 RLS 策略。执行前建议先备份数据库。
+
+本次修改文件：
+
+- `supabase/schema.sql`
+- `supabase/dev-policies.sql`
+- `supabase/dev-products-policies.sql`
+- `supabase/dev-bulk-import-delete-policies.sql`
+- `scripts/add-brands.sql`
+- `src/lib/api/brands.ts`
+- `src/lib/api/products.ts`
+- `src/lib/api/skus.ts`
+- `src/lib/api/bom.ts`
+- `src/lib/api/replenishment.ts`
+- `src/lib/api/production.ts`
+- `src/lib/api/inventory.ts`
+- `src/lib/api/master-data.ts`
+- `src/lib/api/bulk-management.ts`
+- `src/lib/brand-utils.ts`
+- `src/lib/navigation.ts`
+- `src/app/(app)/admin/brands/page.tsx`
+- `src/app/(app)/admin/products/page.tsx`
+- `src/app/(app)/admin/skus/page.tsx`
+- `src/app/(app)/bom/page.tsx`
+- `src/app/(app)/replenishment/page.tsx`
+- `src/app/(app)/production/planning/page.tsx`
+- `src/app/(app)/production/orders/page.tsx`
+- `src/app/(app)/inventory/_components/current-inventory-page.tsx`
+- `src/app/(app)/inventory/fba-outbound/page.tsx`
+- `src/app/(app)/inventory/transactions/page.tsx`
+- `PROJECT_NOTES.md`
+
+本次验证：
+
+- 已运行 `npm run typecheck`，通过。
+- 已运行 `npm run build`，通过。
+- 用户要求不要自动打开浏览器检查，所以本次不做浏览器自动检查。
+
+如果品牌页面或品牌字段读取失败，优先检查：
+
+- 是否已在 Supabase SQL Editor 执行 `scripts/add-brands.sql`。
+- 当前 Supabase RLS 是否已有 `brands` 的 select/insert/update/delete 开发阶段策略。
+- 产品导入 CSV 的品牌字段是否能匹配已有品牌编码或品牌名称。
 
 ## 4. 当前已完成的业务流程
 
@@ -1162,7 +1227,7 @@ RLS 策略：
 
 | 文件 | 用途 |
 | --- | --- |
-| `schema.sql` | 数据库建表文件。定义角色、用户资料、产品、SKU、供应商、仓库、BOM、FBA 备货需求、生产任务、物料需求、采购单、库存当前表、库存流水表等。 |
+| `schema.sql` | 数据库建表文件。定义角色、用户资料、品牌、产品、SKU、供应商、仓库、BOM、FBA 备货需求、生产任务、物料需求、采购单、库存当前表、库存流水表等。 |
 | `seed.sql` | 测试数据文件。插入开发阶段测试角色、仓库、供应商、产品、SKU、BOM、库存、FBA 备货需求、生产任务、物料需求、采购单和库存流水。 |
 | `README.md` | Supabase 数据库结构说明，解释为什么本系统不是传统销售订单系统，以及主要表关系。 |
 | `dev-policies.sql` | 开发阶段基础读取策略。主要给 `anon` 和 `authenticated` 开放 select，方便调试基础资料和页面读取。 |
@@ -1182,6 +1247,7 @@ RLS 策略：
 | `dev-inventory-transactions-policies.sql` | 开发阶段允许库存流水页面读取库存流水和关联基础资料，只开放查询，不开放新增、更新、删除。 |
 | `dev-inventory-adjustment-policies.sql` | 开发阶段允许库存调整页面读取当前库存和调整流水、更新当前库存、写入 adjustment 流水。不开放删除，也不开放直接修改库存流水。 |
 | `dev-bulk-import-delete-policies.sql` | 开发阶段允许产品、SKU、供应商、仓库、BOM 做批量导入、停用和受保护删除；业务流水和库存流水只开放读取用于删除保护检查，不开放 delete。 |
+| `scripts/add-brands.sql` | 品牌功能迁移脚本。创建 `brands` 表，给 `products` 增加可空 `brand_id`，并附带开发阶段 RLS 策略。 |
 
 重要提醒：
 
@@ -1199,8 +1265,9 @@ RLS 策略：
 | --- | --- |
 | `roles` | 角色表，保存运营、厂长、采购、仓库、管理员等角色。 |
 | `profiles` | 用户资料表，关联 Supabase Auth 的 `auth.users.id`，保存姓名、邮箱、角色、账号状态。当前页面还没有真实登录，所以很多操作人字段暂时为空。 |
-| `products` | 产品基础资料表，是 SKU、BOM、库存的上层产品归类。 |
-| `skus` | SKU 表，保存成品 SKU、原材料 SKU、半成品 SKU。通过 `sku_type` 区分类型。当前代码里成品 SKU 主要按 `finished_good` 使用。 |
+| `brands` | 品牌基础资料表。品牌属于产品 SPU，不直接挂在 SKU 或业务单据上。 |
+| `products` | 产品基础资料表，是 SKU、BOM、库存的上层产品归类。通过可空字段 `brand_id` 关联品牌。 |
+| `skus` | SKU 表，保存成品 SKU、原材料 SKU、半成品 SKU。通过 `sku_type` 区分类型。当前代码里成品 SKU 主要按 `finished_good` 使用；SKU 不单独存品牌。 |
 | `suppliers` | 供应商表，给采购单使用。 |
 | `warehouses` | 仓库表，保存原材料仓、成品仓、FBA 备发仓等。通过 `warehouse_type` 区分类型。 |
 | `bom_headers` | BOM 主表，表示某个成品 SKU 的某个 BOM 版本。 |
@@ -1214,6 +1281,17 @@ RLS 策略：
 | `inventory_transactions` | 库存流水表。记录每一次原材料入库、原材料出库、成品入库、成品出库、库存调整。 |
 
 ## 7. 关键字段和数量关系
+
+### 7.0 品牌和产品关系
+
+品牌只在两个地方存：
+
+- `brands`：品牌基础资料。
+- `products.brand_id`：产品 SPU 关联哪个品牌。
+
+SKU 不单独存品牌。成品 SKU 通过 `skus.product_id` 找到产品，再通过 `products.brand_id` 找到品牌。
+
+BOM、库存、FBA 备货单、生产任务、采购单等业务表不要重复加 `brand_id`。需要显示品牌时，通过 SKU 或产品关联查询即可。
 
 ### 7.1 FBA 备货需求数量
 

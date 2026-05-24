@@ -53,8 +53,32 @@ comment on column public.profiles.status is '账号状态，例如 active、disa
 comment on column public.profiles.created_at is '创建时间。';
 comment on column public.profiles.updated_at is '更新时间。';
 
+create table public.brands (
+  id uuid primary key default gen_random_uuid(),
+  brand_code text not null unique,
+  name text not null,
+  english_name text,
+  logo_url text,
+  status text not null default 'active',
+  notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+comment on table public.brands is '品牌表：保存公司品牌基础资料。品牌属于产品 SPU，不直接挂在 SKU 上。';
+comment on column public.brands.id is '主键 ID。';
+comment on column public.brands.brand_code is '品牌编码。';
+comment on column public.brands.name is '品牌名称。';
+comment on column public.brands.english_name is '品牌英文名称。';
+comment on column public.brands.logo_url is '品牌 Logo URL。当前阶段不做上传，先保存外部图片地址。';
+comment on column public.brands.status is '品牌状态，例如 active、inactive。';
+comment on column public.brands.notes is '备注。';
+comment on column public.brands.created_at is '创建时间。';
+comment on column public.brands.updated_at is '更新时间。';
+
 create table public.products (
   id uuid primary key default gen_random_uuid(),
+  brand_id uuid references public.brands(id) on delete set null,
   product_code text not null unique,
   name text not null,
   category text,
@@ -67,6 +91,7 @@ create table public.products (
 
 comment on table public.products is '产品表：保存产品基础资料，是 SKU、BOM、库存的上层归类。';
 comment on column public.products.id is '主键 ID。';
+comment on column public.products.brand_id is '所属品牌 ID。品牌属于产品 SPU，SKU 通过产品继承品牌。';
 comment on column public.products.product_code is '内部产品编码。';
 comment on column public.products.name is '产品名称。';
 comment on column public.products.category is '产品分类。';
@@ -474,6 +499,7 @@ comment on column public.inventory_transactions.created_at is '创建时间。';
 comment on column public.inventory_transactions.updated_at is '更新时间。';
 
 create index idx_profiles_role_id on public.profiles(role_id);
+create index idx_products_brand_id on public.products(brand_id);
 create index idx_skus_product_id on public.skus(product_id);
 create index idx_bom_headers_product_sku_id on public.bom_headers(product_sku_id);
 create index idx_bom_items_bom_header_id on public.bom_items(bom_header_id);
@@ -504,6 +530,10 @@ for each row execute function public.set_updated_at();
 
 create trigger trg_profiles_updated_at
 before update on public.profiles
+for each row execute function public.set_updated_at();
+
+create trigger trg_brands_updated_at
+before update on public.brands
 for each row execute function public.set_updated_at();
 
 create trigger trg_products_updated_at

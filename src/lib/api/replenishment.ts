@@ -5,6 +5,7 @@ import type {
 } from "@/lib/bulk-types";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { normalizeCsvValue } from "@/lib/utils/csv";
+import type { BrandSummary } from "@/lib/brand-utils";
 
 export type FbaRequestStatus =
   | "draft"
@@ -68,16 +69,20 @@ export type FbaReplenishmentRequestItem = {
     unit: string;
     product: {
       id: string;
+      brand_id: string | null;
       product_code: string;
       name: string;
       product_image_url: string | null;
+      brand: BrandSummary | null;
     } | null;
   } | null;
   product: {
     id: string;
+    brand_id: string | null;
     product_code: string;
     name: string;
     product_image_url: string | null;
+    brand: BrandSummary | null;
   } | null;
 };
 
@@ -109,9 +114,11 @@ export type FbaReplenishmentRequest = {
     unit: string;
     product: {
       id: string;
+      brand_id: string | null;
       product_code: string;
       name: string;
       product_image_url: string | null;
+      brand: BrandSummary | null;
     } | null;
   } | null;
   target_warehouse: {
@@ -162,9 +169,11 @@ export type FbaReplenishmentSkuOption = {
   status: string;
   product: {
     id: string;
+    brand_id: string | null;
     product_code: string;
     name: string;
     product_image_url: string | null;
+    brand: BrandSummary | null;
   } | null;
   current_stock: number;
   has_active_bom: boolean;
@@ -428,6 +437,19 @@ function singleRelation<T>(value: MaybeRelation<T>): T | null {
   return value;
 }
 
+function normalizeProductBrand<T extends { brand?: MaybeRelation<BrandSummary> }>(
+  product: T | null | undefined
+): (Omit<T, "brand"> & { brand: BrandSummary | null }) | null {
+  if (!product) {
+    return null;
+  }
+
+  return {
+    ...product,
+    brand: singleRelation(product.brand ?? null)
+  };
+}
+
 function isFinishedSkuType(value: string | null | undefined) {
   return Boolean(value && finishedSkuTypes.includes(value));
 }
@@ -439,7 +461,7 @@ function normalizeFbaSkuOption(
 ): FbaReplenishmentSkuOption {
   return {
     ...sku,
-    product: singleRelation(sku.product),
+    product: normalizeProductBrand(singleRelation(sku.product)),
     current_stock: stockBySkuId.get(sku.id) ?? 0,
     has_active_bom: activeBomSkuIds.has(sku.id)
   };
@@ -449,7 +471,7 @@ function normalizeFbaReplenishmentRequest(
   request: RawFbaReplenishmentRequest
 ): FbaReplenishmentRequest {
   const sku = singleRelation(request.sku);
-  const product = singleRelation(sku?.product ?? null);
+  const product = normalizeProductBrand(singleRelation(sku?.product ?? null));
   const items = (request.items ?? []).map(normalizeFbaRequestItem);
   const compatibleItems =
     items.length > 0 || !sku
@@ -500,8 +522,8 @@ function normalizeFbaRequestItem(
   item: RawFbaReplenishmentRequestItem
 ): FbaReplenishmentRequestItem {
   const sku = singleRelation(item.sku);
-  const skuProduct = singleRelation(sku?.product ?? null);
-  const directProduct = singleRelation(item.product);
+  const skuProduct = normalizeProductBrand(singleRelation(sku?.product ?? null));
+  const directProduct = normalizeProductBrand(singleRelation(item.product));
 
   return {
     ...item,
@@ -673,9 +695,18 @@ export async function getFbaReplenishmentSkuOptions(): Promise<
             status,
             product:products!skus_product_id_fkey (
               id,
+              brand_id,
               product_code,
               name,
-              product_image_url
+              product_image_url,
+              brand:brands!products_brand_id_fkey (
+                id,
+                brand_code,
+                name,
+                english_name,
+                logo_url,
+                status
+              )
             )
           `
         )
@@ -920,9 +951,18 @@ export async function getFbaReplenishmentRequests(
           unit,
           product:products!skus_product_id_fkey (
             id,
+            brand_id,
             product_code,
             name,
-            product_image_url
+            product_image_url,
+            brand:brands!products_brand_id_fkey (
+              id,
+              brand_code,
+              name,
+              english_name,
+              logo_url,
+              status
+            )
           )
         ),
         target_warehouse:warehouses!fba_replenishment_requests_target_warehouse_id_fkey (
@@ -956,16 +996,34 @@ export async function getFbaReplenishmentRequests(
             unit,
             product:products!skus_product_id_fkey (
               id,
+              brand_id,
               product_code,
               name,
-              product_image_url
+              product_image_url,
+              brand:brands!products_brand_id_fkey (
+                id,
+                brand_code,
+                name,
+                english_name,
+                logo_url,
+                status
+              )
             )
           ),
           product:products!fba_replenishment_request_items_product_id_fkey (
             id,
+            brand_id,
             product_code,
             name,
-            product_image_url
+            product_image_url,
+            brand:brands!products_brand_id_fkey (
+              id,
+              brand_code,
+              name,
+              english_name,
+              logo_url,
+              status
+            )
           )
         )
       `

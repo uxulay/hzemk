@@ -13,6 +13,7 @@ import {
   type PlanningRequestStatus,
   type ProductionProfile
 } from "@/lib/api/production";
+import { getBrandCodeName } from "@/lib/brand-utils";
 import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
 
 type ProductionFormState = {
@@ -128,6 +129,8 @@ function groupRequestItemsByProduct(request: PlanningFbaReplenishmentRequest) {
     {
       productName: string;
       productCode: string;
+      brandLabel: string;
+      brandId: string | null;
       imageUrl: string | null;
       items: PlanningFbaReplenishmentRequest["items"];
     }
@@ -146,6 +149,8 @@ function groupRequestItemsByProduct(request: PlanningFbaReplenishmentRequest) {
     groups.set(key, {
       productName: product?.name ?? "未关联产品",
       productCode: product?.product_code ?? "-",
+      brandLabel: getBrandCodeName(product?.brand),
+      brandId: product?.brand?.id ?? null,
       imageUrl: product?.product_image_url ?? null,
       items: [item]
     });
@@ -154,11 +159,31 @@ function groupRequestItemsByProduct(request: PlanningFbaReplenishmentRequest) {
   return [...groups.values()];
 }
 
+function getPlanningRequestBrandSummary(request: PlanningFbaReplenishmentRequest) {
+  const brandLabels = new Set(
+    request.items
+      .map((item) => item.product ?? item.sku?.product ?? null)
+      .map((product) => getBrandCodeName(product?.brand))
+  );
+  const labels = [...brandLabels];
+
+  if (labels.length === 0) {
+    return "无品牌";
+  }
+
+  if (labels.length <= 2) {
+    return labels.join("、");
+  }
+
+  return `${labels[0]} 等 ${labels.length} 个品牌`;
+}
+
 export default function ProductionPlanningPage() {
   const [requests, setRequests] = useState<PlanningFbaReplenishmentRequest[]>(
     []
   );
   const [assignees, setAssignees] = useState<ProductionProfile[]>([]);
+  const [brandFilter, setBrandFilter] = useState("all");
   const [selectedRequest, setSelectedRequest] =
     useState<PlanningFbaReplenishmentRequest | null>(null);
   const [detailRequest, setDetailRequest] =
@@ -175,14 +200,51 @@ export default function ProductionPlanningPage() {
     () => assignees.filter((assignee) => assignee.status === "active"),
     [assignees]
   );
+  const brandOptions = useMemo(() => {
+    const brandById = new Map<
+      string,
+      NonNullable<
+        NonNullable<PlanningFbaReplenishmentRequest["items"][number]["product"]>["brand"]
+      >
+    >();
+
+    requests.forEach((request) => {
+      request.items.forEach((item) => {
+        const product = item.product ?? item.sku?.product ?? null;
+
+        if (product?.brand) {
+          brandById.set(product.brand.id, product.brand);
+        }
+      });
+    });
+
+    return [...brandById.values()].sort((first, second) =>
+      first.brand_code.localeCompare(second.brand_code, "zh-CN")
+    );
+  }, [requests]);
+  const filteredRequests = useMemo(() => {
+    if (brandFilter === "all") {
+      return requests;
+    }
+
+    return requests.filter((request) =>
+      request.items.some((item) => {
+        const product = item.product ?? item.sku?.product ?? null;
+
+        return brandFilter === "none"
+          ? !product?.brand?.id
+          : product?.brand?.id === brandFilter;
+      })
+    );
+  }, [brandFilter, requests]);
   const paginatedRequests = useMemo(
-    () => paginateItems(requests, page),
-    [page, requests]
+    () => paginateItems(filteredRequests, page),
+    [filteredRequests, page]
   );
 
   useEffect(() => {
     setPage(1);
-  }, [requests.length]);
+  }, [brandFilter, requests.length]);
 
   const loadPageData = async () => {
     try {
@@ -405,6 +467,25 @@ export default function ProductionPlanningPage() {
           <div className="debugNotice">正在读取待排产 FBA 备货需求...</div>
         ) : null}
 
+        <div className="listToolbar">
+          <label>
+            品牌
+            <select
+              value={brandFilter}
+              onChange={(event) => setBrandFilter(event.target.value)}
+              disabled={loading}
+            >
+              <option value="all">全部品牌</option>
+              <option value="none">无品牌</option>
+              {brandOptions.map((brand) => (
+                <option key={brand.id} value={brand.id}>
+                  {getBrandCodeName(brand)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
         {errorMessage ? (
           <div className="debugError">
             <strong>操作失败</strong>
@@ -412,11 +493,11 @@ export default function ProductionPlanningPage() {
           </div>
         ) : null}
 
-        {!loading && !errorMessage && requests.length === 0 ? (
+        {!loading && !errorMessage && filteredRequests.length === 0 ? (
           <div className="emptyState">暂无待排产 FBA 备货需求</div>
         ) : null}
 
-        {!loading && requests.length > 0 ? (
+        {!loading && filteredRequests.length > 0 ? (
           <div className="tableWrap">
             <table className="dataTable">
               <thead>
@@ -425,6 +506,7 @@ export default function ProductionPlanningPage() {
                   <th>亚马逊站点</th>
                   <th>目标 FBA 仓库</th>
                   <th>产品数量</th>
+                  <th>品牌</th>
                   <th>SKU 数量</th>
                   <th>总数量</th>
                   <th>期望完成日期</th>
@@ -448,6 +530,7 @@ export default function ProductionPlanningPage() {
                         <span>{request.fba_warehouse_code ?? "-"}</span>
                       </td>
                       <td>{request.product_count}</td>
+                      <td>{getPlanningRequestBrandSummary(request)}</td>
                       <td>{request.sku_count}</td>
                       <td>{formatQuantity(request.total_requested_quantity)}</td>
                       <td>{formatDate(request.target_ship_date)}</td>
@@ -503,11 +586,11 @@ export default function ProductionPlanningPage() {
           </div>
         ) : null}
 
-        {!loading && requests.length > 0 ? (
+        {!loading && filteredRequests.length > 0 ? (
           <Pagination
             page={page}
             pageSize={DEFAULT_PAGE_SIZE}
-            total={requests.length}
+            total={filteredRequests.length}
             onPageChange={setPage}
           />
         ) : null}
@@ -594,6 +677,7 @@ export default function ProductionPlanningPage() {
                     imageUrl={group.imageUrl}
                     name={group.productName}
                     code={group.productCode}
+                    brandLabel={group.brandLabel}
                   />
                   <div className="tableWrap compactTableWrap">
                     <table className="dataTable compactDataTable">
@@ -710,6 +794,7 @@ export default function ProductionPlanningPage() {
                   imageUrl={group.imageUrl}
                   name={group.productName}
                   code={group.productCode}
+                  brandLabel={group.brandLabel}
                 />
                 <div className="tableWrap compactTableWrap">
                   <table className="dataTable compactDataTable">
@@ -746,11 +831,13 @@ export default function ProductionPlanningPage() {
 function ProductHeader({
   imageUrl,
   name,
-  code
+  code,
+  brandLabel
 }: {
   imageUrl: string | null;
   name: string;
   code: string;
+  brandLabel?: string;
 }) {
   return (
     <div className="productHeader">
@@ -763,6 +850,7 @@ function ProductHeader({
       <div>
         <strong>{name}</strong>
         <span>{code}</span>
+        {brandLabel ? <span>{brandLabel}</span> : null}
       </div>
     </div>
   );

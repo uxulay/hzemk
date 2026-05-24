@@ -26,6 +26,7 @@ import {
   parseCsv,
   type CsvTemplateField
 } from "@/lib/utils/csv";
+import { getBrandCodeName } from "@/lib/brand-utils";
 import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
 
 type StatusFilter = FbaRequestStatus | "all";
@@ -41,6 +42,8 @@ type DraftReplenishmentItem = {
   productId: string | null;
   productName: string;
   productCode: string;
+  brandId: string | null;
+  brandLabel: string;
   productImageUrl: string | null;
   skuName: string;
   skuCode: string;
@@ -242,8 +245,12 @@ function getSkuSearchText(request: FbaReplenishmentRequest) {
     request.sku?.sku_name,
     request.sku?.amazon_sku,
     request.sku?.fnsku,
+    request.sku?.product?.brand?.name,
+    request.sku?.product?.brand?.brand_code,
     ...request.items.flatMap((item) => [
       item.product?.name,
+      item.product?.brand?.name,
+      item.product?.brand?.brand_code,
       item.sku?.sku_code,
       item.sku?.sku_name,
       item.sku?.specs
@@ -252,6 +259,26 @@ function getSkuSearchText(request: FbaReplenishmentRequest) {
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
+}
+
+function getRequestBrandSummary(request: FbaReplenishmentRequest) {
+  const brandLabels = new Set(
+    request.items
+      .map((item) => item.product ?? item.sku?.product ?? null)
+      .map((product) => getBrandCodeName(product?.brand))
+  );
+
+  const labels = [...brandLabels];
+
+  if (labels.length === 0) {
+    return "无品牌";
+  }
+
+  if (labels.length <= 2) {
+    return labels.join("、");
+  }
+
+  return `${labels[0]} 等 ${labels.length} 个品牌`;
 }
 
 function isPositiveNumberText(value: string) {
@@ -289,6 +316,8 @@ function groupRequestItemsByProduct(items: FbaReplenishmentRequestItem[]) {
     {
       productName: string;
       productCode: string;
+      brandLabel: string;
+      brandId: string | null;
       imageUrl: string | null;
       items: FbaReplenishmentRequestItem[];
     }
@@ -307,6 +336,8 @@ function groupRequestItemsByProduct(items: FbaReplenishmentRequestItem[]) {
     groups.set(key, {
       productName: product?.name ?? "未关联产品",
       productCode: product?.product_code ?? "-",
+      brandLabel: getBrandCodeName(product?.brand),
+      brandId: product?.brand?.id ?? null,
       imageUrl: product?.product_image_url ?? null,
       items: [item]
     });
@@ -360,6 +391,8 @@ function createDraftItemFromSku(
     productId: sku.product_id,
     productName: sku.product?.name ?? "未关联产品",
     productCode: sku.product?.product_code ?? "-",
+    brandId: sku.product?.brand?.id ?? null,
+    brandLabel: getBrandCodeName(sku.product?.brand),
     productImageUrl: sku.product?.product_image_url ?? null,
     skuName: sku.sku_name,
     skuCode: sku.sku_code,
@@ -447,6 +480,7 @@ export default function ReplenishmentPage() {
   const [skuOptions, setSkuOptions] = useState<FbaReplenishmentSkuOption[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [brandFilter, setBrandFilter] = useState("all");
   const [skuKeyword, setSkuKeyword] = useState("");
   const [selectedRequest, setSelectedRequest] =
     useState<FbaReplenishmentRequest | null>(null);
@@ -540,14 +574,18 @@ export default function ReplenishmentPage() {
   const filteredRequests = useMemo(() => {
     const keyword = skuKeyword.trim().toLowerCase();
 
-    if (!keyword) {
-      return requests;
-    }
-
     return requests.filter((request) =>
-      getSkuSearchText(request).includes(keyword)
+      (!keyword || getSkuSearchText(request).includes(keyword)) &&
+      (brandFilter === "all" ||
+        request.items.some((item) => {
+          const product = item.product ?? item.sku?.product ?? null;
+
+          return brandFilter === "none"
+            ? !product?.brand?.id
+            : product?.brand?.id === brandFilter;
+        }))
     );
-  }, [requests, skuKeyword]);
+  }, [brandFilter, requests, skuKeyword]);
 
   const paginatedRequests = useMemo(
     () => paginateItems(filteredRequests, page),
@@ -561,6 +599,19 @@ export default function ReplenishmentPage() {
   const skuById = useMemo(() => {
     return new Map(skuOptions.map((sku) => [sku.id, sku]));
   }, [skuOptions]);
+  const brandOptions = useMemo(() => {
+    const brandById = new Map<string, NonNullable<Product["brand"]>>();
+
+    products.forEach((product) => {
+      if (product.brand) {
+        brandById.set(product.brand.id, product.brand);
+      }
+    });
+
+    return [...brandById.values()].sort((first, second) =>
+      first.brand_code.localeCompare(second.brand_code, "zh-CN")
+    );
+  }, [products]);
   const skusByProductId = useMemo(() => {
     const groups = new Map<string, FbaReplenishmentSkuOption[]>();
 
@@ -600,7 +651,12 @@ export default function ReplenishmentPage() {
         return true;
       }
 
-      const productText = [product.name, product.product_code]
+      const productText = [
+        product.name,
+        product.product_code,
+        product.brand?.name,
+        product.brand?.brand_code
+      ]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
@@ -623,7 +679,7 @@ export default function ReplenishmentPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [skuKeyword, statusFilter]);
+  }, [brandFilter, skuKeyword, statusFilter]);
 
   const refreshRequests = async () => {
     try {
@@ -1119,6 +1175,23 @@ export default function ReplenishmentPage() {
             />
           </label>
 
+          <label>
+            品牌
+            <select
+              value={brandFilter}
+              onChange={(event) => setBrandFilter(event.target.value)}
+              disabled={loading}
+            >
+              <option value="all">全部品牌</option>
+              <option value="none">无品牌</option>
+              {brandOptions.map((brand) => (
+                <option key={brand.id} value={brand.id}>
+                  {getBrandCodeName(brand)}
+                </option>
+              ))}
+            </select>
+          </label>
+
           <button
             className="secondaryButton"
             type="button"
@@ -1153,6 +1226,7 @@ export default function ReplenishmentPage() {
                   <th>亚马逊站点</th>
                   <th>目标 FBA 仓库</th>
                   <th>产品数量</th>
+                  <th>品牌</th>
                   <th>SKU 数量</th>
                   <th>总备货数量</th>
                   <th>状态</th>
@@ -1175,6 +1249,7 @@ export default function ReplenishmentPage() {
                         <span>{request.fba_warehouse_code ?? "-"}</span>
                       </td>
                       <td>{request.product_count}</td>
+                      <td>{getRequestBrandSummary(request)}</td>
                       <td>{request.sku_count}</td>
                       <td>{formatQuantity(request.total_requested_quantity)}</td>
                       <td>
@@ -1299,6 +1374,7 @@ export default function ReplenishmentPage() {
                   imageUrl={group.imageUrl}
                   name={group.productName}
                   code={group.productCode}
+                  brandLabel={group.brandLabel}
                 />
                 <div className="tableWrap compactTableWrap">
                   <table className="dataTable compactDataTable">
@@ -1462,6 +1538,7 @@ export default function ReplenishmentPage() {
                     <tr>
                       <th>产品图片</th>
                       <th>产品名称/SPU</th>
+                      <th>品牌</th>
                       <th>SKU 名称</th>
                       <th>SKU 编码</th>
                       <th>规格/米数</th>
@@ -1484,6 +1561,7 @@ export default function ReplenishmentPage() {
                           <strong>{item.productName}</strong>
                           <span>{item.productCode}</span>
                         </td>
+                        <td>{item.brandLabel}</td>
                         <td>{item.skuName}</td>
                         <td>{item.skuCode}</td>
                         <td>
@@ -1720,7 +1798,7 @@ export default function ReplenishmentPage() {
             <input
               value={pickerSearch}
               onChange={(event) => setPickerSearch(event.target.value)}
-              placeholder="产品名称、SPU、SKU 名称、SKU 编码、规格/米数"
+              placeholder="产品名称、SPU、品牌、SKU 名称、SKU 编码、规格/米数"
             />
           </label>
 
@@ -1748,6 +1826,7 @@ export default function ReplenishmentPage() {
                       imageUrl={product.product_image_url ?? null}
                       name={product.name}
                       code={product.product_code}
+                      brandLabel={getBrandCodeName(product.brand)}
                     />
                   </button>
                 );
@@ -1870,11 +1949,13 @@ function ProductImage({
 function ProductHeader({
   imageUrl,
   name,
-  code
+  code,
+  brandLabel
 }: {
   imageUrl: string | null;
   name: string;
   code: string;
+  brandLabel?: string;
 }) {
   return (
     <div className="productHeader">
@@ -1882,6 +1963,7 @@ function ProductHeader({
       <div>
         <strong>{name}</strong>
         <span>{code}</span>
+        {brandLabel ? <span>{brandLabel}</span> : null}
       </div>
     </div>
   );

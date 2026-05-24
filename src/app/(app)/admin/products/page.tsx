@@ -26,6 +26,8 @@ import {
   type ProductStats,
   type ProductStatus
 } from "@/lib/api/products";
+import { getBrandOptions, type BrandRow } from "@/lib/api/brands";
+import { getBrandCodeName } from "@/lib/brand-utils";
 import { downloadCsvTemplate, type CsvTemplateField } from "@/lib/utils/csv";
 import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
 
@@ -42,6 +44,7 @@ const skuTypeLabels: Record<string, string> = {
 type ProductFormState = {
   productCode: string;
   name: string;
+  brandId: string;
   category: string;
   description: string;
   productImageUrl: string;
@@ -52,6 +55,7 @@ type ProductEditFormState = {
   productId: string;
   productCode: string;
   name: string;
+  brandId: string;
   category: string;
   description: string;
   productImageUrl: string;
@@ -61,6 +65,7 @@ type ProductEditFormState = {
 const initialProductForm: ProductFormState = {
   productCode: "",
   name: "",
+  brandId: "",
   category: "",
   description: "",
   productImageUrl: "",
@@ -86,6 +91,11 @@ const productImportFields: CsvTemplateField[] = [
     label: "产品名称",
     required: true,
     example: "折叠收纳箱"
+  },
+  {
+    key: "brand",
+    label: "品牌编码或名称",
+    example: "BRAND-A"
   },
   {
     key: "category",
@@ -125,6 +135,12 @@ function getSkuTypeLabel(skuType: string) {
   return skuTypeLabels[skuType] ?? skuType;
 }
 
+function getBrandOptionLabel(brand: BrandRow) {
+  const statusText = brand.status === "inactive" ? " / 停用" : "";
+
+  return `${brand.brand_code} / ${brand.name}${statusText}`;
+}
+
 function formatDateTime(value: string | null | undefined) {
   if (!value) {
     return "-";
@@ -141,6 +157,7 @@ function toEditableStatus(status: string): ProductStatus {
 
 export default function AdminProductsPage() {
   const [products, setProducts] = useState<ProductListRow[]>([]);
+  const [brands, setBrands] = useState<BrandRow[]>([]);
   const [stats, setStats] = useState<ProductStats>(initialStats);
   const [productForm, setProductForm] =
     useState<ProductFormState>(initialProductForm);
@@ -149,6 +166,7 @@ export default function AdminProductsPage() {
     useState<ProductListRow | null>(null);
   const [selectedSkus, setSelectedSkus] = useState<ProductSkuRow[]>([]);
   const [searchKeyword, setSearchKeyword] = useState("");
+  const [brandFilter, setBrandFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
   const [page, setPage] = useState(1);
@@ -172,13 +190,20 @@ export default function AdminProductsPage() {
       const matchesKeyword =
         !keyword ||
         product.name.toLowerCase().includes(keyword) ||
-        product.product_code.toLowerCase().includes(keyword);
+        product.product_code.toLowerCase().includes(keyword) ||
+        (product.brand?.name ?? "").toLowerCase().includes(keyword) ||
+        (product.brand?.brand_code ?? "").toLowerCase().includes(keyword);
+      const matchesBrand =
+        brandFilter === "all" ||
+        (brandFilter === "none"
+          ? !product.brand_id
+          : product.brand_id === brandFilter);
       const matchesStatus =
         statusFilter === "all" || product.status === statusFilter;
 
-      return matchesKeyword && matchesStatus;
+      return matchesKeyword && matchesBrand && matchesStatus;
     });
-  }, [products, searchKeyword, statusFilter]);
+  }, [brandFilter, products, searchKeyword, statusFilter]);
 
   const selectedProducts = useMemo(
     () => products.filter((product) => selectedProductIds.includes(product.id)),
@@ -197,12 +222,14 @@ export default function AdminProductsPage() {
       setLoading(true);
       setErrorMessage("");
 
-      const [productData, statsData] = await Promise.all([
+      const [productData, brandData, statsData] = await Promise.all([
         getProducts(),
+        getBrandOptions(),
         getProductStats()
       ]);
 
       setProducts(productData);
+      setBrands(brandData);
       setStats(statsData);
       setSelectedProductIds((current) =>
         current.filter((productId) =>
@@ -219,6 +246,7 @@ export default function AdminProductsPage() {
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setProducts([]);
+      setBrands([]);
       setStats(initialStats);
       setSelectedProductIds([]);
       setSelectedProduct(null);
@@ -234,7 +262,7 @@ export default function AdminProductsPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [searchKeyword, statusFilter]);
+  }, [brandFilter, searchKeyword, statusFilter]);
 
   const refreshAll = async () => {
     const productToRefresh = selectedProduct;
@@ -272,6 +300,7 @@ export default function AdminProductsPage() {
       productId: product.id,
       productCode: product.product_code,
       name: product.name,
+      brandId: product.brand_id ?? "",
       category: product.category ?? "",
       description: product.description ?? "",
       productImageUrl: product.product_image_url ?? "",
@@ -516,6 +545,27 @@ export default function AdminProductsPage() {
           </label>
 
           <label>
+            所属品牌
+            <select
+              value={productForm.brandId}
+              onChange={(event) =>
+                setProductForm((current) => ({
+                  ...current,
+                  brandId: event.target.value
+                }))
+              }
+              disabled={creating}
+            >
+              <option value="">暂不绑定品牌</option>
+              {brands.map((brand) => (
+                <option key={brand.id} value={brand.id}>
+                  {getBrandOptionLabel(brand)}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
             分类
             <input
               value={productForm.category}
@@ -611,6 +661,31 @@ export default function AdminProductsPage() {
                 disabled={updating}
                 required
               />
+            </label>
+
+            <label>
+              所属品牌
+              <select
+                value={editForm.brandId}
+                onChange={(event) =>
+                  setEditForm((current) =>
+                    current
+                      ? {
+                          ...current,
+                          brandId: event.target.value
+                        }
+                      : current
+                  )
+                }
+                disabled={updating}
+              >
+                <option value="">暂不绑定品牌</option>
+                {brands.map((brand) => (
+                  <option key={brand.id} value={brand.id}>
+                    {getBrandOptionLabel(brand)}
+                  </option>
+                ))}
+              </select>
             </label>
 
             <label>
@@ -760,6 +835,22 @@ export default function AdminProductsPage() {
             </select>
           </label>
 
+          <label>
+            所属品牌
+            <select
+              value={brandFilter}
+              onChange={(event) => setBrandFilter(event.target.value)}
+            >
+              <option value="all">全部品牌</option>
+              <option value="none">无品牌</option>
+              {brands.map((brand) => (
+                <option key={brand.id} value={brand.id}>
+                  {getBrandOptionLabel(brand)}
+                </option>
+              ))}
+            </select>
+          </label>
+
           <button className="secondaryButton" type="button" onClick={refreshAll}>
             刷新
           </button>
@@ -797,6 +888,7 @@ export default function AdminProductsPage() {
                   <th>产品图片</th>
                   <th>SPU</th>
                   <th>产品名称</th>
+                  <th>品牌</th>
                   <th>分类</th>
                   <th>产品状态</th>
                   <th>关联 SKU 数量</th>
@@ -829,6 +921,7 @@ export default function AdminProductsPage() {
                       </td>
                       <td>{product.product_code}</td>
                       <td>{product.name}</td>
+                      <td>{getBrandCodeName(product.brand)}</td>
                       <td>{product.category ?? "-"}</td>
                       <td>
                         <span className={`tablePill product-status-${product.status}`}>
@@ -948,7 +1041,7 @@ export default function AdminProductsPage() {
       <BulkImportDialog<ProductImportInput>
         open={importOpen}
         title="产品批量导入"
-        description="请按模板填写 SPU、产品名称、分类、图片 URL、产品说明和状态。上传后会先逐行校验，重复 SPU 默认跳过不创建，确认导入后才写入 Supabase。"
+        description="请按模板填写 SPU、产品名称、品牌、分类、图片 URL、产品说明和状态。品牌可以填品牌编码或品牌名称；匹配不到会提示错误，不会自动新建品牌。"
         templateFileName="products-import-template.csv"
         fields={productImportFields}
         validateRows={validateProductImportRows}

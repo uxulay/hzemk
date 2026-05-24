@@ -9,6 +9,7 @@ grant usage on schema public to anon, authenticated;
 
 grant select on public.roles to anon, authenticated;
 grant select on public.profiles to anon, authenticated;
+grant select on public.brands to anon, authenticated;
 grant select on public.products to anon, authenticated;
 grant select on public.skus to anon, authenticated;
 grant select on public.suppliers to anon, authenticated;
@@ -35,6 +36,14 @@ alter table public.profiles enable row level security;
 drop policy if exists "dev allow read profiles" on public.profiles;
 create policy "dev allow read profiles"
 on public.profiles
+for select
+to anon, authenticated
+using (true);
+
+alter table public.brands enable row level security;
+drop policy if exists "dev allow read brands" on public.brands;
+create policy "dev allow read brands"
+on public.brands
 for select
 to anon, authenticated
 using (true);

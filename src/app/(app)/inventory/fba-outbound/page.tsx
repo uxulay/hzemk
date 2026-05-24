@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Modal } from "@/components/Modal";
+import { getBrandOptions, type BrandRow } from "@/lib/api/brands";
+import { getBrandCodeName } from "@/lib/brand-utils";
 import { getWarehouses, type Warehouse } from "@/lib/api/master-data";
 import {
   getFbaOutboundRequests,
@@ -56,7 +58,9 @@ function getDefaultWarehouseId(warehouses: Warehouse[]) {
 export default function FbaOutboundPage() {
   const [requests, setRequests] = useState<FbaOutboundRequest[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [brands, setBrands] = useState<BrandRow[]>([]);
   const [outboundWarehouseId, setOutboundWarehouseId] = useState("");
+  const [brandFilter, setBrandFilter] = useState("all");
   const [selectedRequestId, setSelectedRequestId] = useState("");
   const [outboundQuantity, setOutboundQuantity] = useState("");
   const [logisticsNotes, setLogisticsNotes] = useState("");
@@ -80,6 +84,17 @@ export default function FbaOutboundPage() {
     () => requests.find((request) => request.id === selectedRequestId) ?? null,
     [requests, selectedRequestId]
   );
+  const filteredRequests = useMemo(() => {
+    if (brandFilter === "all") {
+      return requests;
+    }
+
+    return requests.filter((request) => {
+      const brandId = request.sku?.product?.brand?.id ?? null;
+
+      return brandFilter === "none" ? !brandId : brandId === brandFilter;
+    });
+  }, [brandFilter, requests]);
 
   const selectedWarehouse =
     warehouses.find((warehouse) => warehouse.id === outboundWarehouseId) ?? null;
@@ -97,17 +112,22 @@ export default function FbaOutboundPage() {
       setLoading(true);
       setErrorMessage("");
 
-      const warehouseData = await getWarehouses();
+      const [warehouseData, brandData] = await Promise.all([
+        getWarehouses(),
+        getBrandOptions()
+      ]);
       const defaultWarehouseId =
         outboundWarehouseId || getDefaultWarehouseId(warehouseData);
 
       setWarehouses(warehouseData);
+      setBrands(brandData);
       setOutboundWarehouseId(defaultWarehouseId);
       await loadRequests(defaultWarehouseId);
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setRequests([]);
       setWarehouses([]);
+      setBrands([]);
     } finally {
       setLoading(false);
     }
@@ -239,23 +259,41 @@ export default function FbaOutboundPage() {
               )}
             </select>
           </label>
+
+          <label>
+            品牌
+            <select
+              value={brandFilter}
+              onChange={(event) => setBrandFilter(event.target.value)}
+              disabled={loading || submitting}
+            >
+              <option value="all">全部品牌</option>
+              <option value="none">无品牌</option>
+              {brands.map((brand) => (
+                <option key={brand.id} value={brand.id}>
+                  {getBrandCodeName(brand)}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
 
         {loading ? (
           <div className="debugNotice">正在读取可出库 FBA 需求...</div>
         ) : null}
 
-        {!loading && requests.length === 0 ? (
+        {!loading && filteredRequests.length === 0 ? (
           <div className="emptyState">暂无可出库 FBA 需求</div>
         ) : null}
 
-        {!loading && requests.length > 0 ? (
+        {!loading && filteredRequests.length > 0 ? (
           <div className="tableWrap">
             <table className="dataTable">
               <thead>
                 <tr>
                   <th>备货单号</th>
                   <th>产品名称</th>
+                  <th>品牌</th>
                   <th>SKU 编码</th>
                   <th>SKU 名称</th>
                   <th>亚马逊站点</th>
@@ -269,7 +307,7 @@ export default function FbaOutboundPage() {
                 </tr>
               </thead>
               <tbody>
-                {requests.map((request) => {
+                {filteredRequests.map((request) => {
                   const isShortage =
                     Number(request.current_inventory_quantity) <
                     Number(request.pending_outbound_quantity);
@@ -278,6 +316,7 @@ export default function FbaOutboundPage() {
                     <tr className={isShortage ? "shortageRow" : undefined} key={request.id}>
                       <td>{request.request_no}</td>
                       <td>{request.sku?.product?.name ?? "-"}</td>
+                      <td>{getBrandCodeName(request.sku?.product?.brand)}</td>
                       <td>
                         <strong>{request.sku?.sku_code ?? "-"}</strong>
                         <span>{request.sku?.amazon_sku ?? "-"}</span>
@@ -341,6 +380,10 @@ export default function FbaOutboundPage() {
               <div className="detailItem">
                 <span>成品 SKU</span>
                 <strong>{selectedRequest.sku?.sku_code ?? "-"}</strong>
+              </div>
+              <div className="detailItem">
+                <span>品牌</span>
+                <strong>{getBrandCodeName(selectedRequest.sku?.product?.brand)}</strong>
               </div>
               <div className="detailItem">
                 <span>出库仓库</span>

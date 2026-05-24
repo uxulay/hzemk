@@ -9,10 +9,22 @@ import { getSupabaseClient } from "@/lib/supabase/client";
 
 type Status = "active" | "inactive";
 
+export type BrandImportInput = {
+  rowNumber: number;
+  brandCode: string;
+  name: string;
+  englishName: string | null;
+  logoUrl: string | null;
+  status: Status;
+  notes: string | null;
+};
+
 export type ProductImportInput = {
   rowNumber: number;
   productCode: string;
   name: string;
+  brandId: string | null;
+  brandText: string | null;
   category: string | null;
   description: string | null;
   imageUrl: string | null;
@@ -74,8 +86,16 @@ type CodeRow = {
   [key: string]: string;
 };
 
+type BrandMinimal = {
+  id: string;
+  brand_code: string;
+  name: string;
+  status?: string;
+};
+
 type ProductMinimal = {
   id: string;
+  brand_id?: string | null;
   product_code: string;
   name: string;
   status?: string;
@@ -148,6 +168,22 @@ function normalizeOptionalText(value: string | null | undefined) {
   return normalized ? normalized : null;
 }
 
+function getCsvValue(row: CsvDataRow, keys: string[]) {
+  for (const key of keys) {
+    const value = normalizeCsvValue(row[key]);
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return "";
+}
+
+function normalizeLookupKey(value: string | null | undefined) {
+  return normalizeCsvValue(value).toLowerCase();
+}
+
 function normalizeStatus(value: string | undefined): Status {
   const normalized = normalizeCsvValue(value).toLowerCase();
 
@@ -214,6 +250,20 @@ async function getRowsByIds<TRow>(table: string, columns: string, ids: string[])
   }
 
   return (data ?? []) as TRow[];
+}
+
+async function getBrandsForImport() {
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase.from("brands").select("id, brand_code, name, status"),
+    "读取品牌资料"
+  );
+
+  if (error) {
+    throw formatSupabaseError("读取品牌资料", error);
+  }
+
+  return (data ?? []) as BrandMinimal[];
 }
 
 async function hasReference(
@@ -298,16 +348,163 @@ function actionFailed(id: string, label: string, message: string): BulkActionRes
   };
 }
 
+export async function validateBrandImportRows(
+  rows: CsvDataRow[]
+): Promise<BulkImportValidationRow<BrandImportInput>[]> {
+  const existingCodes = await getExistingCodeSet("brands", "brand_code");
+  const fileCodes = rows.map((row) =>
+    normalizeLookupKey(getCsvValue(row, ["brand_code", "品牌编码"]))
+  );
+  const duplicatedCodes = getDuplicateSet(fileCodes);
+
+  return rows.map((row, index) => {
+    const rowNumber = index + 2;
+    const brandCode = getCsvValue(row, ["brand_code", "品牌编码"]);
+    const name = getCsvValue(row, ["name", "brand_name", "品牌名称"]);
+    const englishName = normalizeOptionalText(
+      getCsvValue(row, ["english_name", "英文名称"])
+    );
+    const logoUrl = normalizeOptionalText(
+      getCsvValue(row, ["logo_url", "Logo URL", "logo url"])
+    );
+    const notes = normalizeOptionalText(getCsvValue(row, ["remark", "notes", "备注"]));
+    const statusText = getCsvValue(row, ["status", "状态"]);
+    const errors: string[] = [];
+    const codeKey = brandCode.toLowerCase();
+
+    if (!brandCode) {
+      errors.push("品牌编码必填。");
+    }
+
+    if (!name) {
+      errors.push("品牌名称必填。");
+    }
+
+    validateStatus(statusText, errors);
+
+    if (codeKey && existingCodes.has(codeKey)) {
+      errors.push("品牌编码已经存在。");
+    }
+
+    if (codeKey && duplicatedCodes.has(codeKey)) {
+      errors.push("同一个 CSV 文件内品牌编码重复。");
+    }
+
+    return {
+      rowNumber,
+      rawRow: row,
+      data:
+        errors.length === 0
+          ? {
+              rowNumber,
+              brandCode,
+              name,
+              englishName,
+              logoUrl,
+              status: normalizeStatus(statusText),
+              notes
+            }
+          : undefined,
+      errors
+    };
+  });
+}
+
+export async function bulkImportBrands(
+  inputs: BrandImportInput[]
+): Promise<BulkImportResult> {
+  if (inputs.length === 0) {
+    return {
+      successCount: 0,
+      failedCount: 0,
+      errors: []
+    };
+  }
+
+  const existingCodes = await getExistingCodeSet("brands", "brand_code");
+  const conflicts = inputs.filter((input) =>
+    existingCodes.has(input.brandCode.toLowerCase())
+  );
+
+  if (conflicts.length > 0) {
+    return {
+      successCount: 0,
+      failedCount: inputs.length,
+      errors: conflicts.map((input) => ({
+        rowNumber: input.rowNumber,
+        label: input.brandCode,
+        message: "品牌编码已经存在，请重新下载最新数据后再导入。"
+      }))
+    };
+  }
+
+  const supabase = getSupabaseClient();
+  const { error } = await withTimeout(
+    supabase.from("brands").insert(
+      inputs.map((input) => ({
+        brand_code: input.brandCode,
+        name: input.name,
+        english_name: input.englishName,
+        logo_url: input.logoUrl,
+        status: input.status,
+        notes: input.notes
+      }))
+    ),
+    "批量导入品牌"
+  );
+
+  if (error) {
+    return {
+      successCount: 0,
+      failedCount: inputs.length,
+      errors: [
+        {
+          message: formatSupabaseError("批量导入品牌", error).message
+        }
+      ]
+    };
+  }
+
+  return {
+    successCount: inputs.length,
+    failedCount: 0,
+    errors: []
+  };
+}
+
 export async function validateProductImportRows(
   rows: CsvDataRow[]
 ): Promise<BulkImportValidationRow<ProductImportInput>[]> {
-  const existingCodes = await getExistingCodeSet("products", "product_code");
+  const [existingCodes, brands] = await Promise.all([
+    getExistingCodeSet("products", "product_code"),
+    getBrandsForImport()
+  ]);
   const seenCodes = new Set<string>();
+  const brandByCode = new Map(
+    brands.map((brand) => [normalizeLookupKey(brand.brand_code), brand])
+  );
+  const brandByName = new Map(
+    brands.map((brand) => [normalizeLookupKey(brand.name), brand])
+  );
 
   return rows.map((row, index) => {
     const rowNumber = index + 2;
     const productCode = normalizeCsvValue(row.spu || row.product_code);
     const name = normalizeCsvValue(row.name || row.product_name);
+    const brandText =
+      getCsvValue(row, [
+        "brand",
+        "brand_code",
+        "brand_name",
+        "品牌",
+        "品牌编码",
+        "品牌名称"
+      ]) || null;
+    const brand = brandText
+      ? brandByCode.get(normalizeLookupKey(brandText)) ??
+        brandByName.get(normalizeLookupKey(brandText)) ??
+        null
+      : null;
     const category = normalizeOptionalText(row.category);
     const description = normalizeOptionalText(row.remark || row.description);
     const imageUrl = normalizeOptionalText(row.image_url || row.product_image_url);
@@ -322,6 +519,10 @@ export async function validateProductImportRows(
     }
 
     validateStatus(row.status, errors);
+
+    if (brandText && !brand) {
+      errors.push("填写的品牌不存在，请先到品牌管理维护品牌。");
+    }
 
     const codeKey = productCode.toLowerCase();
     const isExistingCode = Boolean(codeKey && existingCodes.has(codeKey));
@@ -340,6 +541,8 @@ export async function validateProductImportRows(
               rowNumber,
               productCode,
               name,
+              brandId: brand?.id ?? null,
+              brandText,
               category,
               description,
               imageUrl,
@@ -389,6 +592,7 @@ export async function bulkImportProducts(
       inputs.map((input) => ({
         product_code: input.productCode,
         name: input.name,
+        brand_id: input.brandId,
         category: input.category,
         description: input.description,
         product_image_url: input.imageUrl,
@@ -1179,6 +1383,73 @@ export async function bulkImportBomRows(
     failedCount: errors.length,
     errors
   };
+}
+
+export async function deactivateBrandsByIds(
+  ids: string[]
+): Promise<BulkActionResult[]> {
+  const brands = await getRowsByIds<BrandMinimal>(
+    "brands",
+    "id, brand_code, name, status",
+    ids
+  );
+
+  const results: BulkActionResult[] = [];
+
+  for (const brand of brands) {
+    const label = `${brand.brand_code} / ${brand.name}`;
+
+    try {
+      await deactivateRow("brands", brand.id, "停用品牌");
+      results.push(actionSuccess(brand.id, label, "deactivated", "已停用。"));
+    } catch (error) {
+      results.push(actionFailed(brand.id, label, getErrorMessage(error)));
+    }
+  }
+
+  return results;
+}
+
+export async function deleteBrandsByIds(
+  ids: string[]
+): Promise<BulkActionResult[]> {
+  const brands = await getRowsByIds<BrandMinimal>(
+    "brands",
+    "id, brand_code, name, status",
+    ids
+  );
+  const results: BulkActionResult[] = [];
+
+  for (const brand of brands) {
+    const label = `${brand.brand_code} / ${brand.name}`;
+
+    try {
+      const hasProducts = await hasReference(
+        "products",
+        "brand_id",
+        brand.id,
+        "检查品牌关联产品"
+      );
+
+      if (hasProducts) {
+        results.push(
+          actionBlocked(
+            brand.id,
+            label,
+            "该品牌已有产品引用，不能删除。建议改为停用。"
+          )
+        );
+        continue;
+      }
+
+      await deleteRow("brands", brand.id, "删除品牌");
+      results.push(actionSuccess(brand.id, label, "deleted", "已删除。"));
+    } catch (error) {
+      results.push(actionFailed(brand.id, label, getErrorMessage(error)));
+    }
+  }
+
+  return results;
 }
 
 export async function deactivateProductsByIds(

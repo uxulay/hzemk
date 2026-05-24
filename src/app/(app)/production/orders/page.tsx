@@ -17,6 +17,7 @@ import {
   type ProductionOrderStatusFilter,
   type ProductionOrderTrackingRow
 } from "@/lib/api/production";
+import { getBrandCodeName } from "@/lib/brand-utils";
 import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
 
 const productionStatusOptions: Array<{
@@ -134,6 +135,8 @@ function groupProductionItemsByProduct(order: ProductionOrderTrackingRow) {
     {
       productName: string;
       productCode: string;
+      brandLabel: string;
+      brandId: string | null;
       imageUrl: string | null;
       items: ProductionOrderTrackingRow["items"];
     }
@@ -152,6 +155,8 @@ function groupProductionItemsByProduct(order: ProductionOrderTrackingRow) {
     groups.set(key, {
       productName: product?.name ?? "未关联产品",
       productCode: product?.product_code ?? "-",
+      brandLabel: getBrandCodeName(product?.brand),
+      brandId: product?.brand?.id ?? null,
       imageUrl: product?.product_image_url ?? null,
       items: [item]
     });
@@ -160,12 +165,30 @@ function groupProductionItemsByProduct(order: ProductionOrderTrackingRow) {
   return [...groups.values()];
 }
 
+function getProductionOrderBrandSummary(order: ProductionOrderTrackingRow) {
+  const brandLabels = new Set(
+    order.items.map((item) => getBrandCodeName(item.sku?.product?.brand))
+  );
+  const labels = [...brandLabels];
+
+  if (labels.length === 0) {
+    return "无品牌";
+  }
+
+  if (labels.length <= 2) {
+    return labels.join("、");
+  }
+
+  return `${labels[0]} 等 ${labels.length} 个品牌`;
+}
+
 export default function ProductionOrdersPage() {
   const [orders, setOrders] = useState<ProductionOrderTrackingRow[]>([]);
   const [statusFilter, setStatusFilter] =
     useState<ProductionOrderStatusFilter>("all");
   const [materialStatusFilter, setMaterialStatusFilter] =
     useState<ProductionMaterialStatusFilter>("all");
+  const [brandFilter, setBrandFilter] = useState("all");
   const [skuKeyword, setSkuKeyword] = useState("");
   const [selectedDetail, setSelectedDetail] =
     useState<ProductionOrderTrackingRow | null>(null);
@@ -191,11 +214,52 @@ export default function ProductionOrdersPage() {
       const skuText = `${order.sku?.sku_code ?? ""} ${order.sku?.sku_name ?? ""}`
         .trim()
         .toLowerCase();
-      const matchesSku = !keyword || skuText.includes(keyword);
+      const brandText = order.items
+        .flatMap((item) => [
+          item.sku?.product?.brand?.brand_code,
+          item.sku?.product?.brand?.name
+        ])
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      const matchesSku =
+        !keyword || skuText.includes(keyword) || brandText.includes(keyword);
+      const matchesBrand =
+        brandFilter === "all" ||
+        order.items.some((item) => {
+          const brandId = item.sku?.product?.brand?.id ?? null;
 
-      return matchesStatus && matchesMaterialStatus && matchesSku;
+          return brandFilter === "none" ? !brandId : brandId === brandFilter;
+        });
+
+      return matchesStatus && matchesMaterialStatus && matchesSku && matchesBrand;
     });
-  }, [materialStatusFilter, orders, skuKeyword, statusFilter]);
+  }, [brandFilter, materialStatusFilter, orders, skuKeyword, statusFilter]);
+
+  const brandOptions = useMemo(() => {
+    const brandById = new Map<
+      string,
+      NonNullable<
+        NonNullable<
+          NonNullable<ProductionOrderTrackingRow["items"][number]["sku"]>["product"]
+        >["brand"]
+      >
+    >();
+
+    orders.forEach((order) => {
+      order.items.forEach((item) => {
+        const brand = item.sku?.product?.brand ?? null;
+
+        if (brand) {
+          brandById.set(brand.id, brand);
+        }
+      });
+    });
+
+    return [...brandById.values()].sort((first, second) =>
+      first.brand_code.localeCompare(second.brand_code, "zh-CN")
+    );
+  }, [orders]);
 
   const paginatedOrders = useMemo(
     () => paginateItems(filteredOrders, page),
@@ -204,7 +268,7 @@ export default function ProductionOrdersPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [materialStatusFilter, skuKeyword, statusFilter]);
+  }, [brandFilter, materialStatusFilter, skuKeyword, statusFilter]);
 
   const loadOrders = async () => {
     try {
@@ -356,8 +420,25 @@ export default function ProductionOrdersPage() {
               value={skuKeyword}
               onChange={(event) => setSkuKeyword(event.target.value)}
               disabled={loading}
-              placeholder="输入 SKU 编码或名称"
+              placeholder="输入 SKU 编码、名称或品牌"
             />
+          </label>
+
+          <label>
+            品牌
+            <select
+              value={brandFilter}
+              onChange={(event) => setBrandFilter(event.target.value)}
+              disabled={loading}
+            >
+              <option value="all">全部品牌</option>
+              <option value="none">无品牌</option>
+              {brandOptions.map((brand) => (
+                <option key={brand.id} value={brand.id}>
+                  {getBrandCodeName(brand)}
+                </option>
+              ))}
+            </select>
           </label>
 
           <button
@@ -386,6 +467,7 @@ export default function ProductionOrdersPage() {
                   <th>生产任务单号</th>
                   <th>关联 FBA 备货单号</th>
                   <th>产品数量</th>
+                  <th>品牌</th>
                   <th>SKU 数量</th>
                   <th>运营需求数量</th>
                   <th>总计划生产数量</th>
@@ -403,6 +485,7 @@ export default function ProductionOrdersPage() {
                     <td>{order.production_order_no}</td>
                     <td>{order.replenishment_request?.request_no ?? "-"}</td>
                     <td>{order.product_count}</td>
+                    <td>{getProductionOrderBrandSummary(order)}</td>
                     <td>{order.sku_count}</td>
                     <td>{formatQuantity(order.requested_quantity)}</td>
                     <td>{formatQuantity(order.total_planned_quantity)}</td>
@@ -573,6 +656,7 @@ export default function ProductionOrdersPage() {
                   imageUrl={group.imageUrl}
                   name={group.productName}
                   code={group.productCode}
+                  brandLabel={group.brandLabel}
                 />
                 <div className="tableWrap compactTableWrap">
                   <table className="dataTable compactDataTable">
@@ -830,11 +914,13 @@ export default function ProductionOrdersPage() {
 function ProductHeader({
   imageUrl,
   name,
-  code
+  code,
+  brandLabel
 }: {
   imageUrl: string | null;
   name: string;
   code: string;
+  brandLabel?: string;
 }) {
   return (
     <div className="productHeader">
@@ -847,6 +933,7 @@ function ProductHeader({
       <div>
         <strong>{name}</strong>
         <span>{code}</span>
+        {brandLabel ? <span>{brandLabel}</span> : null}
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
+import type { BrandSummary } from "@/lib/brand-utils";
 
 export type SkuStatus = "active" | "inactive";
 
@@ -6,9 +7,11 @@ export type SkuEditableType = "finished_good" | "material";
 
 export type SkuProductOption = {
   id: string;
+  brand_id: string | null;
   product_code: string;
   name: string;
   status: string;
+  brand: BrandSummary | null;
 };
 
 export type SkuRow = {
@@ -116,8 +119,12 @@ export type SkuBomUsage = {
 
 type MaybeRelation<T> = T | T[] | null;
 
+type RawSkuProductOption = Omit<SkuProductOption, "brand"> & {
+  brand: MaybeRelation<BrandSummary>;
+};
+
 type RawSkuRow = SkuRow & {
-  product: MaybeRelation<SkuProductOption>;
+  product: MaybeRelation<RawSkuProductOption>;
 };
 
 type RawInventorySummaryRow = {
@@ -131,7 +138,7 @@ type RawSkuBomHeaderUsage = Omit<SkuBomHeaderUsage, "item_count"> & {
 };
 
 type RawSkuBomProductSku = Omit<SkuBomProductSku, "product"> & {
-  product: MaybeRelation<SkuProductOption>;
+  product: MaybeRelation<RawSkuProductOption>;
 };
 
 type RawSkuBomHeaderForMaterial = Omit<
@@ -183,6 +190,13 @@ function normalizeOptionalText(value?: string) {
   return normalized ? normalized : null;
 }
 
+function normalizeProductOption(row: RawSkuProductOption): SkuProductOption {
+  return {
+    ...row,
+    brand: singleRelation(row.brand)
+  };
+}
+
 function normalizeOptionalId(value?: string) {
   const normalized = value?.trim();
 
@@ -217,9 +231,18 @@ function getSkuSelect() {
     updated_at,
     product:products!skus_product_id_fkey (
       id,
+      brand_id,
       product_code,
       name,
-      status
+      status,
+      brand:brands!products_brand_id_fkey (
+        id,
+        brand_code,
+        name,
+        english_name,
+        logo_url,
+        status
+      )
     )
   `;
 }
@@ -230,7 +253,9 @@ function normalizeSkuRow(
 ): SkuListRow {
   return {
     ...row,
-    product: singleRelation(row.product),
+    product: singleRelation(row.product)
+      ? normalizeProductOption(singleRelation(row.product) as RawSkuProductOption)
+      : null,
     inventory_quantity: inventorySummary?.quantity_on_hand ?? 0,
     reserved_quantity: inventorySummary?.reserved_quantity ?? 0,
     inventory_row_count: inventorySummary?.inventory_row_count ?? 0
@@ -253,9 +278,11 @@ function normalizeBomHeaderUsage(row: RawSkuBomHeaderUsage): SkuBomHeaderUsage {
 }
 
 function normalizeBomProductSku(row: RawSkuBomProductSku): SkuBomProductSku {
+  const product = singleRelation(row.product);
+
   return {
     ...row,
-    product: singleRelation(row.product)
+    product: product ? normalizeProductOption(product) : null
   };
 }
 
@@ -386,7 +413,23 @@ export async function getProductsForSkuForm(): Promise<SkuProductOption[]> {
   const { data, error } = await withTimeout(
     supabase
       .from("products")
-      .select("id, product_code, name, status")
+      .select(
+        `
+          id,
+          brand_id,
+          product_code,
+          name,
+          status,
+          brand:brands!products_brand_id_fkey (
+            id,
+            brand_code,
+            name,
+            english_name,
+            logo_url,
+            status
+          )
+        `
+      )
       .order("product_code", { ascending: true }),
     "读取产品下拉列表"
   );
@@ -395,7 +438,9 @@ export async function getProductsForSkuForm(): Promise<SkuProductOption[]> {
     throw formatSupabaseError("读取产品下拉列表", error);
   }
 
-  return (data ?? []) as SkuProductOption[];
+  return ((data ?? []) as unknown as RawSkuProductOption[]).map(
+    normalizeProductOption
+  );
 }
 
 export async function createSku(input: CreateSkuInput): Promise<SkuRow> {
@@ -574,9 +619,18 @@ async function getMaterialSkuBomItems(
               unit,
               product:products!skus_product_id_fkey (
                 id,
+                brand_id,
                 product_code,
                 name,
-                status
+                status,
+                brand:brands!products_brand_id_fkey (
+                  id,
+                  brand_code,
+                  name,
+                  english_name,
+                  logo_url,
+                  status
+                )
               )
             )
           )

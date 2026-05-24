@@ -27,6 +27,7 @@ import {
   type SkuProductOption,
   type SkuStatus
 } from "@/lib/api/skus";
+import { getBrandCodeName, getSkuBrandLabel } from "@/lib/brand-utils";
 import { downloadCsvTemplate, type CsvTemplateField } from "@/lib/utils/csv";
 import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
 
@@ -197,8 +198,9 @@ function getProductLabel(product: SkuProductOption | null | undefined) {
 function getProductOptionLabel(product: SkuProductOption) {
   const statusText =
     product.status === "inactive" ? " / 停用" : "";
+  const brandText = product.brand ? ` / ${getBrandCodeName(product.brand)}` : "";
 
-  return `${product.product_code} / ${product.name}${statusText}`;
+  return `${product.product_code} / ${product.name}${brandText}${statusText}`;
 }
 
 type ProductSearchSelectProps = {
@@ -298,6 +300,7 @@ export default function AdminSkusPage() {
   const [bomUsage, setBomUsage] = useState<SkuBomUsage | null>(null);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [skuTypeFilter, setSkuTypeFilter] = useState("all");
+  const [brandFilter, setBrandFilter] = useState("all");
   const [productFilter, setProductFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedSkuIds, setSelectedSkuIds] = useState<string[]>([]);
@@ -332,6 +335,20 @@ export default function AdminSkusPage() {
     };
   }, [skus]);
 
+  const brandOptions = useMemo(() => {
+    const brandById = new Map<string, NonNullable<SkuProductOption["brand"]>>();
+
+    products.forEach((product) => {
+      if (product.brand) {
+        brandById.set(product.brand.id, product.brand);
+      }
+    });
+
+    return [...brandById.values()].sort((first, second) =>
+      first.brand_code.localeCompare(second.brand_code, "zh-CN")
+    );
+  }, [products]);
+
   const filteredSkus = useMemo(() => {
     const keyword = searchKeyword.trim().toLowerCase();
 
@@ -339,9 +356,16 @@ export default function AdminSkusPage() {
       const matchesKeyword =
         !keyword ||
         sku.sku_code.toLowerCase().includes(keyword) ||
-        sku.sku_name.toLowerCase().includes(keyword);
+        sku.sku_name.toLowerCase().includes(keyword) ||
+        (sku.product?.brand?.name ?? "").toLowerCase().includes(keyword) ||
+        (sku.product?.brand?.brand_code ?? "").toLowerCase().includes(keyword);
       const matchesSkuType =
         skuTypeFilter === "all" || sku.sku_type === skuTypeFilter;
+      const matchesBrand =
+        brandFilter === "all" ||
+        (brandFilter === "none"
+          ? !sku.product?.brand?.id
+          : sku.product?.brand?.id === brandFilter);
       const matchesProduct =
         productFilter === "all" ||
         (productFilter === "none"
@@ -351,10 +375,14 @@ export default function AdminSkusPage() {
         statusFilter === "all" || sku.status === statusFilter;
 
       return (
-        matchesKeyword && matchesSkuType && matchesProduct && matchesStatus
+        matchesKeyword &&
+        matchesSkuType &&
+        matchesBrand &&
+        matchesProduct &&
+        matchesStatus
       );
     });
-  }, [skus, searchKeyword, skuTypeFilter, productFilter, statusFilter]);
+  }, [brandFilter, skus, searchKeyword, skuTypeFilter, productFilter, statusFilter]);
 
   const selectedSkuRows = useMemo(
     () => skus.filter((sku) => selectedSkuIds.includes(sku.id)),
@@ -408,7 +436,7 @@ export default function AdminSkusPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [productFilter, searchKeyword, skuTypeFilter, statusFilter]);
+  }, [brandFilter, productFilter, searchKeyword, skuTypeFilter, statusFilter]);
 
   const refreshAll = async () => {
     const skuToRefresh = selectedBomSku;
@@ -982,6 +1010,22 @@ export default function AdminSkusPage() {
           </label>
 
           <label>
+            品牌
+            <select
+              value={brandFilter}
+              onChange={(event) => setBrandFilter(event.target.value)}
+            >
+              <option value="all">全部品牌</option>
+              <option value="none">无品牌 / 辅料</option>
+              {brandOptions.map((brand) => (
+                <option key={brand.id} value={brand.id}>
+                  {getBrandCodeName(brand)}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
             状态
             <select
               value={statusFilter}
@@ -1031,6 +1075,7 @@ export default function AdminSkusPage() {
                   <th>SKU 名称</th>
                   <th>SKU 类型</th>
                   <th>所属产品</th>
+                  <th>品牌</th>
                   <th>单位</th>
                   <th>状态</th>
                   <th>当前库存数量</th>
@@ -1065,6 +1110,12 @@ export default function AdminSkusPage() {
                         </span>
                       </td>
                       <td>{getProductLabel(sku.product)}</td>
+                      <td>
+                        {getSkuBrandLabel({
+                          skuType: sku.sku_type,
+                          product: sku.product
+                        })}
+                      </td>
                       <td>{sku.unit}</td>
                       <td>
                         <span className={`tablePill sku-status-${sku.status}`}>
@@ -1158,6 +1209,31 @@ export default function AdminSkusPage() {
             setBomUsage(null);
           }}
         >
+          <div className="detailGrid">
+            <div className="detailItem">
+              <span>SKU</span>
+              <strong>
+                {selectedBomSku.sku_code} / {selectedBomSku.sku_name}
+              </strong>
+            </div>
+            <div className="detailItem">
+              <span>所属产品</span>
+              <strong>{getProductLabel(selectedBomSku.product)}</strong>
+            </div>
+            <div className="detailItem">
+              <span>品牌</span>
+              <strong>
+                {getSkuBrandLabel({
+                  skuType: selectedBomSku.sku_type,
+                  product: selectedBomSku.product
+                })}
+              </strong>
+            </div>
+            <div className="detailItem">
+              <span>SKU 类型</span>
+              <strong>{getSkuTypeLabel(selectedBomSku.sku_type)}</strong>
+            </div>
+          </div>
 
           {bomUsage && selectedBomSku.sku_type === "finished_good" ? (
             bomUsage.finishedBomHeaders.length === 0 ? (
