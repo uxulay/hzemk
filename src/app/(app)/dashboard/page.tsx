@@ -114,6 +114,12 @@ function getStatusLabel(labels: Record<string, string>, status: string) {
   return labels[status] ?? status;
 }
 
+function parseAmazonSite(notes: string | null) {
+  const siteMatch = notes?.match(/亚马逊站点[:：]\s*([^\n]+)/);
+
+  return siteMatch?.[1] ?? "-";
+}
+
 export default function DashboardPage() {
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -251,8 +257,9 @@ export default function DashboardPage() {
               <thead>
                 <tr>
                   <th>备货单号</th>
-                  <th>SKU</th>
-                  <th>备货数量</th>
+                  <th>站点</th>
+                  <th>SKU 数量</th>
+                  <th>总数量</th>
                   <th>状态</th>
                   <th>创建时间</th>
                 </tr>
@@ -261,11 +268,9 @@ export default function DashboardPage() {
                 {dashboardData.latestRequests.map((request) => (
                   <tr key={request.id}>
                     <td>{request.request_no}</td>
-                    <td>
-                      <strong>{request.sku?.sku_code ?? "-"}</strong>
-                      <span>{request.sku?.sku_name ?? "-"}</span>
-                    </td>
-                    <td>{formatQuantity(request.requested_quantity)}</td>
+                    <td>{parseAmazonSite(request.notes)}</td>
+                    <td>{request.sku_count || 1}</td>
+                    <td>{formatQuantity(request.total_requested_quantity)}</td>
                     <td>
                       <span className={`tablePill status-${request.status}`}>
                         {getStatusLabel(fbaStatusLabels, request.status)}
@@ -301,8 +306,8 @@ export default function DashboardPage() {
               <thead>
                 <tr>
                   <th>生产任务单号</th>
-                  <th>SKU</th>
-                  <th>计划生产数量</th>
+                  <th>SKU 数量</th>
+                  <th>总计划生产数量</th>
                   <th>状态</th>
                   <th>预计完成日期</th>
                 </tr>
@@ -311,11 +316,8 @@ export default function DashboardPage() {
                 {dashboardData.activeProductionOrders.map((order) => (
                   <tr key={order.id}>
                     <td>{order.production_order_no}</td>
-                    <td>
-                      <strong>{order.sku?.sku_code ?? "-"}</strong>
-                      <span>{order.sku?.sku_name ?? "-"}</span>
-                    </td>
-                    <td>{formatQuantity(order.planned_quantity)}</td>
+                    <td>{order.sku_count || 1}</td>
+                    <td>{formatQuantity(order.total_planned_quantity)}</td>
                     <td>
                       <span
                         className={`tablePill production-status-${order.status}`}

@@ -1,12 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useMemo } from "react";
+import { Modal } from "@/components/Modal";
+import { Pagination } from "@/components/Pagination";
 import {
   getMaterialRequirements,
   type MaterialRequirementRow,
   type MaterialRequirementStatus,
   type MaterialRequirementStatusFilter
 } from "@/lib/api/material-requirements";
+import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
 
 const statusOptions: {
   value: MaterialRequirementStatusFilter;
@@ -61,8 +65,16 @@ export default function MaterialRequirementsPage() {
   const [requirements, setRequirements] = useState<MaterialRequirementRow[]>([]);
   const [statusFilter, setStatusFilter] =
     useState<MaterialRequirementStatusFilter>("all");
+  const [selectedRequirement, setSelectedRequirement] =
+    useState<MaterialRequirementRow | null>(null);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+
+  const paginatedRequirements = useMemo(
+    () => paginateItems(requirements, page),
+    [page, requirements]
+  );
 
   const loadRequirements = async () => {
     try {
@@ -81,6 +93,10 @@ export default function MaterialRequirementsPage() {
 
   useEffect(() => {
     loadRequirements();
+  }, [statusFilter]);
+
+  useEffect(() => {
+    setPage(1);
   }, [statusFilter]);
 
   return (
@@ -161,10 +177,11 @@ export default function MaterialRequirementsPage() {
                   <th>当前库存数量</th>
                   <th>缺料数量</th>
                   <th>状态</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
-                {requirements.map((requirement) => {
+                {paginatedRequirements.map((requirement) => {
                   const isShortage =
                     requirement.status === "shortage" ||
                     Number(requirement.shortage_quantity) > 0;
@@ -208,6 +225,15 @@ export default function MaterialRequirementsPage() {
                             requirement.status}
                         </span>
                       </td>
+                      <td>
+                        <button
+                          className="secondaryButton"
+                          type="button"
+                          onClick={() => setSelectedRequirement(requirement)}
+                        >
+                          查看详情
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
@@ -215,7 +241,85 @@ export default function MaterialRequirementsPage() {
             </table>
           </div>
         ) : null}
+
+        {!loading && !errorMessage && requirements.length > 0 ? (
+          <Pagination
+            page={page}
+            pageSize={DEFAULT_PAGE_SIZE}
+            total={requirements.length}
+            onPageChange={setPage}
+          />
+        ) : null}
       </section>
+
+      {selectedRequirement ? (
+        <Modal
+          open={Boolean(selectedRequirement)}
+          eyebrow="物料需求详情"
+          title={selectedRequirement.production_order?.production_order_no ?? "物料需求"}
+          onClose={() => setSelectedRequirement(null)}
+        >
+          <div className="detailGrid">
+            <div className="detailItem">
+              <span>生产任务</span>
+              <strong>
+                {selectedRequirement.production_order?.production_order_no ?? "-"}
+              </strong>
+            </div>
+            <div className="detailItem">
+              <span>成品 SKU</span>
+              <strong>
+                {selectedRequirement.production_order?.finished_sku?.sku_code ?? "-"} /{" "}
+                {selectedRequirement.production_order?.finished_sku?.sku_name ?? "-"}
+              </strong>
+            </div>
+            <div className="detailItem">
+              <span>计划生产数量</span>
+              <strong>
+                {formatQuantity(selectedRequirement.production_order?.planned_quantity)}
+              </strong>
+            </div>
+            <div className="detailItem">
+              <span>原材料 SKU</span>
+              <strong>
+                {selectedRequirement.material_sku?.sku_code ?? "-"} /{" "}
+                {selectedRequirement.material_sku?.sku_name ?? "-"}
+              </strong>
+            </div>
+            <div className="detailItem">
+              <span>BOM 单位用量</span>
+              <strong>{formatQuantity(selectedRequirement.bom_item?.quantity_per)}</strong>
+            </div>
+            <div className="detailItem">
+              <span>损耗率</span>
+              <strong>{formatPercent(selectedRequirement.bom_item?.loss_rate)}</strong>
+            </div>
+            <div className="detailItem">
+              <span>总需求数量</span>
+              <strong>{formatQuantity(selectedRequirement.required_quantity)}</strong>
+            </div>
+            <div className="detailItem">
+              <span>当前库存数量</span>
+              <strong>{formatQuantity(selectedRequirement.available_quantity)}</strong>
+            </div>
+            <div className="detailItem">
+              <span>缺料数量</span>
+              <strong>{formatQuantity(selectedRequirement.shortage_quantity)}</strong>
+            </div>
+            <div className="detailItem">
+              <span>状态</span>
+              <strong>
+                {statusLabels[selectedRequirement.status] ??
+                  selectedRequirement.status}
+              </strong>
+            </div>
+            <div className="detailItem detailItemWide">
+              <span>备注</span>
+              <strong>{selectedRequirement.notes ?? "-"}</strong>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
     </main>
   );
 }

@@ -5,6 +5,8 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { BulkActionBar } from "@/components/BulkActionBar";
 import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Modal } from "@/components/Modal";
+import { Pagination } from "@/components/Pagination";
 import {
   bulkImportSkus,
   deactivateSkusByIds,
@@ -26,6 +28,7 @@ import {
   type SkuStatus
 } from "@/lib/api/skus";
 import { downloadCsvTemplate, type CsvTemplateField } from "@/lib/utils/csv";
+import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
 
 const skuTypeLabels: Record<string, string> = {
   finished_good: "成品",
@@ -227,6 +230,7 @@ export default function AdminSkusPage() {
   const [productFilter, setProductFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedSkuIds, setSelectedSkuIds] = useState<string[]>([]);
+  const [page, setPage] = useState(1);
   const [importOpen, setImportOpen] = useState(false);
   const [skuToDelete, setSkuToDelete] = useState<SkuListRow | null>(null);
   const [loading, setLoading] = useState(true);
@@ -284,6 +288,10 @@ export default function AdminSkusPage() {
     () => skus.filter((sku) => selectedSkuIds.includes(sku.id)),
     [skus, selectedSkuIds]
   );
+  const paginatedSkus = useMemo(
+    () => paginateItems(filteredSkus, page),
+    [filteredSkus, page]
+  );
   const allFilteredSelected =
     filteredSkus.length > 0 &&
     filteredSkus.every((sku) => selectedSkuIds.includes(sku.id));
@@ -325,6 +333,10 @@ export default function AdminSkusPage() {
   useEffect(() => {
     loadPageData();
   }, []);
+
+  useEffect(() => {
+    setPage(1);
+  }, [productFilter, searchKeyword, skuTypeFilter, statusFilter]);
 
   const refreshAll = async () => {
     const skuToRefresh = selectedBomSku;
@@ -700,22 +712,13 @@ export default function AdminSkusPage() {
       </section>
 
       {editForm ? (
-        <section className="formPanel">
-          <div className="sectionHeader">
-            <div>
-              <p className="eyebrow">编辑 SKU</p>
-              <h3>{editForm.skuCode}</h3>
-            </div>
-            <button
-              className="secondaryButton"
-              type="button"
-              onClick={() => setEditForm(null)}
-              disabled={updating}
-            >
-              取消编辑
-            </button>
-          </div>
-
+        <Modal
+          open={Boolean(editForm)}
+          eyebrow="编辑 SKU"
+          title={editForm.skuCode}
+          maxWidth="lg"
+          onClose={() => setEditForm(null)}
+        >
           <form className="dataForm skuForm" onSubmit={submitEditSku}>
             <label>
               SKU 编码
@@ -852,7 +855,7 @@ export default function AdminSkusPage() {
               </button>
             </div>
           </form>
-        </section>
+        </Modal>
       ) : null}
 
       <section className="listPanel">
@@ -977,7 +980,7 @@ export default function AdminSkusPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredSkus.map((sku) => {
+                {paginatedSkus.map((sku) => {
                   const statusUpdating = statusUpdatingId === sku.id;
 
                   return (
@@ -1068,6 +1071,15 @@ export default function AdminSkusPage() {
             </table>
           </div>
         ) : null}
+
+        {!loading && filteredSkus.length > 0 ? (
+          <Pagination
+            page={page}
+            pageSize={DEFAULT_PAGE_SIZE}
+            total={filteredSkus.length}
+            onPageChange={setPage}
+          />
+        ) : null}
       </section>
 
       {bomUsageLoading ? (
@@ -1075,25 +1087,16 @@ export default function AdminSkusPage() {
       ) : null}
 
       {selectedBomSku ? (
-        <section className="detailPanel">
-          <div className="detailHeader">
-            <div>
-              <p className="eyebrow">BOM 关联</p>
-              <h3>
-                {selectedBomSku.sku_code} / {getBomUsageTitle(selectedBomSku)}
-              </h3>
-            </div>
-            <button
-              className="secondaryButton"
-              type="button"
-              onClick={() => {
-                setSelectedBomSku(null);
-                setBomUsage(null);
-              }}
-            >
-              收起关联
-            </button>
-          </div>
+        <Modal
+          open={Boolean(selectedBomSku)}
+          eyebrow="BOM 关联"
+          title={`${selectedBomSku.sku_code} / ${getBomUsageTitle(selectedBomSku)}`}
+          maxWidth="xl"
+          onClose={() => {
+            setSelectedBomSku(null);
+            setBomUsage(null);
+          }}
+        >
 
           {bomUsage && selectedBomSku.sku_type === "finished_good" ? (
             bomUsage.finishedBomHeaders.length === 0 ? (
@@ -1191,7 +1194,7 @@ export default function AdminSkusPage() {
               当前 SKU 类型不是成品或原材料，请先确认业务类型后再查看 BOM 关系。
             </div>
           ) : null}
-        </section>
+        </Modal>
       ) : null}
 
       <BulkImportDialog<SkuImportInput>

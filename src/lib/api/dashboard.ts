@@ -23,9 +23,16 @@ export type LatestReplenishmentRequest = {
   request_no: string;
   sku_id: string;
   requested_quantity: number;
+  notes: string | null;
   status: string;
   created_at: string;
   sku: DashboardSku | null;
+  items: Array<{
+    id: string;
+    requested_quantity: number;
+  }>;
+  sku_count: number;
+  total_requested_quantity: number;
 };
 
 export type ActiveProductionOrder = {
@@ -37,6 +44,12 @@ export type ActiveProductionOrder = {
   planned_end_date: string | null;
   created_at: string;
   sku: DashboardSku | null;
+  items: Array<{
+    id: string;
+    planned_quantity: number;
+  }>;
+  sku_count: number;
+  total_planned_quantity: number;
 };
 
 export type ShortageMaterial = {
@@ -78,12 +91,15 @@ type CountResult = {
 
 type RawLatestReplenishmentRequest = Omit<
   LatestReplenishmentRequest,
-  "sku"
+  "sku" | "sku_count" | "total_requested_quantity"
 > & {
   sku: MaybeRelation<DashboardSku>;
 };
 
-type RawActiveProductionOrder = Omit<ActiveProductionOrder, "sku"> & {
+type RawActiveProductionOrder = Omit<
+  ActiveProductionOrder,
+  "sku" | "sku_count" | "total_planned_quantity"
+> & {
   sku: MaybeRelation<DashboardSku>;
 };
 
@@ -326,12 +342,17 @@ export async function getLatestReplenishmentRequests(): Promise<
           request_no,
           sku_id,
           requested_quantity,
+          notes,
           status,
           created_at,
           sku:skus!fba_replenishment_requests_sku_id_fkey (
             id,
             sku_code,
             sku_name
+          ),
+          items:fba_replenishment_request_items!fba_replenishment_request_items_request_id_fkey (
+            id,
+            requested_quantity
           )
         `
       )
@@ -347,7 +368,15 @@ export async function getLatestReplenishmentRequests(): Promise<
   return ((data ?? []) as unknown as RawLatestReplenishmentRequest[]).map(
     (request) => ({
       ...request,
-      sku: singleRelation(request.sku)
+      sku: singleRelation(request.sku),
+      sku_count: request.items?.length ?? 0,
+      total_requested_quantity:
+        request.items && request.items.length > 0
+          ? request.items.reduce(
+              (sum, item) => sum + Number(item.requested_quantity),
+              0
+            )
+          : Number(request.requested_quantity)
     })
   );
 }
@@ -372,6 +401,10 @@ export async function getActiveProductionOrders(): Promise<
             id,
             sku_code,
             sku_name
+          ),
+          items:production_order_items!production_order_items_production_order_id_fkey (
+            id,
+            planned_quantity
           )
         `
       )
@@ -387,7 +420,12 @@ export async function getActiveProductionOrders(): Promise<
 
   return ((data ?? []) as unknown as RawActiveProductionOrder[]).map((order) => ({
     ...order,
-    sku: singleRelation(order.sku)
+    sku: singleRelation(order.sku),
+    sku_count: order.items?.length ?? 0,
+    total_planned_quantity:
+      order.items && order.items.length > 0
+        ? order.items.reduce((sum, item) => sum + Number(item.planned_quantity), 0)
+        : Number(order.planned_quantity)
   }));
 }
 

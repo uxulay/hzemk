@@ -5,6 +5,8 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { BulkActionBar } from "@/components/BulkActionBar";
 import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Modal } from "@/components/Modal";
+import { Pagination } from "@/components/Pagination";
 import {
   bulkImportWarehouses,
   deactivateWarehousesByIds,
@@ -25,6 +27,7 @@ import {
   type WarehouseStatus
 } from "@/lib/api/warehouses";
 import { downloadCsvTemplate, type CsvTemplateField } from "@/lib/utils/csv";
+import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
 
 const warehouseStatusLabels: Record<string, string> = {
   active: "启用",
@@ -193,6 +196,7 @@ export default function AdminWarehousesPage() {
   const [warehouseTypeFilter, setWarehouseTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedWarehouseIds, setSelectedWarehouseIds] = useState<string[]>([]);
+  const [page, setPage] = useState(1);
   const [importOpen, setImportOpen] = useState(false);
   const [warehouseToDelete, setWarehouseToDelete] =
     useState<WarehouseListRow | null>(null);
@@ -229,6 +233,10 @@ export default function AdminWarehousesPage() {
         selectedWarehouseIds.includes(warehouse.id)
       ),
     [warehouses, selectedWarehouseIds]
+  );
+  const paginatedWarehouses = useMemo(
+    () => paginateItems(filteredWarehouses, page),
+    [filteredWarehouses, page]
   );
   const allFilteredSelected =
     filteredWarehouses.length > 0 &&
@@ -281,6 +289,10 @@ export default function AdminWarehousesPage() {
   useEffect(() => {
     loadPageData();
   }, []);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchKeyword, statusFilter, warehouseTypeFilter]);
 
   const refreshAll = async () => {
     const selectedWarehouseId = selectedWarehouse?.id;
@@ -636,22 +648,13 @@ export default function AdminWarehousesPage() {
       </section>
 
       {editForm ? (
-        <section className="formPanel">
-          <div className="sectionHeader">
-            <div>
-              <p className="eyebrow">编辑仓库</p>
-              <h3>{editForm.warehouseCode}</h3>
-            </div>
-            <button
-              className="secondaryButton"
-              type="button"
-              onClick={() => setEditForm(null)}
-              disabled={updating}
-            >
-              取消编辑
-            </button>
-          </div>
-
+        <Modal
+          open={Boolean(editForm)}
+          eyebrow="编辑仓库"
+          title={editForm.warehouseCode}
+          maxWidth="lg"
+          onClose={() => setEditForm(null)}
+        >
           <form className="dataForm warehouseForm" onSubmit={submitEditWarehouse}>
             <label>
               仓库编码
@@ -759,7 +762,7 @@ export default function AdminWarehousesPage() {
               </button>
             </div>
           </form>
-        </section>
+        </Modal>
       ) : null}
 
       <section className="listPanel">
@@ -877,7 +880,7 @@ export default function AdminWarehousesPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredWarehouses.map((warehouse) => {
+                {paginatedWarehouses.map((warehouse) => {
                   const statusUpdating = statusUpdatingId === warehouse.id;
 
                   return (
@@ -970,6 +973,15 @@ export default function AdminWarehousesPage() {
             </table>
           </div>
         ) : null}
+
+        {!loading && filteredWarehouses.length > 0 ? (
+          <Pagination
+            page={page}
+            pageSize={DEFAULT_PAGE_SIZE}
+            total={filteredWarehouses.length}
+            onPageChange={setPage}
+          />
+        ) : null}
       </section>
 
       {inventoryLoading ? (
@@ -977,25 +989,16 @@ export default function AdminWarehousesPage() {
       ) : null}
 
       {selectedWarehouse ? (
-        <section className="detailPanel">
-          <div className="detailHeader">
-            <div>
-              <p className="eyebrow">仓库库存</p>
-              <h3>
-                {selectedWarehouse.warehouse_code} / {selectedWarehouse.name}
-              </h3>
-            </div>
-            <button
-              className="secondaryButton"
-              type="button"
-              onClick={() => {
-                setSelectedWarehouse(null);
-                setWarehouseInventory([]);
-              }}
-            >
-              收起库存
-            </button>
-          </div>
+        <Modal
+          open={Boolean(selectedWarehouse)}
+          eyebrow="仓库库存"
+          title={`${selectedWarehouse.warehouse_code} / ${selectedWarehouse.name}`}
+          maxWidth="xl"
+          onClose={() => {
+            setSelectedWarehouse(null);
+            setWarehouseInventory([]);
+          }}
+        >
 
           {warehouseInventory.length === 0 ? (
             <div className="emptyState">当前仓库暂无库存</div>
@@ -1031,7 +1034,7 @@ export default function AdminWarehousesPage() {
               </table>
             </div>
           )}
-        </section>
+        </Modal>
       ) : null}
 
       <BulkImportDialog<WarehouseImportInput>

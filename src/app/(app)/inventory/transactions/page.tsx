@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Modal } from "@/components/Modal";
+import { Pagination } from "@/components/Pagination";
 import {
   getInventoryTransactions,
   getWarehousesForFilter,
@@ -11,6 +13,7 @@ import {
   type InventoryTransactionTypeFilter,
   type InventoryTransactionWarehouse
 } from "@/lib/api/inventory";
+import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
 
 const transactionTypeOptions: Array<{
   value: InventoryTransactionTypeFilter;
@@ -127,6 +130,9 @@ export default function InventoryTransactionsPage() {
   const [skuKeyword, setSkuKeyword] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [selectedTransaction, setSelectedTransaction] =
+    useState<InventoryTransactionRow | null>(null);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -145,6 +151,11 @@ export default function InventoryTransactionsPage() {
 
     return counts;
   }, [transactions]);
+
+  const paginatedTransactions = useMemo(
+    () => paginateItems(transactions, page),
+    [page, transactions]
+  );
 
   const loadTransactions = async (
     filters: InventoryTransactionFilters = {
@@ -166,6 +177,7 @@ export default function InventoryTransactionsPage() {
     try {
       setLoading(true);
       setErrorMessage("");
+      setPage(1);
 
       const [transactionData, warehouseData] = await Promise.all([
         getInventoryTransactions(filters),
@@ -369,10 +381,11 @@ export default function InventoryTransactionsPage() {
                   <th>操作人</th>
                   <th>操作时间</th>
                   <th>备注</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
-                {transactions.map((transaction) => (
+                {paginatedTransactions.map((transaction) => (
                   <tr key={transaction.id}>
                     <td>{transaction.transaction_no}</td>
                     <td>
@@ -406,13 +419,101 @@ export default function InventoryTransactionsPage() {
                     </td>
                     <td>{formatDateTime(transaction.occurred_at)}</td>
                     <td className="notesCell">{transaction.notes ?? "-"}</td>
+                    <td>
+                      <button
+                        className="secondaryButton"
+                        type="button"
+                        onClick={() => setSelectedTransaction(transaction)}
+                      >
+                        查看详情
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         ) : null}
+
+        {!loading && transactions.length > 0 ? (
+          <Pagination
+            page={page}
+            pageSize={DEFAULT_PAGE_SIZE}
+            total={transactions.length}
+            onPageChange={setPage}
+          />
+        ) : null}
       </section>
+
+      {selectedTransaction ? (
+        <Modal
+          open={Boolean(selectedTransaction)}
+          eyebrow="库存流水详情"
+          title={selectedTransaction.transaction_no}
+          onClose={() => setSelectedTransaction(null)}
+        >
+          <div className="detailGrid">
+            <div className="detailItem">
+              <span>流水类型</span>
+              <strong>
+                {transactionTypeLabels[selectedTransaction.transaction_type]}
+              </strong>
+            </div>
+            <div className="detailItem">
+              <span>SKU</span>
+              <strong>
+                {selectedTransaction.sku?.sku_code ?? "-"} /{" "}
+                {selectedTransaction.sku?.sku_name ?? "-"}
+              </strong>
+            </div>
+            <div className="detailItem">
+              <span>SKU 类型</span>
+              <strong>{getSkuTypeLabel(selectedTransaction.sku?.sku_type)}</strong>
+            </div>
+            <div className="detailItem">
+              <span>仓库</span>
+              <strong>
+                {selectedTransaction.warehouse?.name ?? "-"} /{" "}
+                {selectedTransaction.warehouse?.warehouse_code ?? "-"}
+              </strong>
+            </div>
+            <div className="detailItem">
+              <span>数量</span>
+              <strong>
+                {formatSignedQuantity(selectedTransaction)}
+                {selectedTransaction.sku?.unit
+                  ? ` ${selectedTransaction.sku.unit}`
+                  : ""}
+              </strong>
+            </div>
+            <div className="detailItem">
+              <span>关联单据</span>
+              <strong>
+                {getRelatedOrderTypeLabel(selectedTransaction.related_order_type)}
+                {" / "}
+                {selectedTransaction.related_order_no ?? "-"}
+              </strong>
+            </div>
+            <div className="detailItem">
+              <span>操作人</span>
+              <strong>
+                {selectedTransaction.operator?.full_name ?? "-"}
+                {selectedTransaction.operator?.email
+                  ? ` / ${selectedTransaction.operator.email}`
+                  : ""}
+              </strong>
+            </div>
+            <div className="detailItem">
+              <span>操作时间</span>
+              <strong>{formatDateTime(selectedTransaction.occurred_at)}</strong>
+            </div>
+            <div className="detailItem detailItemWide">
+              <span>备注</span>
+              <strong>{selectedTransaction.notes ?? "-"}</strong>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
     </main>
   );
 }

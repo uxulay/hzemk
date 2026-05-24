@@ -1,6 +1,8 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { Modal } from "@/components/Modal";
+import { Pagination } from "@/components/Pagination";
 import {
   acceptFbaReplenishmentRequest,
   createProductionOrder,
@@ -11,13 +13,15 @@ import {
   type PlanningRequestStatus,
   type ProductionProfile
 } from "@/lib/api/production";
+import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
 
 type ProductionFormState = {
-  plannedQuantity: string;
   plannedStartDate: string;
   plannedEndDate: string;
   assignedTo: string;
   notes: string;
+  itemQuantities: Record<string, string>;
+  itemRemarks: Record<string, string>;
 };
 
 const statusLabels: Record<PlanningRequestStatus, string> = {
@@ -100,12 +104,54 @@ function buildInitialProductionForm(
   request: PlanningFbaReplenishmentRequest
 ): ProductionFormState {
   return {
-    plannedQuantity: String(Number(request.requested_quantity)),
     plannedStartDate: "",
     plannedEndDate: request.target_ship_date ?? "",
     assignedTo: "",
-    notes: ""
+    notes: "",
+    itemQuantities: Object.fromEntries(
+      request.items.map((item) => [
+        item.id,
+        String(Number(item.requested_quantity))
+      ])
+    ),
+    itemRemarks: Object.fromEntries(request.items.map((item) => [item.id, ""]))
   };
+}
+
+function isPositiveIntegerText(value: string) {
+  return /^[1-9]\d*$/.test(value.trim());
+}
+
+function groupRequestItemsByProduct(request: PlanningFbaReplenishmentRequest) {
+  const groups = new Map<
+    string,
+    {
+      productName: string;
+      productCode: string;
+      imageUrl: string | null;
+      items: PlanningFbaReplenishmentRequest["items"];
+    }
+  >();
+
+  for (const item of request.items) {
+    const product = item.product ?? item.sku?.product ?? null;
+    const key = product?.id ?? item.product_id ?? "unknown";
+    const current = groups.get(key);
+
+    if (current) {
+      current.items.push(item);
+      continue;
+    }
+
+    groups.set(key, {
+      productName: product?.name ?? "未关联产品",
+      productCode: product?.product_code ?? "-",
+      imageUrl: product?.product_image_url ?? null,
+      items: [item]
+    });
+  }
+
+  return [...groups.values()];
 }
 
 export default function ProductionPlanningPage() {
@@ -115,7 +161,10 @@ export default function ProductionPlanningPage() {
   const [assignees, setAssignees] = useState<ProductionProfile[]>([]);
   const [selectedRequest, setSelectedRequest] =
     useState<PlanningFbaReplenishmentRequest | null>(null);
+  const [detailRequest, setDetailRequest] =
+    useState<PlanningFbaReplenishmentRequest | null>(null);
   const [form, setForm] = useState<ProductionFormState | null>(null);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [actingRequestId, setActingRequestId] = useState("");
   const [submittingProduction, setSubmittingProduction] = useState(false);
@@ -126,6 +175,14 @@ export default function ProductionPlanningPage() {
     () => assignees.filter((assignee) => assignee.status === "active"),
     [assignees]
   );
+  const paginatedRequests = useMemo(
+    () => paginateItems(requests, page),
+    [page, requests]
+  );
+
+  useEffect(() => {
+    setPage(1);
+  }, [requests.length]);
 
   const loadPageData = async () => {
     try {
@@ -193,7 +250,10 @@ export default function ProductionPlanningPage() {
     setSuccessMessage("");
   };
 
-  const updateForm = (field: keyof ProductionFormState, value: string) => {
+  const updateForm = (
+    field: "plannedStartDate" | "plannedEndDate" | "assignedTo" | "notes",
+    value: string
+  ) => {
     setForm((current) =>
       current
         ? {
@@ -206,18 +266,41 @@ export default function ProductionPlanningPage() {
     setSuccessMessage("");
   };
 
+  const updateItemForm = (
+    itemId: string,
+    field: "itemQuantities" | "itemRemarks",
+    value: string
+  ) => {
+    setForm((current) =>
+      current
+        ? {
+            ...current,
+            [field]: {
+              ...current[field],
+              [itemId]: value
+            }
+          }
+        : current
+    );
+    setErrorMessage("");
+    setSuccessMessage("");
+  };
+
   const validateForm = () => {
     if (!selectedRequest || !form) {
       return "请先选择一个 FBA 备货需求。";
     }
 
-    if (!selectedRequest.sku_id) {
-      return "当前备货需求缺少 SKU，不能创建生产任务。";
+    if (selectedRequest.items.length === 0) {
+      return "当前备货单没有 SKU 明细，不能创建生产任务。";
     }
 
-    const quantity = Number(form.plannedQuantity);
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      return "计划生产数量必须大于 0。";
+    const invalidItem = selectedRequest.items.find(
+      (item) => !isPositiveIntegerText(form.itemQuantities[item.id] ?? "")
+    );
+
+    if (invalidItem) {
+      return "每个 SKU 的计划生产数量都必须是正整数。";
     }
 
     if (
@@ -253,12 +336,19 @@ export default function ProductionPlanningPage() {
 
       const created = await createProductionOrder({
         replenishmentRequestId: selectedRequest.id,
-        skuId: selectedRequest.sku_id,
-        plannedQuantity: Number(form.plannedQuantity),
         plannedStartDate: form.plannedStartDate,
         plannedEndDate: form.plannedEndDate,
         assignedTo: form.assignedTo,
-        notes: form.notes
+        notes: form.notes,
+        items: selectedRequest.items.map((item) => ({
+          replenishmentRequestItemId: item.id.includes("-legacy-item")
+            ? null
+            : item.id,
+          skuId: item.sku_id,
+          requestedQuantity: Number(item.requested_quantity),
+          plannedQuantity: Number(form.itemQuantities[item.id]),
+          remark: form.itemRemarks[item.id] ?? null
+        }))
       });
 
       setSelectedRequest(null);
@@ -332,37 +422,34 @@ export default function ProductionPlanningPage() {
               <thead>
                 <tr>
                   <th>备货单号</th>
-                  <th>产品名称</th>
-                  <th>SKU 编码</th>
-                  <th>SKU 名称</th>
                   <th>亚马逊站点</th>
                   <th>目标 FBA 仓库</th>
-                  <th>备货数量</th>
+                  <th>产品数量</th>
+                  <th>SKU 数量</th>
+                  <th>总数量</th>
                   <th>期望完成日期</th>
                   <th>优先级</th>
                   <th>状态</th>
-                  <th>备注</th>
                   <th>创建时间</th>
                   <th>操作</th>
                 </tr>
               </thead>
               <tbody>
-                {requests.map((request) => {
+                {paginatedRequests.map((request) => {
                   const notes = parseNotes(request.notes);
                   const isActing = actingRequestId === request.id;
 
                   return (
                     <tr key={request.id}>
                       <td>{request.request_no}</td>
-                      <td>{request.sku?.product?.name ?? "-"}</td>
-                      <td>{request.sku?.sku_code ?? "-"}</td>
-                      <td>{request.sku?.sku_name ?? "-"}</td>
                       <td>{notes.amazonSite}</td>
                       <td>
                         <strong>{request.target_warehouse?.name ?? "-"}</strong>
                         <span>{request.fba_warehouse_code ?? "-"}</span>
                       </td>
-                      <td>{formatQuantity(request.requested_quantity)}</td>
+                      <td>{request.product_count}</td>
+                      <td>{request.sku_count}</td>
+                      <td>{formatQuantity(request.total_requested_quantity)}</td>
                       <td>{formatDate(request.target_ship_date)}</td>
                       <td>{priorityLabels[request.priority] ?? request.priority}</td>
                       <td>
@@ -370,10 +457,16 @@ export default function ProductionPlanningPage() {
                           {statusLabels[request.status] ?? request.status}
                         </span>
                       </td>
-                      <td className="notesCell">{notes.displayNotes}</td>
                       <td>{formatDateTime(request.created_at)}</td>
                       <td>
                         <div className="rowActions">
+                          <button
+                            type="button"
+                            onClick={() => setDetailRequest(request)}
+                            disabled={loading || isActing}
+                          >
+                            查看明细
+                          </button>
                           <button
                             type="button"
                             onClick={() => handleAccept(request.id)}
@@ -409,27 +502,30 @@ export default function ProductionPlanningPage() {
             </table>
           </div>
         ) : null}
+
+        {!loading && requests.length > 0 ? (
+          <Pagination
+            page={page}
+            pageSize={DEFAULT_PAGE_SIZE}
+            total={requests.length}
+            onPageChange={setPage}
+          />
+        ) : null}
       </section>
 
       {selectedRequest && form ? (
-        <section className="formPanel">
-          <div className="sectionHeader">
-            <div>
-              <p className="eyebrow">生产任务</p>
-              <h3>创建生产任务</h3>
-            </div>
-            <button
-              className="secondaryButton"
-              type="button"
-              onClick={() => {
-                setSelectedRequest(null);
-                setForm(null);
-              }}
-              disabled={submittingProduction}
-            >
-              关闭
-            </button>
-          </div>
+        <Modal
+          open={Boolean(selectedRequest && form)}
+          eyebrow="生产任务"
+          title="创建生产任务"
+          maxWidth="xl"
+          onClose={() => {
+            if (!submittingProduction) {
+              setSelectedRequest(null);
+              setForm(null);
+            }
+          }}
+        >
 
           <form className="dataForm" onSubmit={handleCreateProductionOrder}>
             <ReadonlyField
@@ -437,29 +533,9 @@ export default function ProductionPlanningPage() {
               value={selectedRequest.request_no}
             />
             <ReadonlyField
-              label="产品"
-              value={selectedRequest.sku?.product?.name ?? "-"}
+              label="总运营需求"
+              value={formatQuantity(selectedRequest.total_requested_quantity)}
             />
-            <ReadonlyField
-              label="SKU"
-              value={`${selectedRequest.sku?.sku_code ?? "-"} / ${
-                selectedRequest.sku?.sku_name ?? "-"
-              }`}
-            />
-
-            <label>
-              计划生产数量
-              <input
-                min="1"
-                step="1"
-                type="number"
-                value={form.plannedQuantity}
-                onChange={(event) =>
-                  updateForm("plannedQuantity", event.target.value)
-                }
-                disabled={submittingProduction}
-              />
-            </label>
 
             <label>
               计划开始日期
@@ -511,6 +587,72 @@ export default function ProductionPlanningPage() {
               />
             </label>
 
+            <div className="fullField groupList">
+              {groupRequestItemsByProduct(selectedRequest).map((group) => (
+                <section className="productGroup" key={group.productCode}>
+                  <ProductHeader
+                    imageUrl={group.imageUrl}
+                    name={group.productName}
+                    code={group.productCode}
+                  />
+                  <div className="tableWrap compactTableWrap">
+                    <table className="dataTable compactDataTable">
+                      <thead>
+                        <tr>
+                          <th>SKU 编码</th>
+                          <th>SKU 名称 / 米数</th>
+                          <th>运营需求数量</th>
+                          <th>计划生产数量</th>
+                          <th>备注</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {group.items.map((item) => (
+                          <tr key={item.id}>
+                            <td>{item.sku?.sku_code ?? "-"}</td>
+                            <td>
+                              <strong>{item.sku?.sku_name ?? "-"}</strong>
+                              <span>{item.sku?.specs ?? "-"}</span>
+                            </td>
+                            <td>{formatQuantity(item.requested_quantity)}</td>
+                            <td>
+                              <input
+                                min="1"
+                                step="1"
+                                type="number"
+                                value={form.itemQuantities[item.id] ?? ""}
+                                onChange={(event) =>
+                                  updateItemForm(
+                                    item.id,
+                                    "itemQuantities",
+                                    event.target.value
+                                  )
+                                }
+                                disabled={submittingProduction}
+                              />
+                            </td>
+                            <td>
+                              <input
+                                value={form.itemRemarks[item.id] ?? ""}
+                                onChange={(event) =>
+                                  updateItemForm(
+                                    item.id,
+                                    "itemRemarks",
+                                    event.target.value
+                                  )
+                                }
+                                disabled={submittingProduction}
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              ))}
+            </div>
+
             <div className="formActions">
               <button
                 className="primaryButton"
@@ -521,9 +663,108 @@ export default function ProductionPlanningPage() {
               </button>
             </div>
           </form>
-        </section>
+        </Modal>
+      ) : null}
+
+      {detailRequest ? (
+        <Modal
+          open={Boolean(detailRequest)}
+          eyebrow="备货单明细"
+          title={detailRequest.request_no}
+          maxWidth="xl"
+          onClose={() => setDetailRequest(null)}
+        >
+          <div className="detailGrid">
+            <ReadonlyField
+              label="亚马逊站点"
+              value={parseNotes(detailRequest.notes).amazonSite}
+            />
+            <ReadonlyField
+              label="目标仓库"
+              value={`${detailRequest.target_warehouse?.name ?? "-"} / ${
+                detailRequest.fba_warehouse_code ?? "-"
+              }`}
+            />
+            <ReadonlyField
+              label="产品数量"
+              value={String(detailRequest.product_count)}
+            />
+            <ReadonlyField
+              label="SKU 数量"
+              value={String(detailRequest.sku_count)}
+            />
+            <ReadonlyField
+              label="总数量"
+              value={formatQuantity(detailRequest.total_requested_quantity)}
+            />
+            <ReadonlyField
+              label="期望完成日期"
+              value={formatDate(detailRequest.target_ship_date)}
+            />
+          </div>
+
+          <div className="groupList">
+            {groupRequestItemsByProduct(detailRequest).map((group) => (
+              <section className="productGroup" key={group.productCode}>
+                <ProductHeader
+                  imageUrl={group.imageUrl}
+                  name={group.productName}
+                  code={group.productCode}
+                />
+                <div className="tableWrap compactTableWrap">
+                  <table className="dataTable compactDataTable">
+                    <thead>
+                      <tr>
+                        <th>SKU 编码</th>
+                        <th>SKU 名称 / 米数</th>
+                        <th>备货数量</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {group.items.map((item) => (
+                        <tr key={item.id}>
+                          <td>{item.sku?.sku_code ?? "-"}</td>
+                          <td>
+                            <strong>{item.sku?.sku_name ?? "-"}</strong>
+                            <span>{item.sku?.specs ?? "-"}</span>
+                          </td>
+                          <td>{formatQuantity(item.requested_quantity)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            ))}
+          </div>
+        </Modal>
       ) : null}
     </main>
+  );
+}
+
+function ProductHeader({
+  imageUrl,
+  name,
+  code
+}: {
+  imageUrl: string | null;
+  name: string;
+  code: string;
+}) {
+  return (
+    <div className="productHeader">
+      {imageUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img className="productThumb" src={imageUrl} alt={name} />
+      ) : (
+        <div className="productThumb productThumbPlaceholder">图</div>
+      )}
+      <div>
+        <strong>{name}</strong>
+        <span>{code}</span>
+      </div>
+    </div>
   );
 }
 

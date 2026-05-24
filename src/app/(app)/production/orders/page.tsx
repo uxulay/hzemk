@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { Modal } from "@/components/Modal";
+import { Pagination } from "@/components/Pagination";
 import {
   getProductionOrderDetail,
   getProductionOrderIssueMaterialsPreview,
@@ -15,6 +17,7 @@ import {
   type ProductionOrderStatusFilter,
   type ProductionOrderTrackingRow
 } from "@/lib/api/production";
+import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
 
 const productionStatusOptions: Array<{
   value: ProductionOrderStatusFilter;
@@ -125,6 +128,38 @@ function getIssueButtonLabel(order: ProductionOrderTrackingRow) {
   return "确认领料";
 }
 
+function groupProductionItemsByProduct(order: ProductionOrderTrackingRow) {
+  const groups = new Map<
+    string,
+    {
+      productName: string;
+      productCode: string;
+      imageUrl: string | null;
+      items: ProductionOrderTrackingRow["items"];
+    }
+  >();
+
+  for (const item of order.items) {
+    const product = item.sku?.product ?? null;
+    const key = product?.id ?? item.sku?.product_id ?? "unknown";
+    const current = groups.get(key);
+
+    if (current) {
+      current.items.push(item);
+      continue;
+    }
+
+    groups.set(key, {
+      productName: product?.name ?? "未关联产品",
+      productCode: product?.product_code ?? "-",
+      imageUrl: product?.product_image_url ?? null,
+      items: [item]
+    });
+  }
+
+  return [...groups.values()];
+}
+
 export default function ProductionOrdersPage() {
   const [orders, setOrders] = useState<ProductionOrderTrackingRow[]>([]);
   const [statusFilter, setStatusFilter] =
@@ -136,6 +171,7 @@ export default function ProductionOrdersPage() {
     useState<ProductionOrderTrackingRow | null>(null);
   const [issuePreview, setIssuePreview] =
     useState<ProductionOrderIssueMaterialsPreview | null>(null);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [issuePreviewLoadingId, setIssuePreviewLoadingId] = useState("");
@@ -160,6 +196,15 @@ export default function ProductionOrdersPage() {
       return matchesStatus && matchesMaterialStatus && matchesSku;
     });
   }, [materialStatusFilter, orders, skuKeyword, statusFilter]);
+
+  const paginatedOrders = useMemo(
+    () => paginateItems(filteredOrders, page),
+    [filteredOrders, page]
+  );
+
+  useEffect(() => {
+    setPage(1);
+  }, [materialStatusFilter, skuKeyword, statusFilter]);
 
   const loadOrders = async () => {
     try {
@@ -333,34 +378,27 @@ export default function ProductionOrdersPage() {
                 <tr>
                   <th>生产任务单号</th>
                   <th>关联 FBA 备货单号</th>
-                  <th>产品名称</th>
-                  <th>SKU 编码</th>
-                  <th>SKU 名称</th>
-                  <th>FBA 备货需求数量</th>
-                  <th>计划生产数量</th>
+                  <th>产品数量</th>
+                  <th>SKU 数量</th>
+                  <th>运营需求数量</th>
+                  <th>总计划生产数量</th>
                   <th>超量生产数量</th>
                   <th>已入库数量</th>
-                  <th>待入库数量</th>
                   <th>物料状态</th>
                   <th>领料状态</th>
                   <th>生产状态</th>
-                  <th>计划开始日期</th>
-                  <th>预计完成日期</th>
-                  <th>生产负责人</th>
-                  <th>备注</th>
                   <th>操作</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredOrders.map((order) => (
+                {paginatedOrders.map((order) => (
                   <tr key={order.id}>
                     <td>{order.production_order_no}</td>
                     <td>{order.replenishment_request?.request_no ?? "-"}</td>
-                    <td>{order.sku?.product?.name ?? "-"}</td>
-                    <td>{order.sku?.sku_code ?? "-"}</td>
-                    <td>{order.sku?.sku_name ?? "-"}</td>
+                    <td>{order.product_count}</td>
+                    <td>{order.sku_count}</td>
                     <td>{formatQuantity(order.requested_quantity)}</td>
-                    <td>{formatQuantity(order.planned_quantity)}</td>
+                    <td>{formatQuantity(order.total_planned_quantity)}</td>
                     <td>
                       {formatQuantity(order.overproduction_quantity)}
                       {order.overproduction_quantity > 0 ? (
@@ -371,7 +409,6 @@ export default function ProductionOrdersPage() {
                       ) : null}
                     </td>
                     <td>{formatQuantity(order.inbound_quantity)}</td>
-                    <td>{formatQuantity(order.pending_inbound_quantity)}</td>
                     <td>
                       <span
                         className={`tablePill material-status-${order.material_status}`}
@@ -391,10 +428,6 @@ export default function ProductionOrdersPage() {
                         {productionStatusLabels[order.status] ?? order.status}
                       </span>
                     </td>
-                    <td>{formatDate(order.planned_start_date)}</td>
-                    <td>{formatDate(order.planned_end_date)}</td>
-                    <td>{order.assigned_profile?.full_name ?? "-"}</td>
-                    <td className="notesCell">{order.notes ?? "-"}</td>
                     <td>
                       <div className="rowActions">
                         <button
@@ -430,16 +463,26 @@ export default function ProductionOrdersPage() {
             </table>
           </div>
         ) : null}
+
+        {!loading && filteredOrders.length > 0 ? (
+          <Pagination
+            page={page}
+            pageSize={DEFAULT_PAGE_SIZE}
+            total={filteredOrders.length}
+            onPageChange={setPage}
+          />
+        ) : null}
       </section>
 
       {selectedDetail ? (
-        <section className="detailPanel">
-          <div className="detailHeader">
-            <div>
-              <p className="eyebrow">生产任务详情</p>
-              <h3>{selectedDetail.production_order_no}</h3>
-            </div>
-            <div className="rowActions">
+        <Modal
+          open={Boolean(selectedDetail)}
+          eyebrow="生产任务详情"
+          title={selectedDetail.production_order_no}
+          maxWidth="xl"
+          onClose={() => setSelectedDetail(null)}
+        >
+          <div className="rowActions">
               <button
                 type="button"
                 onClick={() => openIssuePreview(selectedDetail)}
@@ -452,14 +495,6 @@ export default function ProductionOrdersPage() {
                   ? "检查库存..."
                   : getIssueButtonLabel(selectedDetail)}
               </button>
-              <button
-                className="secondaryButton"
-                type="button"
-                onClick={() => setSelectedDetail(null)}
-              >
-                收起详情
-              </button>
-            </div>
           </div>
 
           <div className="detailGrid">
@@ -468,15 +503,12 @@ export default function ProductionOrdersPage() {
               <strong>{selectedDetail.replenishment_request?.request_no ?? "-"}</strong>
             </div>
             <div className="detailItem">
-              <span>产品</span>
-              <strong>{selectedDetail.sku?.product?.name ?? "-"}</strong>
+              <span>产品数量</span>
+              <strong>{selectedDetail.product_count}</strong>
             </div>
             <div className="detailItem">
-              <span>SKU</span>
-              <strong>
-                {selectedDetail.sku?.sku_code ?? "-"} /{" "}
-                {selectedDetail.sku?.sku_name ?? "-"}
-              </strong>
+              <span>SKU 数量</span>
+              <strong>{selectedDetail.sku_count}</strong>
             </div>
             <div className="detailItem">
               <span>FBA 备货需求数量</span>
@@ -484,7 +516,7 @@ export default function ProductionOrdersPage() {
             </div>
             <div className="detailItem">
               <span>计划生产数量</span>
-              <strong>{formatQuantity(selectedDetail.planned_quantity)}</strong>
+              <strong>{formatQuantity(selectedDetail.total_planned_quantity)}</strong>
             </div>
             <div className="detailItem">
               <span>已入库数量</span>
@@ -526,6 +558,56 @@ export default function ProductionOrdersPage() {
               件。生产入库后，多出的部分会留在成品库存，不会自动发往 FBA。
             </div>
           ) : null}
+
+          <div className="groupList">
+            {groupProductionItemsByProduct(selectedDetail).map((group) => (
+              <section className="productGroup" key={group.productCode}>
+                <ProductHeader
+                  imageUrl={group.imageUrl}
+                  name={group.productName}
+                  code={group.productCode}
+                />
+                <div className="tableWrap compactTableWrap">
+                  <table className="dataTable compactDataTable">
+                    <thead>
+                      <tr>
+                        <th>SKU</th>
+                        <th>运营需求数量</th>
+                        <th>计划生产数量</th>
+                        <th>已入库数量</th>
+                        <th>超量数量</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {group.items.map((item) => (
+                        <tr key={item.id}>
+                          <td>
+                            <strong>{item.sku?.sku_code ?? "-"}</strong>
+                            <span>
+                              {item.sku?.sku_name ?? "-"} /{" "}
+                              {item.sku?.specs ?? "-"}
+                            </span>
+                          </td>
+                          <td>{formatQuantity(item.requested_quantity)}</td>
+                          <td>{formatQuantity(item.planned_quantity)}</td>
+                          <td>{formatQuantity(item.completed_quantity)}</td>
+                          <td>
+                            {formatQuantity(
+                              Math.max(
+                                0,
+                                Number(item.planned_quantity) -
+                                  Number(item.requested_quantity ?? 0)
+                              )
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            ))}
+          </div>
 
           <div className="contentGrid">
             <section className="panel">
@@ -595,7 +677,7 @@ export default function ProductionOrdersPage() {
               )}
             </section>
           </div>
-        </section>
+        </Modal>
       ) : null}
 
       {issuePreview ? (
@@ -749,5 +831,30 @@ export default function ProductionOrdersPage() {
         </div>
       ) : null}
     </main>
+  );
+}
+
+function ProductHeader({
+  imageUrl,
+  name,
+  code
+}: {
+  imageUrl: string | null;
+  name: string;
+  code: string;
+}) {
+  return (
+    <div className="productHeader">
+      {imageUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img className="productThumb" src={imageUrl} alt={name} />
+      ) : (
+        <div className="productThumb productThumbPlaceholder">图</div>
+      )}
+      <div>
+        <strong>{name}</strong>
+        <span>{code}</span>
+      </div>
+    </div>
   );
 }

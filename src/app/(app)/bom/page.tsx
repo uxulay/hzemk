@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { BulkActionBar } from "@/components/BulkActionBar";
 import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Modal } from "@/components/Modal";
+import { Pagination } from "@/components/Pagination";
 import {
   bulkImportBomRows,
   deactivateBomHeadersByIds,
@@ -29,6 +31,7 @@ import {
   type BomStatus
 } from "@/lib/api/bom";
 import { downloadCsvTemplate, type CsvTemplateField } from "@/lib/utils/csv";
+import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
 
 const bomStatusLabels: Record<BomStatus, string> = {
   active: "启用",
@@ -208,6 +211,7 @@ export default function BomPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [bomToDelete, setBomToDelete] = useState<BomListRow | null>(null);
   const [bomItemToDelete, setBomItemToDelete] = useState<BomItemRow | null>(null);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [submittingHeader, setSubmittingHeader] = useState(false);
@@ -251,6 +255,11 @@ export default function BomPage() {
   );
   const allBomsSelected =
     boms.length > 0 && boms.every((bom) => selectedBomIds.includes(bom.id));
+
+  const paginatedBoms = useMemo(
+    () => paginateItems(boms, page),
+    [boms, page]
+  );
 
   const loadBomDetail = async (bomHeaderId: string) => {
     try {
@@ -724,7 +733,7 @@ export default function BomPage() {
                 </tr>
               </thead>
               <tbody>
-                {boms.map((bom) => {
+                {paginatedBoms.map((bom) => {
                   const updating = statusUpdatingId === bom.id;
 
                   return (
@@ -797,6 +806,15 @@ export default function BomPage() {
             </table>
           </div>
         ) : null}
+
+        {!loading && boms.length > 0 ? (
+          <Pagination
+            page={page}
+            pageSize={DEFAULT_PAGE_SIZE}
+            total={boms.length}
+            onPageChange={setPage}
+          />
+        ) : null}
       </section>
 
       {detailLoading ? (
@@ -804,13 +822,19 @@ export default function BomPage() {
       ) : null}
 
       {bomDetail ? (
-        <section className="detailPanel">
-          <div className="detailHeader">
-            <div>
-              <p className="eyebrow">BOM 明细</p>
-              <h3>{bomDetail.bom_code}</h3>
-            </div>
-            <div className="rowActions">
+        <Modal
+          open={Boolean(bomDetail)}
+          eyebrow="BOM 明细"
+          title={bomDetail.bom_code}
+          maxWidth="xl"
+          onClose={() => {
+            setBomDetail(null);
+            setSelectedBomId("");
+            setShowItemForm(false);
+            setEditingItem(null);
+          }}
+        >
+          <div className="rowActions">
               <button
                 className="secondaryButton"
                 type="button"
@@ -818,19 +842,6 @@ export default function BomPage() {
               >
                 {showItemForm ? "收起添加" : "添加原材料"}
               </button>
-              <button
-                className="secondaryButton"
-                type="button"
-                onClick={() => {
-                  setBomDetail(null);
-                  setSelectedBomId("");
-                  setShowItemForm(false);
-                  setEditingItem(null);
-                }}
-              >
-                收起明细
-              </button>
-            </div>
           </div>
 
           <div className="detailGrid">
@@ -1089,7 +1100,7 @@ export default function BomPage() {
               </table>
             </div>
           )}
-        </section>
+        </Modal>
       ) : null}
 
       <BulkImportDialog<BomImportInput>

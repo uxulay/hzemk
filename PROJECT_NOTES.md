@@ -1,6 +1,6 @@
 # 项目进度说明
 
-最后整理日期：2026-05-23
+最后整理日期：2026-05-24
 
 本文档根据当前项目代码、页面路由、`src/lib/api`、`supabase` 目录、`schema.sql`、`seed.sql` 和已实现页面整理。后续 Codex 开发前请先阅读本文件。
 
@@ -43,7 +43,7 @@
 | `/production/orders` | 已完成跟踪和领料第一版 | 生产任务列表。显示 FBA 备货需求数量、计划生产数量、超量生产数量、已入库数量、待入库数量、物料状态、领料状态、生产状态。支持查看详情、确认领料弹窗、自动扣原材料库存、写 `material_out` 库存流水，并把生产任务更新为 `in_progress`。 |
 | `/bom` | 已完成管理和批量维护第一版 | BOM 管理页面。读取 `bom_headers` 和 `bom_items`，支持新增 BOM、查看明细、添加原材料、编辑 BOM 明细的单位用量/损耗率/备注、启用/停用 BOM、CSV 批量导入、删除明细、删除/批量删除或停用 BOM，并在删除前检查生产任务引用。 |
 | `/materials/requirements` | 已完成查询第一版 | 物料需求列表。读取 `material_requirements`，并回查 `bom_items` 显示 BOM 单位用量和损耗率。支持按状态筛选。当前是查询页，不直接新增、编辑、删除。 |
-| `/purchase/orders` | 已完成采购第一版 | 采购单页面。可以从缺料物料生成采购单，写入 `purchase_orders` 和 `purchase_order_items`，并把对应物料需求状态更新为 `purchased`。支持采购单列表、详情和状态按钮。实际库存入库建议走 `/inventory/inbound`。 |
+| `/purchase/orders` | 已完成采购升级版 | 采购单页面。支持从缺料物料生成采购单、采购人员手动创建采购单、CSV 批量导入、CSV 导出给供应商、列表分页、详情弹窗和状态按钮。缺料生成仍会写入 `purchase_order_items.material_requirement_id` 并把对应物料需求状态更新为 `purchased`。实际库存入库建议走 `/inventory/inbound`。 |
 | `/inventory/inbound` | 已完成入库第一版 | 入库管理。分为采购入库和生产入库。采购入库会写 `material_in` 库存流水、更新 `inventory_items`、采购明细到货数量、采购单状态和物料需求状态。生产入库会写 `product_in` 库存流水、更新成品库存、更新生产任务 `completed_quantity` 和状态。 |
 | `/inventory/fba-outbound` | 已完成 FBA 出库第一版 | FBA 出库单独处理。读取可出库 FBA 备货需求，按成品库存和已出库数量计算待出库数量。提交后写 `product_out` 库存流水、扣减 `inventory_items`，累计出库数量达到备货需求数量后把备货需求标记为 `shipped`。 |
 | `/inventory/transactions` | 已完成查询第一版 | 库存流水页面。读取 `inventory_transactions`，支持按流水类型、仓库、SKU、日期筛选，显示关联采购单、生产任务或 FBA 备货单。当前只查询，不新增、编辑、删除。 |
@@ -64,26 +64,105 @@
 
 用户管理页面已经新增到导航，管理员可以看到入口。仓库管理页面已经新增到导航，管理员和仓库角色都可以看到入口。
 
+### 3.1 列表分页和弹窗详情统一优化（2026-05-24）
+
+已完成一轮后台主要列表页交互优化，目标是解决“点查看后详情堆在页面最下面、数据多时要一直滚动”的问题。
+
+本次完成：
+
+- 新增通用分页组件 `src/components/Pagination.tsx`，主要列表默认每页显示 20 条。
+- 新增通用弹窗组件 `src/components/Modal.tsx`，用于查看详情和编辑表单。
+- 新增分页工具 `src/lib/utils/pagination.ts`，先采用稳定、改动小的前端分页。
+- 已应用分页的页面：`/replenishment`、`/production/orders`、`/materials/requirements`、`/purchase/orders`、`/inventory/transactions`、`/inventory/materials`、`/inventory/products`、`/bom`、`/admin/products`、`/admin/skus`、`/admin/suppliers`、`/admin/warehouses`、`/admin/users`。
+- 已改成弹窗详情或弹窗编辑的页面：`/replenishment`、`/production/orders`、`/materials/requirements`、`/purchase/orders`、`/inventory/transactions`、`/inventory/materials`、`/inventory/products`、`/bom`、`/admin/products`、`/admin/skus`、`/admin/suppliers`、`/admin/warehouses`、`/admin/users`。
+- 主要列表的“查看 / 查看详情 / 查看明细 / 查看 BOM / 查看库存 / 查看采购单 / 查看 SKU”不再把详情长期展示在页面底部。
+- `/admin/products`、`/admin/skus`、`/admin/suppliers`、`/admin/warehouses`、`/admin/users` 的编辑表单已改为弹窗显示，保存逻辑沿用原有函数。
+- 保持 RLS、Supabase 表结构和现有 API 逻辑不变，没有修改数据库 schema。
+
+测试方式：
+
+- 已运行 `npm run typecheck`，通过。
+- 已运行 `npm run build`，通过。
+- 用户要求跳过继续浏览器检查，所以未继续做完整手动浏览器逐页验证。
+
+如果分页或弹窗不生效，优先检查：
+
+- 页面是否正确引入 `Pagination`、`Modal` 和 `paginateItems`。
+- 表格渲染是否使用 `paginated...` 数据，而不是原始完整数组。
+- 筛选条件变化后是否调用 `setPage(1)`。
+- 行内“查看”按钮是否设置对应的 selected 状态。
+- 弹窗是否传入 `open`、`title` 和 `onClose`。
+
+后续待优化：
+
+- 数据量继续增大后，可把前端 `slice` 分页升级成 Supabase `range(from, to)` 服务端分页。
+- 更复杂筛选可统一抽成查询参数，便于刷新后保留条件。
+- 表格列配置、列显隐和固定操作列可后续单独做，不建议和业务写入逻辑混在一起改。
+
 ## 4. 当前已完成的业务流程
 
 ### 4.1 运营提交 FBA 备货需求
 
-已完成第一版。
+已完成单条创建和批量导入第一版。
 
-入口：`/replenishment/new`
+入口：
+
+- `/replenishment`：FBA 备货需求列表。
+- `/replenishment/new`：创建备货需求，支持“单条创建”和“批量导入”。
 
 当前逻辑：
 
-- 运营选择产品、成品 SKU、亚马逊站点、目标 FBA 仓库、FBA 仓库代码、备货数量、期望完成日期、优先级和备注。
-- 写入 `fba_replenishment_requests`。
-- 自动生成 `request_no`。
+- 侧边栏中“FBA 备货”不再显示为不可点击分组标题，而是直接露出“创建备货需求”和“FBA 备货需求”两个入口。
+- “创建备货需求”在侧边栏中是绿色高亮主入口，方便业务员快速下备货需求单。
+- `/replenishment` 页面右上角有绿色“+ 创建备货需求”按钮，点击进入 `/replenishment/new`。
+- `/replenishment/new` 使用 Tab 分为“单条创建”和“批量导入”。
+- 单条创建保留原有逻辑：运营选择产品、成品 SKU、亚马逊站点、目标 FBA 仓库、FBA 仓库代码、备货数量、期望完成日期、优先级和备注。
+- 单条创建和批量导入都会写入 `fba_replenishment_requests`。
+- 单条创建和批量导入都会自动生成 `request_no`。
 - 新需求状态为 `submitted`。
 - 亚马逊站点当前写进 `notes` 文本里，不是单独字段。
 - 当前还没有真实登录，所以 `requested_by` 暂时为空。
+- 批量导入支持 CSV 文件，上传后先预览和校验，不会直接写入数据库。
+- CSV 模板字段：`sku_code`、`target_warehouse_code`、`fba_warehouse_code`、`requested_quantity`、`expected_date`、`priority`、`remark`、`amazon_site`。
+- 批量导入校验：`sku_code` 必填且必须存在于 `skus`，SKU 必须是成品；`target_warehouse_code` 如果填写必须存在于 `warehouses`；`requested_quantity` 必填且大于 0；`expected_date` 如果填写必须是 `YYYY-MM-DD`；`priority` 只能是 `low`、`normal`、`high`、`urgent`；同一个 CSV 里完全重复的行会提示检查。
+- 点击“确认导入”后，才会逐行调用现有创建逻辑写入 `fba_replenishment_requests`，并显示成功数量和失败数量。
+
+本次修改文件：
+
+- `src/lib/navigation.ts`
+- `src/components/layout/sidebar.tsx`
+- `src/app/(app)/replenishment/page.tsx`
+- `src/app/(app)/replenishment/new/page.tsx`
+- `src/app/(app)/replenishment/new/fba-replenishment-bulk-import-panel.tsx`
+- `src/lib/api/replenishment.ts`
+- `src/app/globals.css`
+- `PROJECT_NOTES.md`
+
+测试方式：
+
+- 运行 `npm run typecheck`。
+- 运行 `npm run build`。
+- 打开 `/replenishment`，确认右上角有绿色“+ 创建备货需求”按钮，点击后进入 `/replenishment/new`。
+- 打开 `/replenishment/new`，确认可以在“单条创建”和“批量导入”之间切换。
+- 在“单条创建”里按原流程提交一条，确认还能正常创建。
+- 在“批量导入”里点击“下载模板”，填写 CSV 后上传，确认页面先显示预览和每行校验结果。
+- 上传包含错误数据的 CSV，例如不存在的 `sku_code`、数量为 0、错误日期、错误优先级或完全重复行，确认不能导入。
+- 上传全部校验通过的 CSV，点击“确认导入”，确认显示成功数量和失败数量。
+- 导入成功后进入 `/replenishment`，确认列表能看到新创建的备货需求。
+
+如果批量导入没生效，优先检查：
+
+- CSV 表头是否和模板一致，尤其是 `sku_code` 和 `requested_quantity`。
+- `skus.sku_code` 是否真实存在，且对应 SKU 是否为成品 SKU。
+- `warehouses.warehouse_code` 是否真实存在。
+- `priority` 是否只填写 `low`、`normal`、`high`、`urgent`。
+- Supabase RLS 是否已经允许读取 `skus`、`warehouses`，并允许插入 `fba_replenishment_requests`。
+- `.env.local` 里的 `NEXT_PUBLIC_SUPABASE_URL` 和 `NEXT_PUBLIC_SUPABASE_ANON_KEY` 是否正确。
+- 浏览器控制台或页面错误提示里是否有更具体的 Supabase 报错。
 
 ### 4.2 厂长接单 / 拒绝
 
-已完成第一版。
+已完成第一版，并在 2026-05-24 调整 FBA 菜单层级。
 
 入口：`/production/planning`
 
@@ -138,24 +217,60 @@
 
 - BOM 管理页面已完成第一版。后续生产任务仍依赖 Supabase 里启用中的 BOM 和完整 `bom_items` 明细。
 
-### 4.5 缺料生成采购单
+### 4.5 采购单创建、导入和导出
 
-已完成第一版。
+已完成升级版。
 
 入口：`/purchase/orders`
 
 当前逻辑：
 
-- 读取 `material_requirements` 中状态为 `shortage` 且 `shortage_quantity > 0` 的缺料记录。
-- 可以选择缺料物料生成采购单。
-- 写入 `purchase_orders` 和 `purchase_order_items`。
-- `purchase_order_items.material_requirement_id` 关联来源物料需求。
-- 创建采购单后，对应物料需求状态更新为 `purchased`。
+- 采购单支持三种来源展示：缺料生成、手动创建、批量导入。
+- 旧流程仍然保留：读取 `material_requirements` 中状态为 `shortage` 且 `shortage_quantity > 0` 的缺料记录，可以选择缺料物料生成采购单。
+- 缺料生成采购单时，写入 `purchase_orders` 和 `purchase_order_items`，并继续让 `purchase_order_items.material_requirement_id` 关联来源物料需求。
+- 缺料生成采购单成功后，对应 `material_requirements.status` 更新为 `purchased`。
+- 手动创建采购单通过页面右上角“+ 新建采购单”打开弹窗，不再跳到底部表单。表单读取真实 `suppliers`、`profiles` 和 `skus`，明细只能选择 `skus.sku_type = material` 的原材料 SKU。
+- 手动创建采购单默认写入 `purchase_orders.status = draft`，采购单号自动使用 `PUR-年月日-随机数`，例如 `PUR-20260601-1234`。
+- 手动创建和批量导入的采购明细 `material_requirement_id` 为空，不影响缺料需求。
+- 草稿采购单支持编辑供应商、采购负责人、日期、备注、采购数量、单价和明细备注。第一版不做删除采购单，不开放业务单据 delete。
+- 采购单列表显示采购单号、供应商、采购负责人、状态、下单日期、预计到货日期、总金额、明细数量、创建来源、创建时间和操作。
+- 详情使用弹窗展示，包含采购单主信息、供应商联系人信息、采购明细、总金额、关联物料需求和状态操作。
+- 每行采购单和详情弹窗都支持导出 CSV，文件名格式为 `采购单号-供应商名称.csv`，字段用中文，方便直接发给供应商。
+- 批量导入采购单复用 `BulkImportDialog` 和 `src/lib/utils/csv.ts`，上传后先预览和逐行校验，不会直接写入数据库。
+- 批量导入模板字段：`purchase_order_no`、`supplier_code`、`order_date`、`expected_arrival_date`、`material_sku_code`、`quantity`、`unit_price`、`remark`。
+- 批量导入分组规则：填写了 `purchase_order_no` 的行按采购单号合并；未填写采购单号的行按 `supplier_code + expected_arrival_date` 合并为一张采购单。
+- 批量导入校验供应商编码、原材料 SKU、日期格式、数量、单价、数据库中已存在的采购单号，并提示同一采购单内重复原材料。
+- 导出 CSV 字段：采购单号、供应商、联系人、联系电话、邮箱、下单日期、预计到货日期、原材料编码、原材料名称、单位、采购数量、单价、小计、备注。
+
+本次修改文件：
+
+- `src/lib/navigation.ts`
+- `src/components/layout/sidebar.tsx`
+- `src/app/(app)/purchase/orders/page.tsx`
+- `src/lib/api/purchase.ts`
+- `src/app/globals.css`
+- `PROJECT_NOTES.md`
+
+测试方式：
+
+- 手动创建采购单：打开 `/purchase/orders`，点击“+ 新建采购单”，选择供应商、可选采购负责人、下单日期、预计到货日期和备注，添加一条或多条原材料 SKU 明细，确认数量大于 0、单价不小于 0 后保存，再回到采购单列表确认能看到新采购单。
+- 批量导入采购单：打开 `/purchase/orders`，点击“批量导入采购单”，先下载模板，填写 CSV 后上传，确认页面先显示预览、行级校验和将生成的采购单数量；有错误时不能导入，全部通过后点击“确认导入”。
+- 导出采购单：在采购单列表点击“导出”，或点“查看详情”后在详情弹窗点击“导出采购单”，确认下载的 CSV 表头是中文，且明细小计等于采购数量乘以单价。
+- 缺料生成采购单：在“待采购清单”勾选缺料物料，点击“生成采购单”，确认仍会写入 `purchase_order_items.material_requirement_id`，并把对应缺料需求更新为 `purchased`。
+- 侧边栏：确认顺序为首页、创建备货需求、FBA 备货需求、生产管理、采购管理、仓库库存、基础资料、系统管理，且不再出现不可点击的“FBA 备货”分组标题。
 
 注意：
 
 - 采购单页面的状态按钮主要用于采购单状态流转。
 - 真正会增加库存、生成库存流水的采购入库，请优先走 `/inventory/inbound`。
+- 如果页面读写失败，优先确认 `supabase/dev-purchase-policies.sql` 是否已经在 Supabase SQL Editor 执行。该文件已包含采购单、采购明细、供应商、SKU、物料需求和 profiles 的开发阶段读写策略。
+
+后续待优化：
+
+- 正式登录后，把 `created_by` 自动写成当前采购人员，而不是手动选择。
+- 采购单编辑第一版只编辑草稿主信息和已有明细数量/单价/备注，后续如需编辑时新增或删除明细，需要单独设计业务规则。
+- 批量导入当前按采购单逐张写入，后续可升级为数据库事务或 RPC，避免极端情况下主表成功但明细失败。
+- 后续可增加 Excel 导出、打印版 PDF、供应商确认回传等功能。
 
 ### 4.6 采购入库
 
@@ -852,6 +967,8 @@ RLS 策略：
 
 - 后台整体视觉改成更简洁、圆润、浅灰白的现代内部管理系统风格。
 - 侧边栏改为分组折叠菜单，不再把所有子菜单默认全部展开。
+- “FBA 备货”不可点击分组标题已移除，避免用户误以为它是一个页面。
+- FBA 相关入口直接放在首页下面，顺序是“创建备货需求”在上，“FBA 备货需求”在下。
 - 当前页面所在分组会自动展开，当前页面对应菜单项会高亮。
 - 刷新页面后，会根据当前 URL 重新判断应该展开哪个分组。
 - 保持现有业务页面、Supabase 查询和数据库 schema 不变。
@@ -862,7 +979,8 @@ RLS 策略：
 | 一级菜单 | 子菜单 |
 | --- | --- |
 | 首页 | 后台首页 `/dashboard` |
-| FBA 备货 | FBA 备货需求 `/replenishment`、创建 FBA 备货 `/replenishment/new` |
+| 创建备货需求 | 直接入口 `/replenishment/new`，绿色主按钮样式 |
+| FBA 备货需求 | 直接入口 `/replenishment` |
 | 生产管理 | 厂长排产 `/production/planning`、生产任务 `/production/orders`、BOM 管理 `/bom`、物料需求 `/materials/requirements` |
 | 采购管理 | 采购单 `/purchase/orders`、供应商管理 `/admin/suppliers` |
 | 仓库库存 | 入库管理 `/inventory/inbound`、FBA 出库 `/inventory/fba-outbound`、原材料库存 `/inventory/materials`、成品库存 `/inventory/products`、库存流水 `/inventory/transactions`、库存调整 `/inventory/adjustments` |
@@ -875,7 +993,8 @@ RLS 策略：
 - 折叠交互在 `src/components/layout/sidebar.tsx`。
 - Sidebar 会读取当前 `pathname`，先找出最精确匹配的菜单链接。
 - 例如访问 `/inventory/products` 时，会匹配到“成品库存”，并自动展开“仓库库存”分组。
-- 点击一级菜单可以展开或收起；首页这类直接链接会直接跳转。
+- 点击一级菜单可以展开或收起；首页、创建备货需求、FBA 备货需求这类直接链接会直接跳转。
+- 创建备货需求保持绿色主操作样式；FBA 备货需求保持普通菜单样式。
 - 当前仍沿用开发阶段的 mock 角色菜单过滤。
 
 本次修改文件：
@@ -1108,6 +1227,70 @@ FBA 出库是单独动作，不能把成品入库自动等同于发往 FBA。
 库存的 `inventory_items.item_type` 中，生产入库会写 `finished_product`。
 
 后续如果要统一命名，不要直接乱改数据或代码；必须先检查 `schema.sql`、`seed.sql`、现有页面查询逻辑和 Supabase 当前数据，再做小范围调整。
+
+### 8.6 FBA 备货单和生产任务主从结构升级（2026-05-24）
+
+本次已把核心业务从“一个 SKU 一张单”升级为“主表 + 明细表”的第一版。
+
+已完成：
+
+- `fba_replenishment_requests` 继续作为 FBA 备货单主表，代表一整张运营备货单。
+- 新增 `fba_replenishment_request_items`，作为 FBA 备货单明细表，记录一张单下多个产品、多个成品 SKU 和每个 SKU 的备货数量。
+- `production_orders` 继续作为生产任务主表，代表厂长为整张 FBA 备货单创建的一张生产任务。
+- 新增 `production_order_items`，作为生产任务明细表，记录每个 SKU 的运营需求数量、厂长计划生产数量和后续已完成数量。
+- `products` 新增 `product_image_url` 字段，用于排产和详情页显示产品图；当前只支持 URL，不做文件上传。
+- `/replenishment` 现在按一张张 FBA 备货单展示，列表显示产品数量、SKU 数量和总备货数量。
+- `/replenishment` 右上角绿色按钮已改为“+ 创建备货单”，弹窗内可添加多个产品；每个产品自动展示 `sku_type = finished_good` 的 SKU；数量为空或 0 的 SKU 不生成明细。
+- 侧边栏只保留“FBA 备货需求”入口，不再单独显示“创建备货需求”。
+- `/production/planning` 现在按一张张 FBA 备货单排产，详情按产品分组展示产品图、SKU 和运营需求数量。
+- 厂长现在对整张 FBA 备货单点击一次“创建生产任务”，弹窗中可以逐个 SKU 调整计划生产数量。
+- 计划生产数量可以大于运营需求数量，多出的数量后续进入成品库存。
+- 创建生产任务时会写入 `production_orders` 主表和 `production_order_items` 明细，并把 FBA 备货单状态更新为 `in_production`。
+- BOM 算料已适配 `production_order_items`：系统遍历生产任务明细，根据每个 SKU 的 `planned_quantity` 找启用 BOM，并按 `production_order_id + material_sku_id` 汇总写入 `material_requirements`。
+- `/production/orders` 已兼容生产任务明细结构，列表显示产品数量、SKU 数量、总计划生产数量；详情按产品分组展示每个 SKU 的运营需求、计划数量、已入库数量和超量数量。
+- `/dashboard` 已按主单显示最新 FBA 备货需求，SKU 数量和总数量优先来自明细表；生产任务数量汇总优先使用 `production_order_items.planned_quantity`。
+
+新增 SQL 文件：
+
+- `supabase/migrations/fba-and-production-items.sql`
+- `supabase/dev-fba-production-items-policies.sql`
+
+本次修改文件：
+
+- `supabase/schema.sql`
+- `supabase/migrations/fba-and-production-items.sql`
+- `supabase/dev-fba-production-items-policies.sql`
+- `src/lib/api/replenishment.ts`
+- `src/lib/api/production.ts`
+- `src/lib/api/dashboard.ts`
+- `src/lib/api/master-data.ts`
+- `src/app/(app)/replenishment/page.tsx`
+- `src/app/(app)/replenishment/new/page.tsx`
+- `src/app/(app)/production/planning/page.tsx`
+- `src/app/(app)/production/orders/page.tsx`
+- `src/app/(app)/dashboard/page.tsx`
+- `src/lib/navigation.ts`
+- `src/app/globals.css`
+- `PROJECT_NOTES.md`
+
+兼容说明：
+
+- 旧的 `fba_replenishment_requests.sku_id`、`requested_quantity` 等字段没有删除。
+- 旧的 `production_orders.sku_id`、`planned_quantity`、`completed_quantity` 等字段没有删除。
+- 新创建的主表仍会写入第一条 SKU 和汇总数量到旧字段，避免旧页面立刻报错。
+- 旧数据如果还没有明细表记录，列表和详情会用旧主表字段临时生成一条兼容明细来展示。
+
+后续待适配：
+
+- `/inventory/inbound` 生产入库当前仍以生产任务主表为主，后续需要升级为按 `production_order_items` 多 SKU 分行入库，并更新每条明细的 `completed_quantity`。
+- `/inventory/fba-outbound` 当前仍以 FBA 备货主表总量为主，后续需要升级为按 `fba_replenishment_request_items` 明细出库。
+- 生产领料当前已按整张 `production_orders` 的 `material_requirements` 自动扣料；后续可以继续补跨仓扣料、补料、退料和更严格的数据库事务/RPC。
+
+测试方式：
+
+- 已运行 `npm run typecheck`，通过。
+- 已运行 `npm run build`，通过。
+- 用户要求不要自动打开浏览器、不要启动 dev server、不要截图，所以本次未做浏览器自动检查。
 
 ## 9. 后续待做功能列表
 

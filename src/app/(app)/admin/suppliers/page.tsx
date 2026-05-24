@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { BulkActionBar } from "@/components/BulkActionBar";
 import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Modal } from "@/components/Modal";
+import { Pagination } from "@/components/Pagination";
 import {
   bulkImportSuppliers,
   deactivateSuppliersByIds,
@@ -24,6 +26,7 @@ import {
   type SupplierStatus
 } from "@/lib/api/suppliers";
 import { downloadCsvTemplate, type CsvTemplateField } from "@/lib/utils/csv";
+import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
 
 const supplierStatusLabels: Record<string, string> = {
   active: "启用",
@@ -172,6 +175,7 @@ export default function AdminSuppliersPage() {
   const [searchKeyword, setSearchKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedSupplierIds, setSelectedSupplierIds] = useState<string[]>([]);
+  const [page, setPage] = useState(1);
   const [importOpen, setImportOpen] = useState(false);
   const [supplierToDelete, setSupplierToDelete] =
     useState<SupplierListRow | null>(null);
@@ -203,6 +207,10 @@ export default function AdminSuppliersPage() {
   const selectedSuppliers = useMemo(
     () => suppliers.filter((supplier) => selectedSupplierIds.includes(supplier.id)),
     [suppliers, selectedSupplierIds]
+  );
+  const paginatedSuppliers = useMemo(
+    () => paginateItems(filteredSuppliers, page),
+    [filteredSuppliers, page]
   );
   const allFilteredSelected =
     filteredSuppliers.length > 0 &&
@@ -255,6 +263,10 @@ export default function AdminSuppliersPage() {
   useEffect(() => {
     loadPageData();
   }, []);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchKeyword, statusFilter]);
 
   const refreshAll = async () => {
     const selectedSupplierId = selectedSupplier?.id;
@@ -653,22 +665,13 @@ export default function AdminSuppliersPage() {
       </section>
 
       {editForm ? (
-        <section className="formPanel">
-          <div className="sectionHeader">
-            <div>
-              <p className="eyebrow">编辑供应商</p>
-              <h3>{editForm.supplierCode}</h3>
-            </div>
-            <button
-              className="secondaryButton"
-              type="button"
-              onClick={() => setEditForm(null)}
-              disabled={updating}
-            >
-              取消编辑
-            </button>
-          </div>
-
+        <Modal
+          open={Boolean(editForm)}
+          eyebrow="编辑供应商"
+          title={editForm.supplierCode}
+          maxWidth="lg"
+          onClose={() => setEditForm(null)}
+        >
           <form className="dataForm supplierForm" onSubmit={submitEditSupplier}>
             <label>
               供应商编码
@@ -820,7 +823,7 @@ export default function AdminSuppliersPage() {
               </button>
             </div>
           </form>
-        </section>
+        </Modal>
       ) : null}
 
       <section className="listPanel">
@@ -925,7 +928,7 @@ export default function AdminSuppliersPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredSuppliers.map((supplier) => {
+                {paginatedSuppliers.map((supplier) => {
                   const statusUpdating = statusUpdatingId === supplier.id;
 
                   return (
@@ -1006,6 +1009,15 @@ export default function AdminSuppliersPage() {
             </table>
           </div>
         ) : null}
+
+        {!loading && filteredSuppliers.length > 0 ? (
+          <Pagination
+            page={page}
+            pageSize={DEFAULT_PAGE_SIZE}
+            total={filteredSuppliers.length}
+            onPageChange={setPage}
+          />
+        ) : null}
       </section>
 
       {purchaseOrdersLoading ? (
@@ -1013,25 +1025,16 @@ export default function AdminSuppliersPage() {
       ) : null}
 
       {selectedSupplier ? (
-        <section className="detailPanel">
-          <div className="detailHeader">
-            <div>
-              <p className="eyebrow">关联采购单</p>
-              <h3>
-                {selectedSupplier.supplier_code} / {selectedSupplier.name}
-              </h3>
-            </div>
-            <button
-              className="secondaryButton"
-              type="button"
-              onClick={() => {
-                setSelectedSupplier(null);
-                setPurchaseOrders([]);
-              }}
-            >
-              收起采购单
-            </button>
-          </div>
+        <Modal
+          open={Boolean(selectedSupplier)}
+          eyebrow="关联采购单"
+          title={`${selectedSupplier.supplier_code} / ${selectedSupplier.name}`}
+          maxWidth="xl"
+          onClose={() => {
+            setSelectedSupplier(null);
+            setPurchaseOrders([]);
+          }}
+        >
 
           {purchaseOrders.length === 0 ? (
             <div className="emptyState">当前供应商暂无关联采购单</div>
@@ -1073,7 +1076,7 @@ export default function AdminSuppliersPage() {
               </table>
             </div>
           )}
-        </section>
+        </Modal>
       ) : null}
 
       <BulkImportDialog<SupplierImportInput>

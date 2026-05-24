@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { BulkActionBar } from "@/components/BulkActionBar";
 import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Modal } from "@/components/Modal";
+import { Pagination } from "@/components/Pagination";
 import {
   bulkImportProducts,
   deactivateProductsByIds,
@@ -24,6 +26,7 @@ import {
   type ProductStatus
 } from "@/lib/api/products";
 import { downloadCsvTemplate, type CsvTemplateField } from "@/lib/utils/csv";
+import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
 
 const productStatusLabels: Record<string, string> = {
   active: "启用",
@@ -131,6 +134,7 @@ export default function AdminProductsPage() {
   const [searchKeyword, setSearchKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
+  const [page, setPage] = useState(1);
   const [importOpen, setImportOpen] = useState(false);
   const [productToDelete, setProductToDelete] =
     useState<ProductListRow | null>(null);
@@ -161,6 +165,10 @@ export default function AdminProductsPage() {
   const selectedProducts = useMemo(
     () => products.filter((product) => selectedProductIds.includes(product.id)),
     [products, selectedProductIds]
+  );
+  const paginatedProducts = useMemo(
+    () => paginateItems(filteredProducts, page),
+    [filteredProducts, page]
   );
   const allFilteredSelected =
     filteredProducts.length > 0 &&
@@ -205,6 +213,10 @@ export default function AdminProductsPage() {
   useEffect(() => {
     loadPageData();
   }, []);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchKeyword, statusFilter]);
 
   const refreshAll = async () => {
     const productToRefresh = selectedProduct;
@@ -524,22 +536,13 @@ export default function AdminProductsPage() {
       </section>
 
       {editForm ? (
-        <section className="formPanel">
-          <div className="sectionHeader">
-            <div>
-              <p className="eyebrow">编辑产品</p>
-              <h3>{editForm.productCode}</h3>
-            </div>
-            <button
-              className="secondaryButton"
-              type="button"
-              onClick={() => setEditForm(null)}
-              disabled={updating}
-            >
-              取消编辑
-            </button>
-          </div>
-
+        <Modal
+          open={Boolean(editForm)}
+          eyebrow="编辑产品"
+          title={editForm.productCode}
+          maxWidth="md"
+          onClose={() => setEditForm(null)}
+        >
           <form className="dataForm productForm" onSubmit={submitEditProduct}>
             <label>
               产品名称
@@ -610,7 +613,7 @@ export default function AdminProductsPage() {
               </button>
             </div>
           </form>
-        </section>
+        </Modal>
       ) : null}
 
       <section className="listPanel">
@@ -707,7 +710,7 @@ export default function AdminProductsPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredProducts.map((product) => {
+                {paginatedProducts.map((product) => {
                   const statusUpdating = statusUpdatingId === product.id;
 
                   return (
@@ -776,6 +779,15 @@ export default function AdminProductsPage() {
             </table>
           </div>
         ) : null}
+
+        {!loading && filteredProducts.length > 0 ? (
+          <Pagination
+            page={page}
+            pageSize={DEFAULT_PAGE_SIZE}
+            total={filteredProducts.length}
+            onPageChange={setPage}
+          />
+        ) : null}
       </section>
 
       {skuLoading ? (
@@ -783,25 +795,16 @@ export default function AdminProductsPage() {
       ) : null}
 
       {selectedProduct ? (
-        <section className="detailPanel">
-          <div className="detailHeader">
-            <div>
-              <p className="eyebrow">关联 SKU</p>
-              <h3>
-                {selectedProduct.product_code} / {selectedProduct.name}
-              </h3>
-            </div>
-            <button
-              className="secondaryButton"
-              type="button"
-              onClick={() => {
-                setSelectedProduct(null);
-                setSelectedSkus([]);
-              }}
-            >
-              收起 SKU
-            </button>
-          </div>
+        <Modal
+          open={Boolean(selectedProduct)}
+          eyebrow="关联 SKU"
+          title={`${selectedProduct.product_code} / ${selectedProduct.name}`}
+          maxWidth="xl"
+          onClose={() => {
+            setSelectedProduct(null);
+            setSelectedSkus([]);
+          }}
+        >
 
           {selectedSkus.length === 0 ? (
             <div className="emptyState">当前产品暂无关联 SKU</div>
@@ -835,7 +838,7 @@ export default function AdminProductsPage() {
               </table>
             </div>
           )}
-        </section>
+        </Modal>
       ) : null}
 
       <BulkImportDialog<ProductImportInput>

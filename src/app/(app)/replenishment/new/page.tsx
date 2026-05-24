@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   getProducts,
@@ -10,6 +11,7 @@ import {
   type Warehouse
 } from "@/lib/api/master-data";
 import { createFbaReplenishmentRequest } from "@/lib/api/replenishment";
+import { FbaReplenishmentBulkImportPanel } from "./fba-replenishment-bulk-import-panel";
 
 type FormState = {
   productId: string;
@@ -22,6 +24,8 @@ type FormState = {
   priority: string;
   notes: string;
 };
+
+type CreateMode = "single" | "bulk";
 
 const initialFormState: FormState = {
   productId: "",
@@ -85,10 +89,28 @@ function sortWarehouses(warehouses: Warehouse[]) {
 }
 
 export default function NewReplenishmentPage() {
+  return (
+    <main className="pageShell">
+      <section className="pageHero">
+        <div>
+          <p className="eyebrow">创建入口已调整</p>
+          <h2>请前往 FBA 备货需求页面创建备货单</h2>
+          <p>
+            新流程是在 FBA 备货需求列表右上角点击“+ 创建备货单”，一次创建包含多个产品和多个 SKU 明细的整张备货单。
+          </p>
+        </div>
+        <Link className="primaryButton successButton" href="/replenishment">
+          前往 FBA 备货需求
+        </Link>
+      </section>
+    </main>
+  );
+
   const [products, setProducts] = useState<Product[]>([]);
   const [skus, setSkus] = useState<Sku[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [form, setForm] = useState<FormState>(initialFormState);
+  const [activeTab, setActiveTab] = useState<CreateMode>("single");
   const [loadingOptions, setLoadingOptions] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -240,166 +262,199 @@ export default function NewReplenishmentPage() {
       </section>
 
       <section className="formPanel">
-        {loadingOptions ? (
-          <div className="debugNotice">正在读取产品、SKU 和仓库数据...</div>
-        ) : null}
+        <div className="tabBar" role="tablist" aria-label="创建方式">
+          <button
+            className={activeTab === "single" ? "tabButton active" : "tabButton"}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "single"}
+            onClick={() => setActiveTab("single")}
+          >
+            单条创建
+          </button>
+          <button
+            className={activeTab === "bulk" ? "tabButton active" : "tabButton"}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "bulk"}
+            onClick={() => setActiveTab("bulk")}
+          >
+            批量导入
+          </button>
+        </div>
 
-        {errorMessage ? (
-          <div className="debugError">
-            <strong>操作失败</strong>
-            <p>{errorMessage}</p>
-          </div>
-        ) : null}
+        {activeTab === "single" ? (
+          <>
+            {loadingOptions ? (
+              <div className="debugNotice">正在读取产品、SKU 和仓库数据...</div>
+            ) : null}
 
-        {successMessage ? (
-          <div className="successNotice">
-            <strong>提交成功</strong>
-            <p>{successMessage}</p>
-          </div>
-        ) : null}
+            {errorMessage ? (
+              <div className="debugError">
+                <strong>操作失败</strong>
+                <p>{errorMessage}</p>
+              </div>
+            ) : null}
 
-        <form className="dataForm" onSubmit={handleSubmit}>
-          <label>
-            产品
-            <select
-              value={form.productId}
-              onChange={(event) => updateForm("productId", event.target.value)}
-              disabled={loadingOptions || submitting}
-            >
-              <option value="">请选择产品</option>
-              {products.map((product) => (
-                <option key={product.id} value={product.id}>
-                  {product.name} / {product.product_code}
-                </option>
-              ))}
-            </select>
-          </label>
+            {successMessage ? (
+              <div className="successNotice">
+                <strong>提交成功</strong>
+                <p>{successMessage}</p>
+              </div>
+            ) : null}
 
-          <label>
-            成品 SKU
-            <select
-              value={form.skuId}
-              onChange={(event) => updateForm("skuId", event.target.value)}
-              disabled={loadingOptions || submitting || !form.productId}
-            >
-              <option value="">
-                {form.productId ? "请选择成品 SKU" : "请先选择产品"}
-              </option>
-              {filteredSkus.map((sku) => (
-                <option key={sku.id} value={sku.id}>
-                  {sku.sku_name} / {sku.sku_code}
-                </option>
-              ))}
-            </select>
-          </label>
+            <form className="dataForm" onSubmit={handleSubmit}>
+              <label>
+                产品
+                <select
+                  value={form.productId}
+                  onChange={(event) =>
+                    updateForm("productId", event.target.value)
+                  }
+                  disabled={loadingOptions || submitting}
+                >
+                  <option value="">请选择产品</option>
+                  {products.map((product) => (
+                    <option key={product.id} value={product.id}>
+                      {product.name} / {product.product_code}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-          <label>
-            亚马逊站点
-            <select
-              value={form.amazonSite}
-              onChange={(event) => updateForm("amazonSite", event.target.value)}
-              disabled={submitting}
-            >
-              {amazonSites.map((site) => (
-                <option key={site.value} value={site.value}>
-                  {site.label}
-                </option>
-              ))}
-            </select>
-          </label>
+              <label>
+                成品 SKU
+                <select
+                  value={form.skuId}
+                  onChange={(event) => updateForm("skuId", event.target.value)}
+                  disabled={loadingOptions || submitting || !form.productId}
+                >
+                  <option value="">
+                    {form.productId ? "请选择成品 SKU" : "请先选择产品"}
+                  </option>
+                  {filteredSkus.map((sku) => (
+                    <option key={sku.id} value={sku.id}>
+                      {sku.sku_name} / {sku.sku_code}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-          <label>
-            目标 FBA 仓库
-            <select
-              value={form.targetWarehouseId}
-              onChange={(event) =>
-                updateForm("targetWarehouseId", event.target.value)
-              }
-              disabled={loadingOptions || submitting}
-            >
-              <option value="">请选择目标仓库</option>
-              {warehouses.map((warehouse) => (
-                <option key={warehouse.id} value={warehouse.id}>
-                  {warehouse.name} / {warehouse.warehouse_type}
-                </option>
-              ))}
-            </select>
-          </label>
+              <label>
+                亚马逊站点
+                <select
+                  value={form.amazonSite}
+                  onChange={(event) =>
+                    updateForm("amazonSite", event.target.value)
+                  }
+                  disabled={submitting}
+                >
+                  {amazonSites.map((site) => (
+                    <option key={site.value} value={site.value}>
+                      {site.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-          <label>
-            FBA 仓库代码
-            <input
-              value={form.fbaWarehouseCode}
-              onChange={(event) =>
-                updateForm("fbaWarehouseCode", event.target.value)
-              }
-              placeholder="例如 ONT8、LAX9"
-              disabled={submitting}
-            />
-          </label>
+              <label>
+                目标 FBA 仓库
+                <select
+                  value={form.targetWarehouseId}
+                  onChange={(event) =>
+                    updateForm("targetWarehouseId", event.target.value)
+                  }
+                  disabled={loadingOptions || submitting}
+                >
+                  <option value="">请选择目标仓库</option>
+                  {warehouses.map((warehouse) => (
+                    <option key={warehouse.id} value={warehouse.id}>
+                      {warehouse.name} / {warehouse.warehouse_type}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-          <label>
-            备货数量
-            <input
-              min="1"
-              step="1"
-              type="number"
-              value={form.requestedQuantity}
-              onChange={(event) =>
-                updateForm("requestedQuantity", event.target.value)
-              }
-              placeholder="请输入大于 0 的数量"
-              disabled={submitting}
-            />
-          </label>
+              <label>
+                FBA 仓库代码
+                <input
+                  value={form.fbaWarehouseCode}
+                  onChange={(event) =>
+                    updateForm("fbaWarehouseCode", event.target.value)
+                  }
+                  placeholder="例如 ONT8、LAX9"
+                  disabled={submitting}
+                />
+              </label>
 
-          <label>
-            期望完成日期
-            <input
-              type="date"
-              value={form.targetShipDate}
-              onChange={(event) =>
-                updateForm("targetShipDate", event.target.value)
-              }
-              disabled={submitting}
-            />
-          </label>
+              <label>
+                备货数量
+                <input
+                  min="1"
+                  step="1"
+                  type="number"
+                  value={form.requestedQuantity}
+                  onChange={(event) =>
+                    updateForm("requestedQuantity", event.target.value)
+                  }
+                  placeholder="请输入大于 0 的数量"
+                  disabled={submitting}
+                />
+              </label>
 
-          <label>
-            优先级
-            <select
-              value={form.priority}
-              onChange={(event) => updateForm("priority", event.target.value)}
-              disabled={submitting}
-            >
-              {priorities.map((priority) => (
-                <option key={priority.value} value={priority.value}>
-                  {priority.label}
-                </option>
-              ))}
-            </select>
-          </label>
+              <label>
+                期望完成日期
+                <input
+                  type="date"
+                  value={form.targetShipDate}
+                  onChange={(event) =>
+                    updateForm("targetShipDate", event.target.value)
+                  }
+                  disabled={submitting}
+                />
+              </label>
 
-          <label className="fullField">
-            备注
-            <textarea
-              value={form.notes}
-              onChange={(event) => updateForm("notes", event.target.value)}
-              placeholder="例如：根据 30 天销量和当前 FBA 库存，需要安排补货。"
-              disabled={submitting}
-            />
-          </label>
+              <label>
+                优先级
+                <select
+                  value={form.priority}
+                  onChange={(event) =>
+                    updateForm("priority", event.target.value)
+                  }
+                  disabled={submitting}
+                >
+                  {priorities.map((priority) => (
+                    <option key={priority.value} value={priority.value}>
+                      {priority.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-          <div className="formActions">
-            <button
-              className="primaryButton"
-              type="submit"
-              disabled={loadingOptions || submitting}
-            >
-              {submitting ? "正在提交..." : "提交 FBA 备货需求"}
-            </button>
-          </div>
-        </form>
+              <label className="fullField">
+                备注
+                <textarea
+                  value={form.notes}
+                  onChange={(event) => updateForm("notes", event.target.value)}
+                  placeholder="例如：根据 30 天销量和当前 FBA 库存，需要安排补货。"
+                  disabled={submitting}
+                />
+              </label>
+
+              <div className="formActions">
+                <button
+                  className="primaryButton successButton"
+                  type="submit"
+                  disabled={loadingOptions || submitting}
+                >
+                  {submitting ? "正在提交..." : "提交 FBA 备货需求"}
+                </button>
+              </div>
+            </form>
+          </>
+        ) : (
+          <FbaReplenishmentBulkImportPanel />
+        )}
       </section>
     </main>
   );

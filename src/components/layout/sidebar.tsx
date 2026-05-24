@@ -112,6 +112,7 @@ export function Sidebar() {
                 className={classNames(
                   "navGroupButton",
                   "navGroupLink",
+                  group.variant === "primary" && "navItemPrimaryAction",
                   groupIsActive && "active"
                 )}
                 href={group.href}

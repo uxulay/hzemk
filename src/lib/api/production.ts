@@ -47,10 +47,13 @@ export type PlanningFbaReplenishmentRequest = {
     sku_name: string;
     amazon_sku: string | null;
     fnsku: string | null;
+    specs: string | null;
+    unit: string;
     product: {
       id: string;
       product_code: string;
       name: string;
+      product_image_url: string | null;
     } | null;
   } | null;
   target_warehouse: {
@@ -61,22 +64,87 @@ export type PlanningFbaReplenishmentRequest = {
   } | null;
   requested_by_profile: ProductionProfile | null;
   accepted_by_profile: ProductionProfile | null;
+  items: PlanningFbaReplenishmentRequestItem[];
+  product_count: number;
+  sku_count: number;
+  total_requested_quantity: number;
 };
 
 export type CreateProductionOrderInput = {
   replenishmentRequestId: string;
-  skuId: string;
-  plannedQuantity: number;
+  skuId?: string;
+  plannedQuantity?: number;
   plannedStartDate?: string;
   plannedEndDate?: string;
   assignedTo?: string;
   notes?: string;
+  items?: Array<{
+    replenishmentRequestItemId: string | null;
+    skuId: string;
+    requestedQuantity: number;
+    plannedQuantity: number;
+    remark?: string | null;
+  }>;
 };
 
 export type CreatedProductionOrder = {
   id: string;
   production_order_no: string;
   material_requirement_count: number;
+};
+
+export type PlanningFbaReplenishmentRequestItem = {
+  id: string;
+  request_id: string;
+  product_id: string | null;
+  sku_id: string;
+  requested_quantity: number;
+  remark: string | null;
+  sku: {
+    id: string;
+    product_id: string | null;
+    sku_code: string;
+    sku_name: string;
+    specs: string | null;
+    unit: string;
+    product: {
+      id: string;
+      product_code: string;
+      name: string;
+      product_image_url: string | null;
+    } | null;
+  } | null;
+  product: {
+    id: string;
+    product_code: string;
+    name: string;
+    product_image_url: string | null;
+  } | null;
+};
+
+export type ProductionOrderItem = {
+  id: string;
+  production_order_id: string;
+  replenishment_request_item_id: string | null;
+  sku_id: string;
+  requested_quantity: number | null;
+  planned_quantity: number;
+  completed_quantity: number;
+  remark: string | null;
+  sku: {
+    id: string;
+    product_id: string | null;
+    sku_code: string;
+    sku_name: string;
+    specs: string | null;
+    unit: string;
+    product: {
+      id: string;
+      product_code: string;
+      name: string;
+      product_image_url: string | null;
+    } | null;
+  } | null;
 };
 
 export type ProductionMaterialStatus =
@@ -123,13 +191,16 @@ export type ProductionOrderTrackingRow = {
   } | null;
   sku: {
     id: string;
+    product_id: string | null;
     sku_code: string;
     sku_name: string;
+    specs: string | null;
     unit: string;
     product: {
       id: string;
       product_code: string;
       name: string;
+      product_image_url: string | null;
     } | null;
   } | null;
   assigned_profile: ProductionProfile | null;
@@ -186,6 +257,11 @@ export type ProductionOrderTrackingRow = {
   material_issue_can_issue: boolean;
   material_issue_block_reason: string | null;
   material_issue_shortage_count: number;
+  items: ProductionOrderItem[];
+  product_count: number;
+  sku_count: number;
+  total_planned_quantity: number;
+  total_completed_quantity: number;
 };
 
 export type ProductionOrderStatusFilter = ProductionOrderStatus | "all";
@@ -302,7 +378,14 @@ type InsertedProductionOrder = {
 
 type RawPlanningFbaReplenishmentRequest = Omit<
   PlanningFbaReplenishmentRequest,
-  "sku" | "target_warehouse" | "requested_by_profile" | "accepted_by_profile"
+  | "sku"
+  | "target_warehouse"
+  | "requested_by_profile"
+  | "accepted_by_profile"
+  | "items"
+  | "product_count"
+  | "sku_count"
+  | "total_requested_quantity"
 > & {
   sku: MaybeRelation<
     Omit<NonNullable<PlanningFbaReplenishmentRequest["sku"]>, "product"> & {
@@ -316,6 +399,23 @@ type RawPlanningFbaReplenishmentRequest = Omit<
   >;
   requested_by_profile: MaybeRelation<ProductionProfile>;
   accepted_by_profile: MaybeRelation<ProductionProfile>;
+  items: RawPlanningFbaReplenishmentRequestItem[] | null;
+};
+
+type RawPlanningFbaReplenishmentRequestItem = Omit<
+  PlanningFbaReplenishmentRequestItem,
+  "sku" | "product"
+> & {
+  sku: MaybeRelation<
+    Omit<NonNullable<PlanningFbaReplenishmentRequestItem["sku"]>, "product"> & {
+      product: MaybeRelation<
+        NonNullable<
+          NonNullable<PlanningFbaReplenishmentRequestItem["sku"]>["product"]
+        >
+      >;
+    }
+  >;
+  product: MaybeRelation<NonNullable<PlanningFbaReplenishmentRequestItem["product"]>>;
 };
 
 type RawProductionOrderTrackingRow = Omit<
@@ -336,6 +436,11 @@ type RawProductionOrderTrackingRow = Omit<
   | "material_issue_can_issue"
   | "material_issue_block_reason"
   | "material_issue_shortage_count"
+  | "items"
+  | "product_count"
+  | "sku_count"
+  | "total_planned_quantity"
+  | "total_completed_quantity"
 > & {
   replenishment_request: MaybeRelation<
     NonNullable<ProductionOrderTrackingRow["replenishment_request"]>
@@ -376,6 +481,17 @@ type RawProductionOrderTrackingRow = Omit<
         }
       >
     | null;
+  items: RawProductionOrderItem[] | null;
+};
+
+type RawProductionOrderItem = Omit<ProductionOrderItem, "sku"> & {
+  sku: MaybeRelation<
+    Omit<NonNullable<ProductionOrderItem["sku"]>, "product"> & {
+      product: MaybeRelation<
+        NonNullable<NonNullable<ProductionOrderItem["sku"]>["product"]>
+      >;
+    }
+  >;
 };
 
 function formatSupabaseError(action: string, error: { message: string }) {
@@ -423,6 +539,30 @@ function normalizePlanningRequest(
 ): PlanningFbaReplenishmentRequest {
   const sku = singleRelation(request.sku);
   const product = singleRelation(sku?.product ?? null);
+  const items = (request.items ?? []).map(normalizePlanningRequestItem);
+  const compatibleItems =
+    items.length > 0 || !sku
+      ? items
+      : [
+          {
+            id: `${request.id}-legacy-item`,
+            request_id: request.id,
+            product_id: sku.product_id,
+            sku_id: request.sku_id,
+            requested_quantity: Number(request.requested_quantity),
+            remark: null,
+            sku: {
+              ...sku,
+              specs: sku.specs ?? null,
+              unit: sku.unit ?? "pcs",
+              product
+            },
+            product
+          }
+        ];
+  const productIds = new Set(
+    compatibleItems.map((item) => item.product_id).filter(Boolean)
+  );
 
   return {
     ...request,
@@ -434,7 +574,54 @@ function normalizePlanningRequest(
       : null,
     target_warehouse: singleRelation(request.target_warehouse),
     requested_by_profile: singleRelation(request.requested_by_profile),
-    accepted_by_profile: singleRelation(request.accepted_by_profile)
+    accepted_by_profile: singleRelation(request.accepted_by_profile),
+    items: compatibleItems,
+    product_count: productIds.size,
+    sku_count: compatibleItems.length,
+    total_requested_quantity: compatibleItems.reduce(
+      (sum, item) => sum + Number(item.requested_quantity),
+      0
+    )
+  };
+}
+
+function normalizePlanningRequestItem(
+  item: RawPlanningFbaReplenishmentRequestItem
+): PlanningFbaReplenishmentRequestItem {
+  const sku = singleRelation(item.sku);
+  const skuProduct = singleRelation(sku?.product ?? null);
+  const directProduct = singleRelation(item.product);
+
+  return {
+    ...item,
+    requested_quantity: Number(item.requested_quantity),
+    sku: sku
+      ? {
+          ...sku,
+          product: skuProduct
+        }
+      : null,
+    product: directProduct ?? skuProduct
+  };
+}
+
+function normalizeProductionOrderItem(
+  item: RawProductionOrderItem
+): ProductionOrderItem {
+  const sku = singleRelation(item.sku);
+
+  return {
+    ...item,
+    requested_quantity:
+      item.requested_quantity === null ? null : Number(item.requested_quantity),
+    planned_quantity: Number(item.planned_quantity),
+    completed_quantity: Number(item.completed_quantity),
+    sku: sku
+      ? {
+          ...sku,
+          product: singleRelation(sku.product)
+        }
+      : null
   };
 }
 
@@ -500,8 +687,41 @@ function normalizeProductionOrderTrackingRow(
       warehouse: singleRelation(transaction.warehouse)
     }));
   const requestedQuantity = Number(replenishmentRequest?.requested_quantity ?? 0);
-  const plannedQuantity = Number(row.planned_quantity);
-  const inboundQuantity = Number(row.completed_quantity);
+  const items = (row.items ?? []).map(normalizeProductionOrderItem);
+  const compatibleItems =
+    items.length > 0 || !sku
+      ? items
+      : [
+          {
+            id: `${row.id}-legacy-item`,
+            production_order_id: row.id,
+            replenishment_request_item_id: null,
+            sku_id: row.sku_id,
+            requested_quantity: requestedQuantity,
+            planned_quantity: Number(row.planned_quantity),
+            completed_quantity: Number(row.completed_quantity),
+            remark: null,
+            sku: {
+              ...sku,
+              product: singleRelation(sku.product)
+            }
+          }
+        ];
+  const plannedQuantity = compatibleItems.reduce(
+    (sum, item) => sum + Number(item.planned_quantity),
+    0
+  );
+  const inboundQuantity = compatibleItems.reduce(
+    (sum, item) => sum + Number(item.completed_quantity),
+    0
+  );
+  const requestedQuantityFromItems = compatibleItems.reduce(
+    (sum, item) => sum + Number(item.requested_quantity ?? 0),
+    0
+  );
+  const productIds = new Set(
+    compatibleItems.map((item) => item.sku?.product?.id).filter(Boolean)
+  );
   const materialStatus = computeProductionOrderMaterialStatus(materialRequirements);
   const materialsIssued = materialIssueTransactions.length > 0;
 
@@ -518,9 +738,9 @@ function normalizeProductionOrderTrackingRow(
     material_requirements: materialRequirements,
     inbound_transactions: inboundTransactions,
     material_issue_transactions: materialIssueTransactions,
-    requested_quantity: requestedQuantity,
+    requested_quantity: requestedQuantityFromItems || requestedQuantity,
     overproduction_quantity: roundQuantity(
-      Math.max(0, plannedQuantity - requestedQuantity)
+      Math.max(0, plannedQuantity - (requestedQuantityFromItems || requestedQuantity))
     ),
     inbound_quantity: inboundQuantity,
     pending_inbound_quantity: roundQuantity(
@@ -533,7 +753,12 @@ function normalizeProductionOrderTrackingRow(
     material_issue_block_reason: materialsIssued
       ? "该生产任务已确认领料，不能重复扣减库存。"
       : null,
-    material_issue_shortage_count: 0
+    material_issue_shortage_count: 0,
+    items: compatibleItems,
+    product_count: productIds.size,
+    sku_count: compatibleItems.length,
+    total_planned_quantity: roundQuantity(plannedQuantity),
+    total_completed_quantity: roundQuantity(inboundQuantity)
   };
 }
 
@@ -565,13 +790,16 @@ function getProductionOrderSelect() {
     ),
     sku:skus!production_orders_sku_id_fkey (
       id,
+      product_id,
       sku_code,
       sku_name,
+      specs,
       unit,
       product:products!skus_product_id_fkey (
         id,
         product_code,
-        name
+        name,
+        product_image_url
       )
     ),
     assigned_profile:profiles!production_orders_assigned_to_fkey (
@@ -607,6 +835,30 @@ function getProductionOrderSelect() {
         id,
         warehouse_code,
         name
+      )
+    ),
+    items:production_order_items!production_order_items_production_order_id_fkey (
+      id,
+      production_order_id,
+      replenishment_request_item_id,
+      sku_id,
+      requested_quantity,
+      planned_quantity,
+      completed_quantity,
+      remark,
+      sku:skus!production_order_items_sku_id_fkey (
+        id,
+        product_id,
+        sku_code,
+        sku_name,
+        specs,
+        unit,
+        product:products!skus_product_id_fkey (
+          id,
+          product_code,
+          name,
+          product_image_url
+        )
       )
     )
   `;
@@ -844,7 +1096,7 @@ function buildIssuePreviewForOrder(
       replenishment_request_id: order.replenishment_request_id,
       sku_code: order.sku?.sku_code ?? "-",
       sku_name: order.sku?.sku_name ?? "-",
-      planned_quantity: Number(order.planned_quantity),
+      planned_quantity: Number(order.total_planned_quantity),
       status: "issued",
       materials_issued: true,
       can_issue: false,
@@ -861,7 +1113,7 @@ function buildIssuePreviewForOrder(
       replenishment_request_id: order.replenishment_request_id,
       sku_code: order.sku?.sku_code ?? "-",
       sku_name: order.sku?.sku_name ?? "-",
-      planned_quantity: Number(order.planned_quantity),
+      planned_quantity: Number(order.total_planned_quantity),
       status: "blocked",
       materials_issued: false,
       can_issue: false,
@@ -878,7 +1130,7 @@ function buildIssuePreviewForOrder(
       replenishment_request_id: order.replenishment_request_id,
       sku_code: order.sku?.sku_code ?? "-",
       sku_name: order.sku?.sku_name ?? "-",
-      planned_quantity: Number(order.planned_quantity),
+      planned_quantity: Number(order.total_planned_quantity),
       status: "not_generated",
       materials_issued: false,
       can_issue: false,
@@ -909,7 +1161,7 @@ function buildIssuePreviewForOrder(
       replenishment_request_id: order.replenishment_request_id,
       sku_code: order.sku?.sku_code ?? "-",
       sku_name: order.sku?.sku_name ?? "-",
-      planned_quantity: Number(order.planned_quantity),
+      planned_quantity: Number(order.total_planned_quantity),
       status: "shortage",
       materials_issued: false,
       can_issue: false,
@@ -942,7 +1194,7 @@ function buildIssuePreviewForOrder(
     replenishment_request_id: order.replenishment_request_id,
     sku_code: order.sku?.sku_code ?? "-",
     sku_name: order.sku?.sku_name ?? "-",
-    planned_quantity: Number(order.planned_quantity),
+    planned_quantity: Number(order.total_planned_quantity),
     status: "ready",
     materials_issued: false,
     can_issue: true,
@@ -1142,6 +1394,95 @@ async function generateMaterialRequirements(
   return rows.length;
 }
 
+async function generateMaterialRequirementsForOrderItems(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  productionOrderId: string,
+  replenishmentRequestId: string,
+  items: Array<{
+    skuId: string;
+    plannedQuantity: number;
+  }>
+) {
+  await ensureMaterialRequirementsDoNotExist(supabase, productionOrderId);
+
+  const requirementByMaterial = new Map<
+    string,
+    {
+      material_sku_id: string;
+      required_quantity: number;
+      unit: string;
+      notes: string[];
+    }
+  >();
+
+  for (const item of items) {
+    const bomHeader = await getActiveBomHeader(supabase, item.skuId);
+    const bomItems = await getBomItems(supabase, bomHeader.id);
+
+    for (const bomItem of bomItems) {
+      const quantityPer = Number(bomItem.quantity_per);
+      const lossRate = Number(bomItem.loss_rate);
+      const requiredQuantity = roundQuantity(
+        item.plannedQuantity * quantityPer * (1 + lossRate)
+      );
+      const current = requirementByMaterial.get(bomItem.component_sku_id);
+      const note = `SKU ${item.skuId}：计划数量 ${item.plannedQuantity} × 单位用量 ${quantityPer} × (1 + 损耗率 ${lossRate})`;
+
+      if (current) {
+        current.required_quantity = roundQuantity(
+          current.required_quantity + requiredQuantity
+        );
+        current.notes.push(note);
+      } else {
+        requirementByMaterial.set(bomItem.component_sku_id, {
+          material_sku_id: bomItem.component_sku_id,
+          required_quantity: requiredQuantity,
+          unit: bomItem.unit,
+          notes: [note]
+        });
+      }
+    }
+  }
+
+  const materialSkuIds = [...requirementByMaterial.keys()];
+  const availableBySku = await getAvailableInventoryBySku(supabase, materialSkuIds);
+  const rows = [...requirementByMaterial.values()].map((requirement) => {
+    const availableQuantity =
+      availableBySku.get(requirement.material_sku_id) ?? 0;
+    const shortageQuantity = roundQuantity(
+      Math.max(0, requirement.required_quantity - availableQuantity)
+    );
+
+    return {
+      production_order_id: productionOrderId,
+      replenishment_request_id: replenishmentRequestId,
+      material_sku_id: requirement.material_sku_id,
+      required_quantity: requirement.required_quantity,
+      available_quantity: availableQuantity,
+      shortage_quantity: shortageQuantity,
+      reserved_quantity: 0,
+      unit: requirement.unit,
+      status: shortageQuantity > 0 ? "shortage" : "enough",
+      notes: `按整张生产任务明细汇总计算。\n${requirement.notes.join("\n")}`
+    };
+  });
+
+  if (rows.length === 0) {
+    throw new Error("没有可写入的物料需求。");
+  }
+
+  const { error } = await withTimeout(
+    supabase.from("material_requirements").insert(rows),
+    "写入整张生产任务物料需求"
+  );
+
+  if (error) {
+    throw formatSupabaseError("写入整张生产任务物料需求", error);
+  }
+
+  return rows.length;
+}
+
 export async function getProductionPlanningRequests(): Promise<
   PlanningFbaReplenishmentRequest[]
 > {
@@ -1174,10 +1515,13 @@ export async function getProductionPlanningRequests(): Promise<
             sku_name,
             amazon_sku,
             fnsku,
+            specs,
+            unit,
             product:products!skus_product_id_fkey (
               id,
               product_code,
-              name
+              name,
+              product_image_url
             )
           ),
           target_warehouse:warehouses!fba_replenishment_requests_target_warehouse_id_fkey (
@@ -1197,6 +1541,34 @@ export async function getProductionPlanningRequests(): Promise<
             full_name,
             email,
             status
+          ),
+          items:fba_replenishment_request_items!fba_replenishment_request_items_request_id_fkey (
+            id,
+            request_id,
+            product_id,
+            sku_id,
+            requested_quantity,
+            remark,
+            sku:skus!fba_replenishment_request_items_sku_id_fkey (
+              id,
+              product_id,
+              sku_code,
+              sku_name,
+              specs,
+              unit,
+              product:products!skus_product_id_fkey (
+                id,
+                product_code,
+                name,
+                product_image_url
+              )
+            ),
+            product:products!fba_replenishment_request_items_product_id_fkey (
+              id,
+              product_code,
+              name,
+              product_image_url
+            )
           )
         `
       )
@@ -1616,17 +1988,72 @@ export async function createProductionOrder(
   input: CreateProductionOrderInput
 ): Promise<CreatedProductionOrder> {
   const supabase = getSupabaseClient();
-  const bomHeader = await getActiveBomHeader(supabase, input.skuId);
-  const bomItems = await getBomItems(supabase, bomHeader.id);
+  const normalizedItems =
+    input.items && input.items.length > 0
+      ? input.items.map((item) => ({
+          replenishmentRequestItemId: item.replenishmentRequestItemId,
+          skuId: item.skuId,
+          requestedQuantity: Number(item.requestedQuantity),
+          plannedQuantity: Number(item.plannedQuantity),
+          remark: item.remark?.trim() || null
+        }))
+      : [
+          {
+            replenishmentRequestItemId: null,
+            skuId: input.skuId ?? "",
+            requestedQuantity: Number(input.plannedQuantity ?? 0),
+            plannedQuantity: Number(input.plannedQuantity ?? 0),
+            remark: null
+          }
+        ];
+
+  if (normalizedItems.length === 0) {
+    throw new Error("至少需要一条生产明细。");
+  }
+
+  const invalidItem = normalizedItems.find(
+    (item) =>
+      !item.skuId ||
+      !Number.isInteger(item.plannedQuantity) ||
+      item.plannedQuantity <= 0
+  );
+
+  if (invalidItem) {
+    throw new Error("每个 SKU 的计划生产数量都必须是正整数。");
+  }
+
+  const existingResult = await withTimeout(
+    supabase
+      .from("production_orders")
+      .select("id, production_order_no")
+      .eq("replenishment_request_id", input.replenishmentRequestId)
+      .limit(1),
+    "检查是否已创建生产任务"
+  );
+
+  if (existingResult.error) {
+    throw formatSupabaseError("检查是否已创建生产任务", existingResult.error);
+  }
+
+  if ((existingResult.data ?? []).length > 0) {
+    throw new Error("这张 FBA 备货单已经创建过生产任务，第一版先禁止重复创建。");
+  }
+
+  const firstItem = normalizedItems[0];
+  const firstBomHeader = await getActiveBomHeader(supabase, firstItem.skuId);
+  const totalPlannedQuantity = normalizedItems.reduce(
+    (sum, item) => sum + item.plannedQuantity,
+    0
+  );
   const { data, error } = await withTimeout(
     supabase
       .from("production_orders")
       .insert({
         production_order_no: createProductionOrderNo(),
         replenishment_request_id: input.replenishmentRequestId,
-        sku_id: input.skuId,
-        bom_header_id: bomHeader.id,
-        planned_quantity: input.plannedQuantity,
+        sku_id: firstItem.skuId,
+        bom_header_id: firstBomHeader.id,
+        planned_quantity: totalPlannedQuantity,
         completed_quantity: 0,
         planned_start_date: input.plannedStartDate || null,
         planned_end_date: input.plannedEndDate || null,
@@ -1646,15 +2073,44 @@ export async function createProductionOrder(
   }
 
   const created = data as InsertedProductionOrder;
+  const { error: itemError } = await withTimeout(
+    supabase.from("production_order_items").insert(
+      normalizedItems.map((item) => ({
+        production_order_id: created.id,
+        replenishment_request_item_id: item.replenishmentRequestItemId,
+        sku_id: item.skuId,
+        requested_quantity: item.requestedQuantity,
+        planned_quantity: item.plannedQuantity,
+        completed_quantity: 0,
+        remark: item.remark
+      }))
+    ),
+    "创建生产任务明细"
+  );
+
+  if (itemError) {
+    await supabase
+      .from("production_orders")
+      .update({
+        status: "cancelled",
+        notes: `${input.notes?.trim() || ""}\n系统提示：生产任务明细创建失败，这张生产任务不要继续流转。`.trim()
+      })
+      .eq("id", created.id);
+    throw new Error(
+      `生产任务主表已创建，但明细创建失败，系统已把主表标记为取消：${itemError.message}`
+    );
+  }
 
   let materialRequirementCount = 0;
   try {
-    materialRequirementCount = await generateMaterialRequirements(
+    materialRequirementCount = await generateMaterialRequirementsForOrderItems(
       supabase,
       created.id,
       input.replenishmentRequestId,
-      input.plannedQuantity,
-      bomItems
+      normalizedItems.map((item) => ({
+        skuId: item.skuId,
+        plannedQuantity: item.plannedQuantity
+      }))
     );
   } catch (error) {
     throw new Error(

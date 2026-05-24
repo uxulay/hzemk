@@ -4,12 +4,14 @@ export type NavigationItem = {
   label: string;
   href: string;
   roles: UserRole[];
+  variant?: "primary";
 };
 
 export type NavigationGroup = {
   label: string;
   href?: string;
   roles?: UserRole[];
+  variant?: "primary";
   items: NavigationItem[];
 };
 
@@ -29,19 +31,11 @@ export const navigationGroups: NavigationGroup[] = [
     items: []
   },
   {
-    label: "FBA 备货",
-    items: [
-      {
-        label: "FBA 备货需求",
-        href: "/replenishment",
-        roles: ["operations", "plant_manager", "admin"]
-      },
-      {
-        label: "创建 FBA 备货",
-        href: "/replenishment/new",
-        roles: ["operations", "admin"]
-      }
-    ]
+    label: "FBA 备货需求",
+    href: "/replenishment",
+    roles: ["operations", "plant_manager", "admin"],
+    variant: "primary",
+    items: []
   },
   {
     label: "生产管理",

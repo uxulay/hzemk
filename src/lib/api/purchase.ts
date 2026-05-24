@@ -63,6 +63,22 @@ export type PurchaseOrderItem = {
   } | null;
 };
 
+export type MaterialSkuOption = {
+  id: string;
+  sku_code: string;
+  sku_name: string;
+  sku_type: string;
+  unit: string;
+};
+
+export type PurchaseProfileOption = {
+  id: string;
+  full_name: string;
+  email: string;
+};
+
+export type PurchaseOrderSource = "shortage" | "manual" | "bulk_import";
+
 export type PurchaseOrder = {
   id: string;
   purchase_order_no: string;
@@ -80,6 +96,9 @@ export type PurchaseOrder = {
     id: string;
     supplier_code: string;
     name: string;
+    contact_name: string | null;
+    phone: string | null;
+    email: string | null;
   } | null;
   created_by_profile: {
     id: string;
@@ -88,10 +107,14 @@ export type PurchaseOrder = {
   } | null;
   items: PurchaseOrderItem[];
   total_amount: number;
+  item_count: number;
+  source: PurchaseOrderSource;
 };
 
 export type CreatePurchaseOrderInput = {
   supplierId: string;
+  createdBy?: string | null;
+  orderDate?: string;
   expectedArrivalDate?: string;
   notes?: string;
   items: Array<{
@@ -99,6 +122,40 @@ export type CreatePurchaseOrderInput = {
     materialRequirementId: string;
     orderedQuantity: number;
     unit: string;
+    unitPrice?: number | null;
+    notes?: string;
+  }>;
+};
+
+export type ManualPurchaseOrderItemInput = {
+  skuId: string;
+  orderedQuantity: number;
+  unit: string;
+  unitPrice?: number | null;
+  notes?: string;
+};
+
+export type CreateManualPurchaseOrderInput = {
+  purchaseOrderNo?: string;
+  supplierId: string;
+  createdBy?: string | null;
+  orderDate?: string;
+  expectedArrivalDate?: string;
+  notes?: string;
+  source?: "manual" | "bulk_import";
+  items: ManualPurchaseOrderItemInput[];
+};
+
+export type UpdatePurchaseOrderInput = {
+  purchaseOrderId: string;
+  supplierId: string;
+  createdBy?: string | null;
+  orderDate?: string;
+  expectedArrivalDate?: string;
+  notes?: string;
+  items: Array<{
+    id: string;
+    orderedQuantity: number;
     unitPrice?: number | null;
     notes?: string;
   }>;
@@ -145,7 +202,7 @@ type RawPurchaseOrderItem = Omit<
 
 type RawPurchaseOrder = Omit<
   PurchaseOrder,
-  "supplier" | "created_by_profile" | "items" | "total_amount"
+  "supplier" | "created_by_profile" | "items" | "total_amount" | "item_count" | "source"
 > & {
   supplier: MaybeRelation<NonNullable<PurchaseOrder["supplier"]>>;
   created_by_profile: MaybeRelation<
@@ -195,7 +252,7 @@ function roundMoney(value: number) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
-function createPurchaseOrderNo() {
+export function createPurchaseOrderNo() {
   const now = new Date();
   const pad = (value: number) => String(value).padStart(2, "0");
   const datePart = [
@@ -206,6 +263,26 @@ function createPurchaseOrderNo() {
   const randomPart = String(Math.floor(Math.random() * 10000)).padStart(4, "0");
 
   return `PUR-${datePart}-${randomPart}`;
+}
+
+function getSourceFromOrder(notes: string | null, items: PurchaseOrderItem[]) {
+  if (items.some((item) => Boolean(item.material_requirement_id))) {
+    return "shortage" satisfies PurchaseOrderSource;
+  }
+
+  if ((notes ?? "").includes("[批量导入]")) {
+    return "bulk_import" satisfies PurchaseOrderSource;
+  }
+
+  return "manual" satisfies PurchaseOrderSource;
+}
+
+function getOrderDateTime(value: string | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  return `${value}T00:00:00`;
 }
 
 function normalizeShortageRequirement(
@@ -251,7 +328,9 @@ function normalizePurchaseOrder(row: RawPurchaseOrder): PurchaseOrder {
     supplier: singleRelation(row.supplier),
     created_by_profile: singleRelation(row.created_by_profile),
     items,
-    total_amount: roundMoney(totalAmount)
+    total_amount: roundMoney(totalAmount),
+    item_count: items.length,
+    source: getSourceFromOrder(row.notes, items)
   };
 }
 
@@ -272,7 +351,10 @@ function getPurchaseOrderSelect() {
     supplier:suppliers!purchase_orders_supplier_id_fkey (
       id,
       supplier_code,
-      name
+      name,
+      contact_name,
+      phone,
+      email
     ),
     created_by_profile:profiles!purchase_orders_created_by_fkey (
       id,
@@ -397,6 +479,69 @@ export async function getPurchaseOrderDetail(
   return normalizePurchaseOrder(data as unknown as RawPurchaseOrder);
 }
 
+export async function getMaterialSkuOptions(): Promise<MaterialSkuOption[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase
+      .from("skus")
+      .select("id, sku_code, sku_name, sku_type, unit")
+      .eq("sku_type", "material")
+      .order("sku_code", { ascending: true }),
+    "读取原材料 SKU 列表"
+  );
+
+  if (error) {
+    throw formatSupabaseError("读取原材料 SKU 列表", error);
+  }
+
+  return (data ?? []) as MaterialSkuOption[];
+}
+
+export async function getPurchaseProfileOptions(): Promise<PurchaseProfileOption[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase
+      .from("profiles")
+      .select("id, full_name, email")
+      .eq("status", "active")
+      .order("full_name", { ascending: true }),
+    "读取采购负责人列表"
+  );
+
+  if (error) {
+    throw formatSupabaseError("读取采购负责人列表", error);
+  }
+
+  return (data ?? []) as PurchaseProfileOption[];
+}
+
+export async function getExistingPurchaseOrderNos(
+  purchaseOrderNos: string[]
+): Promise<string[]> {
+  const uniqueNos = Array.from(
+    new Set(purchaseOrderNos.map((value) => value.trim()).filter(Boolean))
+  );
+
+  if (uniqueNos.length === 0) {
+    return [];
+  }
+
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase
+      .from("purchase_orders")
+      .select("purchase_order_no")
+      .in("purchase_order_no", uniqueNos),
+    "检查采购单号是否已存在"
+  );
+
+  if (error) {
+    throw formatSupabaseError("检查采购单号是否已存在", error);
+  }
+
+  return (data ?? []).map((row) => row.purchase_order_no as string);
+}
+
 export async function createPurchaseOrder(
   input: CreatePurchaseOrderInput
 ): Promise<InsertedPurchaseOrder> {
@@ -416,6 +561,10 @@ export async function createPurchaseOrder(
     if (Number(item.orderedQuantity) <= 0) {
       throw new Error("采购数量必须大于 0。");
     }
+
+    if (item.unitPrice !== null && item.unitPrice !== undefined && item.unitPrice < 0) {
+      throw new Error("单价不能小于 0。");
+    }
   }
 
   const supabase = getSupabaseClient();
@@ -427,7 +576,9 @@ export async function createPurchaseOrder(
       .insert({
         purchase_order_no: purchaseOrderNo,
         supplier_id: input.supplierId,
+        created_by: input.createdBy || null,
         status: "draft",
+        ordered_at: getOrderDateTime(input.orderDate),
         expected_arrival_date: input.expectedArrivalDate || null,
         notes: input.notes || null
       })
@@ -477,6 +628,156 @@ export async function createPurchaseOrder(
   }
 
   return insertedOrder;
+}
+
+function validateManualPurchaseItems(items: ManualPurchaseOrderItemInput[]) {
+  if (items.length === 0) {
+    throw new Error("请至少添加一条采购明细。");
+  }
+
+  for (const item of items) {
+    if (!item.skuId) {
+      throw new Error("采购明细缺少原材料 SKU。");
+    }
+
+    if (Number(item.orderedQuantity) <= 0) {
+      throw new Error("采购数量必须大于 0。");
+    }
+
+    if (item.unitPrice !== null && item.unitPrice !== undefined && item.unitPrice < 0) {
+      throw new Error("单价不能小于 0。");
+    }
+  }
+}
+
+export async function createManualPurchaseOrder(
+  input: CreateManualPurchaseOrderInput
+): Promise<InsertedPurchaseOrder> {
+  if (!input.supplierId) {
+    throw new Error("请选择供应商。");
+  }
+
+  validateManualPurchaseItems(input.items);
+
+  const supabase = getSupabaseClient();
+  const purchaseOrderNo = input.purchaseOrderNo?.trim() || createPurchaseOrderNo();
+  const sourcePrefix = input.source === "bulk_import" ? "[批量导入]" : "[手动创建]";
+  const notes = [sourcePrefix, input.notes?.trim()].filter(Boolean).join(" ");
+
+  const { data: order, error: orderError } = await withTimeout(
+    supabase
+      .from("purchase_orders")
+      .insert({
+        purchase_order_no: purchaseOrderNo,
+        supplier_id: input.supplierId,
+        created_by: input.createdBy || null,
+        status: "draft",
+        ordered_at: getOrderDateTime(input.orderDate),
+        expected_arrival_date: input.expectedArrivalDate || null,
+        notes: notes || null
+      })
+      .select("id, purchase_order_no")
+      .single(),
+    "创建采购单"
+  );
+
+  if (orderError) {
+    throw formatSupabaseError("创建采购单", orderError);
+  }
+
+  const insertedOrder = order as InsertedPurchaseOrder;
+  const itemRows = input.items.map((item) => ({
+    purchase_order_id: insertedOrder.id,
+    sku_id: item.skuId,
+    material_requirement_id: null,
+    ordered_quantity: item.orderedQuantity,
+    received_quantity: 0,
+    unit: item.unit,
+    unit_price: item.unitPrice ?? 0,
+    notes: item.notes || null
+  }));
+
+  const { error: itemsError } = await withTimeout(
+    supabase.from("purchase_order_items").insert(itemRows),
+    "写入采购单明细"
+  );
+
+  if (itemsError) {
+    throw formatSupabaseError("写入采购单明细", itemsError);
+  }
+
+  return insertedOrder;
+}
+
+export async function updatePurchaseOrder(
+  input: UpdatePurchaseOrderInput
+): Promise<void> {
+  if (!input.purchaseOrderId) {
+    throw new Error("缺少采购单 ID。");
+  }
+
+  if (!input.supplierId) {
+    throw new Error("请选择供应商。");
+  }
+
+  if (input.items.length === 0) {
+    throw new Error("请至少保留一条采购明细。");
+  }
+
+  for (const item of input.items) {
+    if (!item.id) {
+      throw new Error("采购明细缺少 ID。");
+    }
+
+    if (Number(item.orderedQuantity) <= 0) {
+      throw new Error("采购数量必须大于 0。");
+    }
+
+    if (item.unitPrice !== null && item.unitPrice !== undefined && item.unitPrice < 0) {
+      throw new Error("单价不能小于 0。");
+    }
+  }
+
+  const supabase = getSupabaseClient();
+  const { error: orderError } = await withTimeout(
+    supabase
+      .from("purchase_orders")
+      .update({
+        supplier_id: input.supplierId,
+        created_by: input.createdBy || null,
+        ordered_at: getOrderDateTime(input.orderDate),
+        expected_arrival_date: input.expectedArrivalDate || null,
+        notes: input.notes || null
+      })
+      .eq("id", input.purchaseOrderId)
+      .eq("status", "draft"),
+    "更新采购单"
+  );
+
+  if (orderError) {
+    throw formatSupabaseError("更新采购单", orderError);
+  }
+
+  const itemUpdates = input.items.map((item) =>
+    supabase
+      .from("purchase_order_items")
+      .update({
+        ordered_quantity: item.orderedQuantity,
+        unit_price: item.unitPrice ?? 0,
+        notes: item.notes || null
+      })
+      .eq("id", item.id)
+      .eq("purchase_order_id", input.purchaseOrderId)
+  );
+
+  const results = await Promise.all(
+    itemUpdates.map((request) => withTimeout(request, "更新采购明细"))
+  );
+  const itemError = results.find((result) => result.error)?.error;
+
+  if (itemError) {
+    throw formatSupabaseError("更新采购明细", itemError);
+  }
 }
 
 export async function updatePurchaseOrderStatus(

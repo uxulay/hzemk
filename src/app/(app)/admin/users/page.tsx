@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Modal } from "@/components/Modal";
+import { Pagination } from "@/components/Pagination";
 import {
   createUserProfile,
   getRoles,
@@ -13,6 +15,7 @@ import {
   type UserStats,
   type UserStatus
 } from "@/lib/api/users";
+import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
 
 const userStatusLabels: Record<string, string> = {
   active: "启用",
@@ -115,9 +118,11 @@ export default function AdminUsersPage() {
   const [stats, setStats] = useState<UserStats>(initialStats);
   const [userForm, setUserForm] = useState<UserFormState>(initialUserForm);
   const [editForm, setEditForm] = useState<UserEditFormState | null>(null);
+  const [selectedUser, setSelectedUser] = useState<UserListRow | null>(null);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [updating, setUpdating] = useState(false);
@@ -140,6 +145,11 @@ export default function AdminUsersPage() {
     });
   }, [users, searchKeyword, roleFilter, statusFilter]);
 
+  const paginatedUsers = useMemo(
+    () => paginateItems(filteredUsers, page),
+    [filteredUsers, page]
+  );
+
   const loadPageData = async () => {
     try {
       setLoading(true);
@@ -154,6 +164,13 @@ export default function AdminUsersPage() {
       setUsers(userData);
       setRoles(roleData);
       setStats(statsData);
+      setSelectedUser((current) => {
+        if (!current) {
+          return null;
+        }
+
+        return userData.find((user) => user.id === current.id) ?? null;
+      });
 
       return userData;
     } catch (error) {
@@ -161,6 +178,7 @@ export default function AdminUsersPage() {
       setUsers([]);
       setRoles([]);
       setStats(initialStats);
+      setSelectedUser(null);
 
       return [];
     } finally {
@@ -171,6 +189,10 @@ export default function AdminUsersPage() {
   useEffect(() => {
     loadPageData();
   }, []);
+
+  useEffect(() => {
+    setPage(1);
+  }, [roleFilter, searchKeyword, statusFilter]);
 
   const submitCreateUser = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -435,22 +457,13 @@ export default function AdminUsersPage() {
       </section>
 
       {editForm ? (
-        <section className="formPanel">
-          <div className="sectionHeader">
-            <div>
-              <p className="eyebrow">编辑用户资料</p>
-              <h3>{editForm.fullName}</h3>
-            </div>
-            <button
-              className="secondaryButton"
-              type="button"
-              onClick={() => setEditForm(null)}
-              disabled={updating}
-            >
-              取消编辑
-            </button>
-          </div>
-
+        <Modal
+          open={Boolean(editForm)}
+          eyebrow="编辑用户资料"
+          title={editForm.fullName}
+          maxWidth="lg"
+          onClose={() => setEditForm(null)}
+        >
           <form className="dataForm userForm" onSubmit={submitEditUser}>
             <label>
               用户 ID
@@ -575,7 +588,7 @@ export default function AdminUsersPage() {
               </button>
             </div>
           </form>
-        </section>
+        </Modal>
       ) : null}
 
       <section className="listPanel">
@@ -653,7 +666,7 @@ export default function AdminUsersPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredUsers.map((user) => {
+                {paginatedUsers.map((user) => {
                   const statusUpdating = statusUpdatingId === user.id;
 
                   return (
@@ -689,6 +702,12 @@ export default function AdminUsersPage() {
                         <div className="rowActions userRowActions">
                           <button
                             type="button"
+                            onClick={() => setSelectedUser(user)}
+                          >
+                            查看
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => startEditUser(user)}
                             disabled={updating}
                           >
@@ -721,9 +740,62 @@ export default function AdminUsersPage() {
             </table>
           </div>
         ) : null}
+
+        {!loading && filteredUsers.length > 0 ? (
+          <Pagination
+            page={page}
+            pageSize={DEFAULT_PAGE_SIZE}
+            total={filteredUsers.length}
+            onPageChange={setPage}
+          />
+        ) : null}
       </section>
 
-      <section className="detailPanel">
+      {selectedUser ? (
+        <Modal
+          open={Boolean(selectedUser)}
+          eyebrow="用户资料详情"
+          title={selectedUser.full_name}
+          onClose={() => setSelectedUser(null)}
+        >
+          <div className="detailGrid">
+            <div className="detailItem detailItemWide">
+              <span>用户 ID</span>
+              <strong>{selectedUser.id}</strong>
+            </div>
+            <div className="detailItem">
+              <span>邮箱</span>
+              <strong>{selectedUser.email}</strong>
+            </div>
+            <div className="detailItem">
+              <span>角色</span>
+              <strong>{getRoleLabel(selectedUser.role)}</strong>
+            </div>
+            <div className="detailItem">
+              <span>角色编码</span>
+              <strong>{selectedUser.role?.code ?? "-"}</strong>
+            </div>
+            <div className="detailItem">
+              <span>手机号</span>
+              <strong>{getOptionalText(selectedUser.phone)}</strong>
+            </div>
+            <div className="detailItem">
+              <span>状态</span>
+              <strong>{getStatusLabel(selectedUser.status)}</strong>
+            </div>
+            <div className="detailItem">
+              <span>创建时间</span>
+              <strong>{formatDateTime(selectedUser.created_at)}</strong>
+            </div>
+            <div className="detailItem">
+              <span>更新时间</span>
+              <strong>{formatDateTime(selectedUser.updated_at)}</strong>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
+
+      <section className="listPanel">
         <div className="detailHeader">
           <div>
             <p className="eyebrow">角色列表</p>

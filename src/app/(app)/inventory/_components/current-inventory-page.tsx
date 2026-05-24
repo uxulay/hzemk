@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { Modal } from "@/components/Modal";
+import { Pagination } from "@/components/Pagination";
 import {
   getMaterialInventory,
   getProductInventory,
@@ -14,6 +16,7 @@ import {
   type MaterialInventoryRow,
   type ProductInventoryRow
 } from "@/lib/api/inventory";
+import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
 
 type CurrentInventoryPageMode = "materials" | "products";
 
@@ -144,6 +147,10 @@ export function CurrentInventoryPage({ mode }: CurrentInventoryPageProps) {
   const [skuKeyword, setSkuKeyword] = useState("");
   const [stockStatus, setStockStatus] =
     useState<InventoryStockStatusFilter>("all");
+  const [selectedItem, setSelectedItem] = useState<CurrentInventoryRow | null>(
+    null
+  );
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -182,6 +189,11 @@ export function CurrentInventoryPage({ mode }: CurrentInventoryPageProps) {
     };
   }, [items, mode]);
 
+  const paginatedItems = useMemo(
+    () => paginateItems(items, page),
+    [items, page]
+  );
+
   const buildFilters = (
     overrides: Partial<CurrentInventoryFilters> = {}
   ): CurrentInventoryFilters => ({
@@ -197,6 +209,7 @@ export function CurrentInventoryPage({ mode }: CurrentInventoryPageProps) {
     try {
       setLoading(true);
       setErrorMessage("");
+      setPage(1);
 
       const [inventoryData, warehouseData] = await Promise.all([
         mode === "materials"
@@ -218,6 +231,10 @@ export function CurrentInventoryPage({ mode }: CurrentInventoryPageProps) {
   useEffect(() => {
     loadInventory();
   }, []);
+
+  useEffect(() => {
+    setPage(1);
+  }, [skuKeyword, stockStatus, warehouseId]);
 
   const submitFilters = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -408,7 +425,7 @@ export function CurrentInventoryPage({ mode }: CurrentInventoryPageProps) {
               </thead>
               <tbody>
                 {mode === "materials"
-                  ? (items as MaterialInventoryRow[]).map((item) => (
+                  ? (paginatedItems as MaterialInventoryRow[]).map((item) => (
                       <tr key={item.id}>
                         <td>{item.sku?.sku_code ?? "-"}</td>
                         <td>{item.sku?.sku_name ?? "-"}</td>
@@ -431,16 +448,25 @@ export function CurrentInventoryPage({ mode }: CurrentInventoryPageProps) {
                         </td>
                         <td>{formatDateTime(item.updated_at)}</td>
                         <td>
-                          <Link
-                            className="secondaryButton"
-                            href={getTransactionsHref(item)}
-                          >
-                            查看流水
-                          </Link>
+                          <div className="rowActions">
+                            <button
+                              className="secondaryButton"
+                              type="button"
+                              onClick={() => setSelectedItem(item)}
+                            >
+                              查看详情
+                            </button>
+                            <Link
+                              className="secondaryButton"
+                              href={getTransactionsHref(item)}
+                            >
+                              查看流水
+                            </Link>
+                          </div>
                         </td>
                       </tr>
                     ))
-                  : (items as ProductInventoryRow[]).map((item) => (
+                  : (paginatedItems as ProductInventoryRow[]).map((item) => (
                       <tr key={item.id}>
                         <td>{item.sku?.sku_code ?? "-"}</td>
                         <td>{item.sku?.sku_name ?? "-"}</td>
@@ -455,12 +481,21 @@ export function CurrentInventoryPage({ mode }: CurrentInventoryPageProps) {
                         <td>{getUnit(item)}</td>
                         <td>{formatDateTime(item.updated_at)}</td>
                         <td>
-                          <Link
-                            className="secondaryButton"
-                            href={getTransactionsHref(item)}
-                          >
-                            查看流水
-                          </Link>
+                          <div className="rowActions">
+                            <button
+                              className="secondaryButton"
+                              type="button"
+                              onClick={() => setSelectedItem(item)}
+                            >
+                              查看详情
+                            </button>
+                            <Link
+                              className="secondaryButton"
+                              href={getTransactionsHref(item)}
+                            >
+                              查看流水
+                            </Link>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -468,7 +503,69 @@ export function CurrentInventoryPage({ mode }: CurrentInventoryPageProps) {
             </table>
           </div>
         ) : null}
+
+        {!loading && items.length > 0 ? (
+          <Pagination
+            page={page}
+            pageSize={DEFAULT_PAGE_SIZE}
+            total={items.length}
+            onPageChange={setPage}
+          />
+        ) : null}
       </section>
+
+      {selectedItem ? (
+        <Modal
+          open={Boolean(selectedItem)}
+          eyebrow={mode === "materials" ? "原材料库存详情" : "成品库存详情"}
+          title={`${selectedItem.sku?.sku_code ?? "-"} / ${
+            selectedItem.sku?.sku_name ?? "-"
+          }`}
+          onClose={() => setSelectedItem(null)}
+        >
+          <div className="detailGrid">
+            <div className="detailItem">
+              <span>SKU 编码</span>
+              <strong>{selectedItem.sku?.sku_code ?? "-"}</strong>
+            </div>
+            <div className="detailItem">
+              <span>SKU 名称</span>
+              <strong>{selectedItem.sku?.sku_name ?? "-"}</strong>
+            </div>
+            <div className="detailItem">
+              <span>所属产品</span>
+              <strong>{selectedItem.sku?.product?.name ?? "-"}</strong>
+            </div>
+            <div className="detailItem">
+              <span>仓库</span>
+              <strong>
+                {selectedItem.warehouse?.name ?? "-"} /{" "}
+                {selectedItem.warehouse?.warehouse_code ?? "-"}
+              </strong>
+            </div>
+            <div className="detailItem">
+              <span>当前库存数量</span>
+              <strong>{formatQuantity(selectedItem.quantity_on_hand)}</strong>
+            </div>
+            <div className="detailItem">
+              <span>占用库存数量</span>
+              <strong>{formatQuantity(selectedItem.reserved_quantity)}</strong>
+            </div>
+            <div className="detailItem">
+              <span>安全库存</span>
+              <strong>{formatQuantity(selectedItem.safety_stock_quantity)}</strong>
+            </div>
+            <div className="detailItem">
+              <span>单位</span>
+              <strong>{getUnit(selectedItem)}</strong>
+            </div>
+            <div className="detailItem">
+              <span>最后更新时间</span>
+              <strong>{formatDateTime(selectedItem.updated_at)}</strong>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
     </main>
   );
 }

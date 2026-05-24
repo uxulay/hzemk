@@ -10,6 +10,8 @@
   --primary-soft: #eaf2ff;
   --primary-dark: #1d4ed8;
   --success: #18865a;
+  --success-soft: #eaf7ef;
+  --success-dark: #126c49;
   --warning: #b76e00;
   --danger: #b42318;
   --radius-lg: 18px;
@@ -137,6 +139,16 @@ button:disabled {
   box-shadow: 0 10px 20px rgba(37, 99, 235, 0.18);
 }
 
+.primaryButton.successButton {
+  background: var(--success);
+  box-shadow: 0 10px 22px rgba(24, 134, 90, 0.12);
+}
+
+.primaryButton.successButton:hover {
+  background: var(--success-dark);
+  box-shadow: 0 12px 24px rgba(24, 134, 90, 0.18);
+}
+
 .appFrame {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
@@ -195,6 +207,27 @@ button:disabled {
 .navGroup {
   display: grid;
   gap: 4px;
+}
+
+.navDirectGroup {
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 6px;
+  margin-bottom: 4px;
+  padding: 4px 0 10px;
+}
+
+.navDirectGroupTitle {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0;
+  padding: 0 12px;
+}
+
+.navDirectItems {
+  display: grid;
+  gap: 5px;
 }
 
 .navGroupButton {
@@ -301,6 +334,43 @@ button:disabled {
   color: #ffffff;
 }
 
+.navItem.navItemPrimaryAction {
+  background: var(--success-soft);
+  color: var(--success-dark);
+  font-weight: 800;
+  justify-content: center;
+}
+
+.navGroupButton.navItemPrimaryAction {
+  background: var(--success-soft);
+  color: var(--success-dark);
+  font-weight: 800;
+}
+
+.navItem.navItemPrimaryAction:hover {
+  background: var(--success);
+  box-shadow: 0 10px 22px rgba(24, 134, 90, 0.16);
+  color: #ffffff;
+}
+
+.navGroupButton.navItemPrimaryAction:hover {
+  background: var(--success);
+  box-shadow: 0 10px 22px rgba(24, 134, 90, 0.16);
+  color: #ffffff;
+}
+
+.navItem.navItemPrimaryAction.active {
+  background: var(--success);
+  box-shadow: 0 10px 22px rgba(24, 134, 90, 0.18);
+  color: #ffffff;
+}
+
+.navGroupButton.navItemPrimaryAction.active {
+  background: var(--success);
+  box-shadow: 0 10px 22px rgba(24, 134, 90, 0.18);
+  color: #ffffff;
+}
+
 .mainArea {
   min-width: 0;
 }
@@ -399,6 +469,92 @@ button:disabled {
   gap: 18px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   margin-top: 18px;
+}
+
+.groupList {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.productGroup {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.productGroupTop {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.productHeader {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+}
+
+.productHeader strong,
+.productHeader span {
+  display: block;
+}
+
+.productHeader strong {
+  font-size: 15px;
+}
+
+.productHeader span {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.productThumb {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  flex: 0 0 auto;
+  height: 54px;
+  object-fit: cover;
+  width: 54px;
+}
+
+.productThumbPlaceholder {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  font-size: 13px;
+  font-weight: 700;
+  justify-content: center;
+}
+
+.compactTableWrap {
+  box-shadow: none;
+}
+
+.compactDataTable {
+  min-width: 720px;
+}
+
+.compactDataTable input {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  min-height: 36px;
+  padding: 0 10px;
+  width: 100%;
+}
+
+.addProductRow {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .panel {
@@ -709,6 +865,13 @@ button:disabled {
   justify-content: space-between;
 }
 
+.pageHeroActions {
+  align-items: flex-end;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .sectionHeader h3 {
   font-size: 22px;
   margin: 6px 0 0;
@@ -780,6 +943,18 @@ button:disabled {
 .rowActions .primaryButton:hover:not(:disabled) {
   background: var(--primary-dark);
   border-color: var(--primary-dark);
+  color: #ffffff;
+}
+
+.rowActions .primaryButton.successButton {
+  background: var(--success);
+  border-color: var(--success);
+  color: #ffffff;
+}
+
+.rowActions .primaryButton.successButton:hover:not(:disabled) {
+  background: var(--success-dark);
+  border-color: var(--success-dark);
   color: #ffffff;
 }
 
@@ -1063,6 +1238,16 @@ button:disabled {
   width: 140px;
 }
 
+.tableSelect {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--text);
+  min-height: 38px;
+  padding: 0 10px;
+  width: 240px;
+}
+
 .tableTextarea {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -1143,6 +1328,51 @@ button:disabled {
   width: 100%;
 }
 
+.appModal-md {
+  max-width: 760px;
+}
+
+.appModal-lg {
+  max-width: 1040px;
+}
+
+.appModal-xl {
+  max-width: 1280px;
+}
+
+.modalBody {
+  margin-top: 18px;
+  max-height: 68vh;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.paginationBar {
+  align-items: center;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  margin-top: 18px;
+  padding: 14px 16px;
+}
+
+.paginationBar div:first-child {
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.paginationBar span {
+  color: var(--muted);
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
 .bulkImportDialog {
   max-width: 1320px;
 }
@@ -1155,6 +1385,11 @@ button:disabled {
   color: var(--muted);
   line-height: 1.7;
   margin: 14px 0 0;
+}
+
+.bulkInlineArea {
+  display: grid;
+  gap: 18px;
 }
 
 .bulkUploadBox {
@@ -1176,6 +1411,10 @@ button:disabled {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.5;
+}
+
+.hiddenFileInput {
+  display: none;
 }
 
 .bulkPreviewWrap {
@@ -1308,6 +1547,10 @@ button:disabled {
   justify-content: space-between;
   margin-top: 18px;
   padding-top: 18px;
+}
+
+.bulkInlineFooter {
+  margin-top: 0;
 }
 
 .shortageRow td {
@@ -1803,6 +2046,7 @@ button:disabled {
   }
 
   .navGroup,
+  .navDirectGroup,
   .navGroupButton {
     min-width: 176px;
   }
@@ -1810,6 +2054,7 @@ button:disabled {
   .header,
   .headerActions,
   .pageHero,
+  .pageHeroActions,
   .sectionHeader,
   .modalFooter {
     align-items: stretch;
