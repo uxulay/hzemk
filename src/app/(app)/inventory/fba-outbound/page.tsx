@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Modal } from "@/components/Modal";
 import { getWarehouses, type Warehouse } from "@/lib/api/master-data";
 import {
   getFbaOutboundRequests,
@@ -320,22 +321,17 @@ export default function FbaOutboundPage() {
       </section>
 
       {selectedRequest ? (
-        <section className="formPanel">
-          <div className="detailHeader">
-            <div>
-              <p className="eyebrow">创建 FBA 出库</p>
-              <h3>{selectedRequest.request_no}</h3>
-            </div>
-            <button
-              className="secondaryButton"
-              type="button"
-              onClick={() => setSelectedRequestId("")}
-              disabled={submitting}
-            >
-              收起表单
-            </button>
-          </div>
-
+        <Modal
+          open={Boolean(selectedRequest)}
+          eyebrow="创建 FBA 出库"
+          title={selectedRequest.request_no}
+          maxWidth="xl"
+          onClose={() => {
+            if (!submitting) {
+              setSelectedRequestId("");
+            }
+          }}
+        >
           <form onSubmit={submitOutbound}>
             <div className="detailGrid">
               <div className="detailItem">
@@ -426,24 +422,34 @@ export default function FbaOutboundPage() {
               </label>
             </div>
 
-            <div className="formActions">
-              <button
-                className="primaryButton"
-                type="submit"
-                disabled={
-                  submitting ||
-                  Number(outboundQuantity) <= 0 ||
-                  Number(outboundQuantity) >
-                    Number(selectedRequest.current_inventory_quantity) ||
-                  Number(outboundQuantity) >
-                    Number(selectedRequest.pending_outbound_quantity)
-                }
-              >
-                {submitting ? "正在出库..." : "确认 FBA 出库"}
-              </button>
+            <div className="modalFooter">
+              <span>请确认出库数量、目标仓和物流备注。</span>
+              <div className="rowActions">
+                <button
+                  type="button"
+                  onClick={() => setSelectedRequestId("")}
+                  disabled={submitting}
+                >
+                  取消
+                </button>
+                <button
+                  className="primaryButton"
+                  type="submit"
+                  disabled={
+                    submitting ||
+                    Number(outboundQuantity) <= 0 ||
+                    Number(outboundQuantity) >
+                      Number(selectedRequest.current_inventory_quantity) ||
+                    Number(outboundQuantity) >
+                      Number(selectedRequest.pending_outbound_quantity)
+                  }
+                >
+                  {submitting ? "正在出库..." : "确认 FBA 出库"}
+                </button>
+              </div>
             </div>
           </form>
-        </section>
+        </Modal>
       ) : null}
     </main>
   );

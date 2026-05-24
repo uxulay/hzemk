@@ -319,6 +319,13 @@ export function CurrentInventoryPage({ mode }: CurrentInventoryPageProps) {
       </section>
 
       <section className="listPanel">
+        <div className="sectionHeader">
+          <div>
+            <p className="eyebrow">当前库存</p>
+            <h3>{config.title}</h3>
+          </div>
+        </div>
+
         <form
           className={`listToolbar currentInventoryToolbar ${
             mode === "materials"

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Modal } from "@/components/Modal";
 import { getWarehouses, type Warehouse } from "@/lib/api/master-data";
 import {
   getReceivableProductionOrders,
@@ -166,12 +167,12 @@ export default function InventoryInboundPage() {
       setSelectedPurchaseOrderId((current) =>
         purchaseData.some((order) => order.id === current)
           ? current
-          : purchaseData[0]?.id ?? ""
+          : ""
       );
       setSelectedProductionOrderId((current) =>
         productionData.some((order) => order.id === current)
           ? current
-          : productionData[0]?.id ?? ""
+          : ""
       );
       setPurchaseWarehouseId((current) =>
         current || getDefaultWarehouseId(warehouseData, "material")
@@ -249,6 +250,7 @@ export default function InventoryInboundPage() {
       });
 
       setSuccessMessage(`采购单 ${selectedPurchaseOrder.purchase_order_no} 入库成功。`);
+      setSelectedPurchaseOrderId("");
       await loadPageData();
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
@@ -281,12 +283,34 @@ export default function InventoryInboundPage() {
       setSuccessMessage(
         `生产任务 ${selectedProductionOrder.production_order_no} 成品入库成功。`
       );
+      setSelectedProductionOrderId("");
       await loadPageData();
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const openPurchaseInbound = (order: ReceivablePurchaseOrder) => {
+    setActiveTab("purchase");
+    setSelectedPurchaseOrderId(order.id);
+    setPurchaseWarehouseId(
+      purchaseWarehouseId || getDefaultWarehouseId(warehouses, "material")
+    );
+    setErrorMessage("");
+    setSuccessMessage("");
+  };
+
+  const openProductionInbound = (order: ReceivableProductionOrder) => {
+    setActiveTab("production");
+    setSelectedProductionOrderId(order.id);
+    setProductionWarehouseId(
+      productionWarehouseId ||
+        getDefaultWarehouseId(warehouses, "finished_product")
+    );
+    setErrorMessage("");
+    setSuccessMessage("");
   };
 
   return (
@@ -341,22 +365,280 @@ export default function InventoryInboundPage() {
         ) : null}
 
         {!loading && activeTab === "purchase" ? (
-          <form onSubmit={submitPurchaseInbound}>
+          <>
             <div className="sectionHeader">
               <div>
                 <p className="eyebrow">采购到货</p>
-                <h3>原材料入库</h3>
+                <h3>待入库采购单</h3>
               </div>
               <div className="rowActions">
                 <button type="button" onClick={loadPageData} disabled={loading}>
                   刷新
+                </button>
+              </div>
+            </div>
+
+            {purchaseOrders.length === 0 ? (
+              <div className="emptyState">暂无可入库采购单</div>
+            ) : (
+              <div className="tableWrap">
+                <table className="dataTable">
+                  <thead>
+                    <tr>
+                      <th>采购单号</th>
+                      <th>供应商</th>
+                      <th>状态</th>
+                      <th>预计到货日期</th>
+                      <th>明细数量</th>
+                      <th>待入库数量</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {purchaseOrders.map((order) => {
+                      const remainingTotal = order.items.reduce(
+                        (sum, item) =>
+                          sum +
+                          getRemainingPurchaseQuantity(
+                            item.ordered_quantity,
+                            item.received_quantity
+                          ),
+                        0
+                      );
+
+                      return (
+                        <tr key={order.id}>
+                          <td>{order.purchase_order_no}</td>
+                          <td>{order.supplier?.name ?? "-"}</td>
+                          <td>
+                            <span className={`tablePill purchase-status-${order.status}`}>
+                              {purchaseStatusLabels[order.status] ?? order.status}
+                            </span>
+                          </td>
+                          <td>{formatDate(order.expected_arrival_date)}</td>
+                          <td>{order.items.length}</td>
+                          <td>{formatQuantity(remainingTotal)}</td>
+                          <td>
+                            <div className="rowActions">
+                              <button
+                                type="button"
+                                onClick={() => openPurchaseInbound(order)}
+                                disabled={submitting || remainingTotal <= 0}
+                              >
+                                办理入库
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        ) : null}
+
+        {!loading && activeTab === "production" ? (
+          <>
+            <div className="sectionHeader">
+              <div>
+                <p className="eyebrow">生产完成</p>
+                <h3>待入库生产任务</h3>
+              </div>
+              <div className="rowActions">
+                <button type="button" onClick={loadPageData} disabled={loading}>
+                  刷新
+                </button>
+              </div>
+            </div>
+
+            {productionOrders.length === 0 ? (
+              <div className="emptyState">暂无可入库生产任务</div>
+            ) : (
+              <div className="tableWrap">
+                <table className="dataTable">
+                  <thead>
+                    <tr>
+                      <th>生产任务单号</th>
+                      <th>成品 SKU</th>
+                      <th>产品名称</th>
+                      <th>生产状态</th>
+                      <th>计划生产数量</th>
+                      <th>已入库数量</th>
+                      <th>待入库数量</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {productionOrders.map((order) => {
+                      const pendingQuantity = Math.max(
+                        0,
+                        Number(order.planned_quantity) -
+                          Number(order.completed_quantity)
+                      );
+
+                      return (
+                        <tr key={order.id}>
+                          <td>{order.production_order_no}</td>
+                          <td>
+                            <strong>{order.sku?.sku_code ?? "-"}</strong>
+                            <span>{order.sku?.sku_name ?? "-"}</span>
+                          </td>
+                          <td>{order.sku?.product?.name ?? "-"}</td>
+                          <td>
+                            <span className={`tablePill production-status-${order.status}`}>
+                              {productionStatusLabels[order.status] ?? order.status}
+                            </span>
+                          </td>
+                          <td>{formatQuantity(order.planned_quantity)}</td>
+                          <td>{formatQuantity(order.completed_quantity)}</td>
+                          <td>{formatQuantity(pendingQuantity)}</td>
+                          <td>
+                            <div className="rowActions">
+                              <button
+                                type="button"
+                                onClick={() => openProductionInbound(order)}
+                                disabled={submitting || pendingQuantity <= 0}
+                              >
+                                办理入库
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        ) : null}
+      </section>
+
+      {selectedPurchaseOrder ? (
+        <Modal
+          open={Boolean(selectedPurchaseOrder)}
+          eyebrow="采购入库"
+          title={selectedPurchaseOrder.purchase_order_no}
+          maxWidth="xl"
+          onClose={() => {
+            if (!submitting) {
+              setSelectedPurchaseOrderId("");
+            }
+          }}
+        >
+          <form onSubmit={submitPurchaseInbound}>
+            <div className="dataForm inboundForm">
+              <label>
+                入库仓库
+                <select
+                  value={purchaseWarehouseId}
+                  onChange={(event) => setPurchaseWarehouseId(event.target.value)}
+                  disabled={submitting}
+                  required
+                >
+                  <option value="">请选择仓库</option>
+                  {(materialWarehouses.length > 0 ? materialWarehouses : warehouses).map(
+                    (warehouse) => (
+                      <option key={warehouse.id} value={warehouse.id}>
+                        {warehouse.warehouse_code} / {warehouse.name}
+                      </option>
+                    )
+                  )}
+                </select>
+              </label>
+            </div>
+
+            <div className="detailGrid">
+              <div className="detailItem">
+                <span>采购单状态</span>
+                <strong>
+                  {purchaseStatusLabels[selectedPurchaseOrder.status] ??
+                    selectedPurchaseOrder.status}
+                </strong>
+              </div>
+              <div className="detailItem">
+                <span>供应商</span>
+                <strong>{selectedPurchaseOrder.supplier?.name ?? "-"}</strong>
+              </div>
+              <div className="detailItem">
+                <span>预计到货日期</span>
+                <strong>
+                  {formatDate(selectedPurchaseOrder.expected_arrival_date)}
+                </strong>
+              </div>
+            </div>
+
+            <div className="tableWrap">
+              <table className="dataTable">
+                <thead>
+                  <tr>
+                    <th>原材料 SKU</th>
+                    <th>原材料名称</th>
+                    <th>采购数量</th>
+                    <th>已入库数量</th>
+                    <th>待入库数量</th>
+                    <th>本次入库数量</th>
+                    <th>单位</th>
+                    <th>关联物料需求</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedPurchaseOrder.items.map((item) => {
+                    const remaining = getRemainingPurchaseQuantity(
+                      item.ordered_quantity,
+                      item.received_quantity
+                    );
+
+                    return (
+                      <tr key={item.id}>
+                        <td>{item.sku?.sku_code ?? "-"}</td>
+                        <td>{item.sku?.sku_name ?? "-"}</td>
+                        <td>{formatQuantity(item.ordered_quantity)}</td>
+                        <td>{formatQuantity(item.received_quantity)}</td>
+                        <td>{formatQuantity(remaining)}</td>
+                        <td>
+                          <input
+                            className="tableInput"
+                            disabled={submitting || remaining <= 0}
+                            max={remaining}
+                            min="0"
+                            step="0.0001"
+                            type="number"
+                            value={purchaseQuantities[item.id] ?? ""}
+                            onChange={(event) =>
+                              setPurchaseQuantities((current) => ({
+                                ...current,
+                                [item.id]: event.target.value
+                              }))
+                            }
+                          />
+                        </td>
+                        <td>{item.unit}</td>
+                        <td>{item.material_requirement_id ?? "-"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="modalFooter">
+              <span>本次合计入库：{formatQuantity(purchaseInboundTotal)}</span>
+              <div className="rowActions">
+                <button
+                  type="button"
+                  onClick={() => setSelectedPurchaseOrderId("")}
+                  disabled={submitting}
+                >
+                  取消
                 </button>
                 <button
                   className="primaryButton"
                   type="submit"
                   disabled={
                     submitting ||
-                    !selectedPurchaseOrder ||
                     !purchaseWarehouseId ||
                     purchaseInboundTotal <= 0
                   }
@@ -365,150 +647,128 @@ export default function InventoryInboundPage() {
                 </button>
               </div>
             </div>
-
-            {purchaseOrders.length === 0 ? (
-              <div className="emptyState">暂无可入库采购单</div>
-            ) : (
-              <>
-                <div className="dataForm inboundForm">
-                  <label>
-                    采购单
-                    <select
-                      value={selectedPurchaseOrderId}
-                      onChange={(event) =>
-                        setSelectedPurchaseOrderId(event.target.value)
-                      }
-                      disabled={submitting}
-                    >
-                      {purchaseOrders.map((order) => (
-                        <option key={order.id} value={order.id}>
-                          {order.purchase_order_no} /{" "}
-                          {order.supplier?.name ?? "未填写供应商"}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label>
-                    入库仓库
-                    <select
-                      value={purchaseWarehouseId}
-                      onChange={(event) => setPurchaseWarehouseId(event.target.value)}
-                      disabled={submitting}
-                      required
-                    >
-                      <option value="">请选择仓库</option>
-                      {(materialWarehouses.length > 0
-                        ? materialWarehouses
-                        : warehouses
-                      ).map((warehouse) => (
-                        <option key={warehouse.id} value={warehouse.id}>
-                          {warehouse.warehouse_code} / {warehouse.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-
-                {selectedPurchaseOrder ? (
-                  <>
-                    <div className="detailGrid">
-                      <div className="detailItem">
-                        <span>采购单状态</span>
-                        <strong>
-                          {purchaseStatusLabels[selectedPurchaseOrder.status] ??
-                            selectedPurchaseOrder.status}
-                        </strong>
-                      </div>
-                      <div className="detailItem">
-                        <span>供应商</span>
-                        <strong>{selectedPurchaseOrder.supplier?.name ?? "-"}</strong>
-                      </div>
-                      <div className="detailItem">
-                        <span>预计到货日期</span>
-                        <strong>
-                          {formatDate(selectedPurchaseOrder.expected_arrival_date)}
-                        </strong>
-                      </div>
-                    </div>
-
-                    <div className="tableWrap">
-                      <table className="dataTable">
-                        <thead>
-                          <tr>
-                            <th>原材料 SKU</th>
-                            <th>原材料名称</th>
-                            <th>采购数量</th>
-                            <th>已入库数量</th>
-                            <th>待入库数量</th>
-                            <th>本次入库数量</th>
-                            <th>单位</th>
-                            <th>关联物料需求</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {selectedPurchaseOrder.items.map((item) => {
-                            const remaining = getRemainingPurchaseQuantity(
-                              item.ordered_quantity,
-                              item.received_quantity
-                            );
-
-                            return (
-                              <tr key={item.id}>
-                                <td>{item.sku?.sku_code ?? "-"}</td>
-                                <td>{item.sku?.sku_name ?? "-"}</td>
-                                <td>{formatQuantity(item.ordered_quantity)}</td>
-                                <td>{formatQuantity(item.received_quantity)}</td>
-                                <td>{formatQuantity(remaining)}</td>
-                                <td>
-                                  <input
-                                    className="tableInput"
-                                    disabled={submitting || remaining <= 0}
-                                    max={remaining}
-                                    min="0"
-                                    step="0.0001"
-                                    type="number"
-                                    value={purchaseQuantities[item.id] ?? ""}
-                                    onChange={(event) =>
-                                      setPurchaseQuantities((current) => ({
-                                        ...current,
-                                        [item.id]: event.target.value
-                                      }))
-                                    }
-                                  />
-                                </td>
-                                <td>{item.unit}</td>
-                                <td>{item.material_requirement_id ?? "-"}</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </>
-                ) : null}
-              </>
-            )}
           </form>
-        ) : null}
+        </Modal>
+      ) : null}
 
-        {!loading && activeTab === "production" ? (
+      {selectedProductionOrder ? (
+        <Modal
+          open={Boolean(selectedProductionOrder)}
+          eyebrow="生产入库"
+          title={selectedProductionOrder.production_order_no}
+          maxWidth="xl"
+          onClose={() => {
+            if (!submitting) {
+              setSelectedProductionOrderId("");
+            }
+          }}
+        >
           <form onSubmit={submitProductionInbound}>
-            <div className="sectionHeader">
-              <div>
-                <p className="eyebrow">生产完成</p>
-                <h3>成品入库</h3>
+            <div className="dataForm inboundForm">
+              <label>
+                入库仓库
+                <select
+                  value={productionWarehouseId}
+                  onChange={(event) => setProductionWarehouseId(event.target.value)}
+                  disabled={submitting}
+                  required
+                >
+                  <option value="">请选择仓库</option>
+                  {(productWarehouses.length > 0 ? productWarehouses : warehouses).map(
+                    (warehouse) => (
+                      <option key={warehouse.id} value={warehouse.id}>
+                        {warehouse.warehouse_code} / {warehouse.name}
+                      </option>
+                    )
+                  )}
+                </select>
+              </label>
+
+              <label>
+                本次成品入库数量
+                <input
+                  min="0.0001"
+                  step="0.0001"
+                  type="number"
+                  value={productionQuantity}
+                  onChange={(event) => setProductionQuantity(event.target.value)}
+                  disabled={submitting}
+                  required
+                />
+              </label>
+            </div>
+
+            <div className="detailGrid">
+              <div className="detailItem">
+                <span>成品 SKU</span>
+                <strong>{selectedProductionOrder.sku?.sku_code ?? "-"}</strong>
               </div>
+              <div className="detailItem">
+                <span>产品名称</span>
+                <strong>
+                  {selectedProductionOrder.sku?.product?.name ??
+                    selectedProductionOrder.sku?.sku_name ??
+                    "-"}
+                </strong>
+              </div>
+              <div className="detailItem">
+                <span>关联 FBA 备货需求</span>
+                <strong>
+                  {selectedProductionOrder.replenishment_request?.request_no ?? "-"}
+                </strong>
+              </div>
+              <div className="detailItem">
+                <span>FBA 备货需求数量</span>
+                <strong>{formatQuantity(fbaRequestedQuantity)}</strong>
+              </div>
+              <div className="detailItem">
+                <span>计划生产数量</span>
+                <strong>{formatQuantity(plannedQuantity)}</strong>
+              </div>
+              <div className="detailItem">
+                <span>已入库数量</span>
+                <strong>{formatQuantity(completedQuantity)}</strong>
+              </div>
+              <div className="detailItem">
+                <span>待入库数量</span>
+                <strong>{formatQuantity(pendingProductionQuantity)}</strong>
+              </div>
+              <div className="detailItem">
+                <span>超量生产数量</span>
+                <strong>{formatQuantity(overProductionQuantity)}</strong>
+              </div>
+              <div className="detailItem">
+                <span>生产状态</span>
+                <strong>
+                  {productionStatusLabels[selectedProductionOrder.status] ??
+                    selectedProductionOrder.status}
+                </strong>
+              </div>
+            </div>
+
+            {Number(productionQuantity) > 0 ? (
+              <div className="debugNotice">
+                本次入库后，预计累计成品入库{" "}
+                {formatQuantity(projectedCompletedQuantity)} 件；其中超过 FBA
+                备货需求的 {formatQuantity(projectedExtraStock)} 件会留在成品库存。
+              </div>
+            ) : null}
+
+            <div className="modalFooter">
+              <span>请确认成品数量和入库仓库。</span>
               <div className="rowActions">
-                <button type="button" onClick={loadPageData} disabled={loading}>
-                  刷新
+                <button
+                  type="button"
+                  onClick={() => setSelectedProductionOrderId("")}
+                  disabled={submitting}
+                >
+                  取消
                 </button>
                 <button
                   className="primaryButton"
                   type="submit"
                   disabled={
                     submitting ||
-                    !selectedProductionOrder ||
                     !productionWarehouseId ||
                     Number(productionQuantity) <= 0
                   }
@@ -517,149 +777,9 @@ export default function InventoryInboundPage() {
                 </button>
               </div>
             </div>
-
-            {productionOrders.length === 0 ? (
-              <div className="emptyState">暂无可入库生产任务</div>
-            ) : (
-              <>
-                <div className="dataForm inboundForm">
-                  <label>
-                    生产任务
-                    <select
-                      value={selectedProductionOrderId}
-                      onChange={(event) =>
-                        setSelectedProductionOrderId(event.target.value)
-                      }
-                      disabled={submitting}
-                    >
-                      {productionOrders.map((order) => (
-                        <option key={order.id} value={order.id}>
-                          {order.production_order_no} /{" "}
-                          {order.sku?.sku_code ?? "未关联 SKU"}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label>
-                    入库仓库
-                    <select
-                      value={productionWarehouseId}
-                      onChange={(event) =>
-                        setProductionWarehouseId(event.target.value)
-                      }
-                      disabled={submitting}
-                      required
-                    >
-                      <option value="">请选择仓库</option>
-                      {(productWarehouses.length > 0
-                        ? productWarehouses
-                        : warehouses
-                      ).map((warehouse) => (
-                        <option key={warehouse.id} value={warehouse.id}>
-                          {warehouse.warehouse_code} / {warehouse.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-
-                {selectedProductionOrder ? (
-                  <>
-                    <div className="detailGrid">
-                      <div className="detailItem">
-                        <span>生产任务单号</span>
-                        <strong>{selectedProductionOrder.production_order_no}</strong>
-                      </div>
-                      <div className="detailItem">
-                        <span>成品 SKU</span>
-                        <strong>
-                          {selectedProductionOrder.sku?.sku_code ?? "-"}
-                        </strong>
-                      </div>
-                      <div className="detailItem">
-                        <span>产品名称</span>
-                        <strong>
-                          {selectedProductionOrder.sku?.product?.name ??
-                            selectedProductionOrder.sku?.sku_name ??
-                            "-"}
-                        </strong>
-                      </div>
-                      <div className="detailItem">
-                        <span>关联 FBA 备货需求</span>
-                        <strong>
-                          {selectedProductionOrder.replenishment_request
-                            ?.request_no ?? "-"}
-                        </strong>
-                      </div>
-                      <div className="detailItem">
-                        <span>FBA 备货需求数量</span>
-                        <strong>{formatQuantity(fbaRequestedQuantity)}</strong>
-                      </div>
-                      <div className="detailItem">
-                        <span>计划生产数量</span>
-                        <strong>{formatQuantity(plannedQuantity)}</strong>
-                      </div>
-                      <div className="detailItem">
-                        <span>超量生产数量</span>
-                        <strong>{formatQuantity(overProductionQuantity)}</strong>
-                      </div>
-                      <div className="detailItem">
-                        <span>已入库数量</span>
-                        <strong>{formatQuantity(completedQuantity)}</strong>
-                      </div>
-                      <div className="detailItem">
-                        <span>待入库数量</span>
-                        <strong>{formatQuantity(pendingProductionQuantity)}</strong>
-                      </div>
-                      <div className="detailItem">
-                        <span>生产状态</span>
-                        <strong>
-                          {productionStatusLabels[selectedProductionOrder.status] ??
-                            selectedProductionOrder.status}
-                        </strong>
-                      </div>
-                    </div>
-
-                    {Number(plannedQuantity) > Number(fbaRequestedQuantity) ? (
-                      <div className="debugNotice">
-                        这张生产任务计划生产 {formatQuantity(plannedQuantity)} 件，
-                        FBA 备货需求是 {formatQuantity(fbaRequestedQuantity)} 件，
-                        多出部分将进入成品库存，不会自动发往 FBA。
-                      </div>
-                    ) : null}
-
-                    {Number(productionQuantity) > 0 ? (
-                      <div className="debugNotice">
-                        本次入库后，预计累计成品入库{" "}
-                        {formatQuantity(projectedCompletedQuantity)} 件；其中超过 FBA
-                        备货需求的 {formatQuantity(projectedExtraStock)} 件会留在成品库存。
-                      </div>
-                    ) : null}
-
-                    <div className="dataForm inboundForm">
-                      <label>
-                        本次成品入库数量
-                        <input
-                          min="0.0001"
-                          step="0.0001"
-                          type="number"
-                          value={productionQuantity}
-                          onChange={(event) =>
-                            setProductionQuantity(event.target.value)
-                          }
-                          disabled={submitting}
-                          required
-                        />
-                      </label>
-                    </div>
-                  </>
-                ) : null}
-              </>
-            )}
           </form>
-        ) : null}
-      </section>
+        </Modal>
+      ) : null}
     </main>
   );
 }

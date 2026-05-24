@@ -197,6 +197,7 @@ export default function AdminWarehousesPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedWarehouseIds, setSelectedWarehouseIds] = useState<string[]>([]);
   const [page, setPage] = useState(1);
+  const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [warehouseToDelete, setWarehouseToDelete] =
     useState<WarehouseListRow | null>(null);
@@ -323,6 +324,7 @@ export default function AdminWarehousesPage() {
 
       setSuccessMessage(`仓库 ${created.warehouse_code} 新增成功。`);
       setWarehouseForm(initialWarehouseForm);
+      setCreateOpen(false);
       await loadPageData();
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
@@ -546,14 +548,13 @@ export default function AdminWarehousesPage() {
         </div>
       ) : null}
 
-      <section className="formPanel">
-        <div className="sectionHeader">
-          <div>
-            <p className="eyebrow">新增仓库</p>
-            <h3>创建仓库基础资料</h3>
-          </div>
-        </div>
-
+      <Modal
+        open={createOpen}
+        eyebrow="新增仓库"
+        title="创建仓库基础资料"
+        maxWidth="lg"
+        onClose={() => setCreateOpen(false)}
+      >
         <form className="dataForm warehouseForm" onSubmit={submitCreateWarehouse}>
           <label>
             仓库编码
@@ -645,7 +646,7 @@ export default function AdminWarehousesPage() {
             </button>
           </div>
         </form>
-      </section>
+      </Modal>
 
       {editForm ? (
         <Modal
@@ -788,6 +789,13 @@ export default function AdminWarehousesPage() {
             </button>
             <button type="button" onClick={refreshAll}>
               {loading ? "正在刷新..." : "刷新列表"}
+            </button>
+            <button
+              className="primaryButton"
+              type="button"
+              onClick={() => setCreateOpen(true)}
+            >
+              新增仓库
             </button>
           </div>
         </div>

@@ -13,7 +13,9 @@ export type ProductImportInput = {
   rowNumber: number;
   productCode: string;
   name: string;
+  category: string | null;
   description: string | null;
+  imageUrl: string | null;
   status: Status;
 };
 
@@ -300,20 +302,19 @@ export async function validateProductImportRows(
   rows: CsvDataRow[]
 ): Promise<BulkImportValidationRow<ProductImportInput>[]> {
   const existingCodes = await getExistingCodeSet("products", "product_code");
-  const fileCodes = rows.map((row) =>
-    normalizeCsvValue(row.product_code).toLowerCase()
-  );
-  const duplicatedCodes = getDuplicateSet(fileCodes);
+  const seenCodes = new Set<string>();
 
   return rows.map((row, index) => {
     const rowNumber = index + 2;
-    const productCode = normalizeCsvValue(row.product_code);
-    const name = normalizeCsvValue(row.product_name || row.name);
+    const productCode = normalizeCsvValue(row.spu || row.product_code);
+    const name = normalizeCsvValue(row.name || row.product_name);
+    const category = normalizeOptionalText(row.category);
     const description = normalizeOptionalText(row.remark || row.description);
+    const imageUrl = normalizeOptionalText(row.image_url || row.product_image_url);
     const errors: string[] = [];
 
     if (!productCode) {
-      errors.push("产品编码必填。");
+      errors.push("SPU 必填。");
     }
 
     if (!name) {
@@ -323,29 +324,33 @@ export async function validateProductImportRows(
     validateStatus(row.status, errors);
 
     const codeKey = productCode.toLowerCase();
+    const isExistingCode = Boolean(codeKey && existingCodes.has(codeKey));
+    const isDuplicateInFile = Boolean(codeKey && seenCodes.has(codeKey));
 
-    if (codeKey && existingCodes.has(codeKey)) {
-      errors.push("产品编码已经存在。");
-    }
-
-    if (codeKey && duplicatedCodes.has(codeKey)) {
-      errors.push("同一个 CSV 文件内产品编码重复。");
+    if (codeKey) {
+      seenCodes.add(codeKey);
     }
 
     return {
       rowNumber,
       rawRow: row,
       data:
-        errors.length === 0
+        errors.length === 0 && !isExistingCode && !isDuplicateInFile
           ? {
               rowNumber,
               productCode,
               name,
+              category,
               description,
+              imageUrl,
               status: normalizeStatus(row.status)
             }
           : undefined,
-      errors
+      errors,
+      notes: [
+        isExistingCode ? "SPU 已存在，本行默认跳过，不重复创建。" : "",
+        isDuplicateInFile ? "同一个 CSV 文件内 SPU 重复，本行默认跳过。" : ""
+      ].filter(Boolean)
     };
   });
 }
@@ -384,7 +389,9 @@ export async function bulkImportProducts(
       inputs.map((input) => ({
         product_code: input.productCode,
         name: input.name,
+        category: input.category,
         description: input.description,
+        product_image_url: input.imageUrl,
         status: input.status
       }))
     ),

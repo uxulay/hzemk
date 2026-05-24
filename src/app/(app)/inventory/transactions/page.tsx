@@ -271,6 +271,13 @@ export default function InventoryTransactionsPage() {
       </section>
 
       <section className="listPanel">
+        <div className="sectionHeader">
+          <div>
+            <p className="eyebrow">库存流水</p>
+            <h3>流水列表</h3>
+          </div>
+        </div>
+
         <form className="listToolbar transactionsToolbar" onSubmit={submitFilters}>
           <label>
             流水类型

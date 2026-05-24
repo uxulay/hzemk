@@ -8,6 +8,7 @@ export type ProductRow = {
   name: string;
   category: string | null;
   description: string | null;
+  product_image_url: string | null;
   status: string;
   created_at: string;
   updated_at: string;
@@ -39,14 +40,18 @@ export type ProductStats = {
 export type CreateProductInput = {
   productCode: string;
   name: string;
+  category?: string;
   description?: string;
+  productImageUrl?: string;
   status: ProductStatus;
 };
 
 export type UpdateProductInput = {
   productId: string;
   name: string;
+  category?: string;
   description?: string;
+  productImageUrl?: string;
   status: ProductStatus;
 };
 
@@ -216,7 +221,9 @@ export async function createProduct(
       .insert({
         product_code: productCode,
         name,
+        category: normalizeOptionalText(input.category),
         description: normalizeOptionalText(input.description),
+        product_image_url: normalizeOptionalText(input.productImageUrl),
         status: input.status
       })
       .select("*")
@@ -250,7 +257,9 @@ export async function updateProduct(input: UpdateProductInput): Promise<void> {
       .from("products")
       .update({
         name,
+        category: normalizeOptionalText(input.category),
         description: normalizeOptionalText(input.description),
+        product_image_url: normalizeOptionalText(input.productImageUrl),
         status: input.status
       })
       .eq("id", input.productId),

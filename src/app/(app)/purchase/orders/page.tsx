@@ -219,6 +219,65 @@ function getEmptyManualForm(): ManualFormState {
   };
 }
 
+function getMaterialSkuLabel(sku: MaterialSkuOption) {
+  return `${sku.sku_code} / ${sku.sku_name}`;
+}
+
+function MaterialSkuSearchSelect({
+  skus,
+  value,
+  disabled,
+  onChange
+}: {
+  skus: MaterialSkuOption[];
+  value: string;
+  disabled: boolean;
+  onChange: (skuId: string) => void;
+}) {
+  const [keyword, setKeyword] = useState("");
+  const selectedSku = skus.find((sku) => sku.id === value);
+  const normalizedKeyword = keyword.trim().toLowerCase();
+  const filteredSkus = normalizedKeyword
+    ? skus.filter((sku) =>
+        getMaterialSkuLabel(sku).toLowerCase().includes(normalizedKeyword)
+      )
+    : skus.slice(0, 8);
+
+  return (
+    <div className="tableSearchPicker">
+      <input
+        value={keyword}
+        onChange={(event) => setKeyword(event.target.value)}
+        disabled={disabled}
+        placeholder={
+          selectedSku ? `当前：${getMaterialSkuLabel(selectedSku)}` : "搜索原材料"
+        }
+      />
+      {selectedSku ? <strong>{getMaterialSkuLabel(selectedSku)}</strong> : null}
+      <div className="searchPickerList">
+        {filteredSkus.length === 0 ? (
+          <p className="tableHint">没有匹配的原材料。</p>
+        ) : (
+          filteredSkus.map((sku) => (
+            <button
+              type="button"
+              key={sku.id}
+              className={sku.id === value ? "active" : undefined}
+              onClick={() => {
+                onChange(sku.id);
+                setKeyword("");
+              }}
+              disabled={disabled}
+            >
+              {getMaterialSkuLabel(sku)}
+            </button>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 function escapeCsvCell(value: string | number | null | undefined) {
   const text = String(value ?? "");
 
@@ -1412,26 +1471,14 @@ export default function PurchaseOrdersPage() {
                       <tr key={item.localId}>
                         <td>
                           {manualForm.mode === "create" ? (
-                            <select
-                              className="tableSelect"
+                            <MaterialSkuSearchSelect
+                              skus={materialSkus}
                               value={item.skuId}
-                              onChange={(event) =>
-                                updateManualItem(
-                                  item.localId,
-                                  "skuId",
-                                  event.target.value
-                                )
-                              }
                               disabled={submitting}
-                              required
-                            >
-                              <option value="">请选择原材料</option>
-                              {materialSkus.map((sku) => (
-                                <option key={sku.id} value={sku.id}>
-                                  {sku.sku_code} / {sku.sku_name}
-                                </option>
-                              ))}
-                            </select>
+                              onChange={(skuId) =>
+                                updateManualItem(item.localId, "skuId", skuId)
+                              }
+                            />
                           ) : (
                             <strong>{item.skuCode}</strong>
                           )}
@@ -1552,23 +1599,18 @@ export default function PurchaseOrdersPage() {
       />
 
       {draftItems.length > 0 ? (
-        <div className="modalBackdrop" role="presentation">
-          <form className="modalPanel" onSubmit={submitPurchaseOrder}>
-            <div className="detailHeader">
-              <div>
-                <p className="eyebrow">创建采购单</p>
-                <h3>采购单草稿</h3>
-              </div>
-              <button
-                className="secondaryButton"
-                type="button"
-                onClick={closeDraftForm}
-                disabled={submitting}
-              >
-                关闭
-              </button>
-            </div>
-
+        <Modal
+          open={draftItems.length > 0}
+          eyebrow="创建采购单"
+          title="采购单草稿"
+          maxWidth="xl"
+          onClose={() => {
+            if (!submitting) {
+              closeDraftForm();
+            }
+          }}
+        >
+          <form onSubmit={submitPurchaseOrder}>
             <div className="dataForm purchaseForm">
               <label>
                 供应商
@@ -1728,7 +1770,7 @@ export default function PurchaseOrdersPage() {
               </div>
             </div>
           </form>
-        </div>
+        </Modal>
       ) : null}
     </main>
   );

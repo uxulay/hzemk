@@ -176,6 +176,7 @@ export default function AdminSuppliersPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedSupplierIds, setSelectedSupplierIds] = useState<string[]>([]);
   const [page, setPage] = useState(1);
+  const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [supplierToDelete, setSupplierToDelete] =
     useState<SupplierListRow | null>(null);
@@ -297,6 +298,7 @@ export default function AdminSuppliersPage() {
 
       setSuccessMessage(`供应商 ${created.supplier_code} 新增成功。`);
       setSupplierForm(initialSupplierForm);
+      setCreateOpen(false);
       await loadPageData();
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
@@ -519,14 +521,13 @@ export default function AdminSuppliersPage() {
         </div>
       ) : null}
 
-      <section className="formPanel">
-        <div className="sectionHeader">
-          <div>
-            <p className="eyebrow">新增供应商</p>
-            <h3>创建供应商基础资料</h3>
-          </div>
-        </div>
-
+      <Modal
+        open={createOpen}
+        eyebrow="新增供应商"
+        title="创建供应商基础资料"
+        maxWidth="lg"
+        onClose={() => setCreateOpen(false)}
+      >
         <form
           className="dataForm supplierForm"
           onSubmit={submitCreateSupplier}
@@ -662,7 +663,7 @@ export default function AdminSuppliersPage() {
             </button>
           </div>
         </form>
-      </section>
+      </Modal>
 
       {editForm ? (
         <Modal
@@ -849,6 +850,13 @@ export default function AdminSuppliersPage() {
             </button>
             <button type="button" onClick={refreshAll}>
               {loading ? "正在刷新..." : "刷新列表"}
+            </button>
+            <button
+              className="primaryButton"
+              type="button"
+              onClick={() => setCreateOpen(true)}
+            >
+              新增供应商
             </button>
           </div>
         </div>

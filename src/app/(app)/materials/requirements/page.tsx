@@ -113,6 +113,13 @@ export default function MaterialRequirementsPage() {
       </section>
 
       <section className="listPanel">
+        <div className="sectionHeader">
+          <div>
+            <p className="eyebrow">物料需求</p>
+            <h3>需求列表</h3>
+          </div>
+        </div>
+
         <div className="listToolbar">
           <label>
             状态

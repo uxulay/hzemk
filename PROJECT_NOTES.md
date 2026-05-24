@@ -99,6 +99,85 @@
 - 更复杂筛选可统一抽成查询参数，便于刷新后保留条件。
 - 表格列配置、列显隐和固定操作列可后续单独做，不建议和业务写入逻辑混在一起改。
 
+### 3.2 基础资料管理页列表优先和弹窗化优化（2026-05-24）
+
+本次按“先完成第一批基础资料页面”的优先级处理，没有自动打开浏览器，也没有执行任何清空数据 SQL。
+
+已完成页面：
+
+- `/admin/products`：新增产品表单改为弹窗；列表首列新增产品图片缩略图；搜索文案调整为按 SPU / 产品名称搜索；新增和编辑弹窗支持分类、图片 URL、备注和状态；批量导入模板改为 `spu`、`name`、`category`、`image_url`、`description`、`status`，其中 `image_url` 会写入真实字段 `products.product_image_url`。
+- `/admin/skus`：新增 SKU 表单改为弹窗；所属产品选择从长下拉改为可搜索选择器；编辑 SKU 弹窗里的所属产品也改为可搜索选择器；列表顶部保留搜索、筛选、批量导入、刷新，并新增“新增 SKU”按钮。
+- `/bom`：新增 BOM 主表表单改为弹窗；成品 SKU 和 BOM 明细里的原材料 SKU 选择改为可搜索选择器；批量导入继续使用统一 `BulkImportDialog`；BOM 明细仍在详情弹窗里维护。
+- `/admin/suppliers`：新增供应商表单改为弹窗；列表顶部保留搜索、状态筛选、批量导入、刷新，并新增“新增供应商”按钮。
+- `/admin/warehouses`：新增仓库表单改为弹窗；列表顶部保留搜索、仓库类型筛选、状态筛选、批量导入、刷新，并新增“新增仓库”按钮。
+
+本次新增或复用的通用组件：
+
+- 新增 `src/components/ImageCell.tsx`：统一展示 56px 产品图片缩略图，图片为空或加载失败时显示灰色占位。
+- 继续复用 `Modal`、`BulkImportDialog`、`ConfirmDialog`、`BulkActionBar`、`Pagination`。
+- 本次没有新增单独 `DataTable` / `PageToolbar`，因为当前页面已经稳定复用现有表格样式和弹窗组件，先避免大范围重构。
+
+本次新增 SQL 脚本：
+
+- `scripts/clear-business-demo-data.sql`：只清理业务测试单据和库存流水/库存余额，保留产品、SKU、BOM、供应商、仓库、用户和角色。当前 `inventory_items` 没有“是否样本数据”的来源字段，所以这个脚本会清空当前库存余额；如果库存里已有真实数据，不要直接执行。
+- `scripts/clear-all-demo-data.sql`：清空业务单据、库存、BOM、产品、SKU、供应商和仓库，保留 `roles`、`profiles` 和 `auth.users`。
+
+样本数据清理脚本使用方法：
+
+1. 执行前先确认 Supabase 数据库已经备份。
+2. 在项目里打开对应 SQL 文件，复制内容。
+3. 到 Supabase SQL Editor 粘贴。
+4. 再次确认清理范围无误后手动执行。
+
+本次没有新增数据库字段。`products` 表当前已经有 `product_image_url text`，它就是产品图片 URL 字段；为避免重复字段，本次没有再新增 `image_url`。导入模板里的 `image_url` 只是给业务人员填写的表头，程序会映射到真实字段 `product_image_url`。
+
+本次验证：
+
+- 已运行 `npm run typecheck`，通过。
+- 已运行 `npm run build`，通过。
+
+后续待优化：
+
+- 第二批业务核心页面还可以继续统一增强：`/replenishment`、`/purchase/orders`、`/production/planning`、`/production/orders`。其中 `/replenishment` 和 `/purchase/orders` 已经有弹窗创建和批量导入基础，但还可以继续优化 SKU 搜索、模板导入错误报告和生产任务按产品聚合展示。
+- 第三批库存和出入库页面还可以继续统一增强：`/inventory/inbound`、`/inventory/fba-outbound`、`/inventory/adjustments`、`/inventory/transactions`、`/inventory/materials`、`/inventory/products`。库存流水和当前库存页主要是查询页，不一定需要新增弹窗。
+- 产品图片后续可以接 Supabase Storage 上传，现在先支持填写图片 URL。
+- 批量导入可以进一步增强错误报告下载、重复数据跳过/更新策略和 Excel 文件支持。
+- 生产任务页面可以继续优化为按产品聚合展示，同时保留 SKU 明细数量，避免丢失 SKU 维度。
+
+### 3.3 业务核心和库存出入库页面弹窗化优化（2026-05-24）
+
+本次继续完成第二批和第三批页面优化，没有自动打开浏览器，也没有执行任何 SQL。
+
+第二批业务核心页面：
+
+- `/replenishment`：已保持列表优先；创建 FBA 备货单、SKU 明细导入、SKU 选择和详情都继续使用弹窗。
+- `/purchase/orders`：采购单列表和缺料清单保持列表优先；手动新建/编辑采购单继续使用弹窗；缺料生成采购单的草稿窗口改为统一 `Modal`；手动采购单里的原材料选择从长下拉改为可搜索选择器；批量导入继续使用 `BulkImportDialog`。
+- `/production/planning`：保持列表优先；创建生产任务和查看 FBA 备货单明细使用弹窗；生产任务创建弹窗已按产品聚合展示，同时保留每个 SKU 的计划生产数量。
+- `/production/orders`：生产任务列表补充统一列表标题；查看详情继续使用 `Modal`；确认领料弹窗改为统一 `Modal`。
+- `/materials/requirements`：物料需求查询页补充统一列表标题，仍保持只读筛选页面，不新增写入入口。
+
+第三批库存和出入库页面：
+
+- `/inventory/inbound`：采购入库和生产入库不再默认铺开表单。页面先展示待入库采购单/生产任务列表，点击“办理入库”后打开弹窗，在弹窗里选择仓库、填写本次入库数量并提交。
+- `/inventory/fba-outbound`：FBA 出库表单从页面底部改为弹窗；页面默认展示可出库备货需求列表，点击“发往 FBA”后再填写出库数量和备注。
+- `/inventory/adjustments`：库存调整继续从当前库存列表进入，调整表单改为统一 `Modal`。
+- `/inventory/transactions`：库存流水是只读追踪页，补充统一列表标题，继续只提供筛选、刷新、查看详情。
+- `/inventory/materials`、`/inventory/products`：当前库存页面补充统一列表标题，继续只展示库存、筛选和详情弹窗，不新增写入入口。
+
+本次验证：
+
+- 已运行 `npm run typecheck`，通过。
+- 已运行 `npm run build`，通过。
+
+本次没有新增数据库字段，也没有新增 Supabase SQL。所有改动都沿用当前真实表结构：采购入库、生产入库、FBA 出库和库存调整仍通过 `inventory_items` 与 `inventory_transactions` 记录库存变化。
+
+后续建议：
+
+- 采购单供应商选择后续也可以改成可搜索选择器，适合供应商数量变多后继续优化。
+- 入库、出库、库存调整弹窗后续可以增加打印/导出单据能力。
+- 库存流水后续可以增加“导出当前筛选结果”。
+- 浏览器人工检查建议重点看 `/inventory/inbound`、`/inventory/fba-outbound`、`/inventory/adjustments` 和 `/purchase/orders` 的弹窗打开、关闭、提交按钮状态。
+
 ## 4. 当前已完成的业务流程
 
 ### 4.1 运营提交 FBA 备货需求

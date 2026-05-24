@@ -306,6 +306,13 @@ export default function ProductionOrdersPage() {
       ) : null}
 
       <section className="listPanel">
+        <div className="sectionHeader">
+          <div>
+            <p className="eyebrow">生产任务</p>
+            <h3>任务列表</h3>
+          </div>
+        </div>
+
         <div className="listToolbar productionToolbar">
           <label>
             生产状态
@@ -681,30 +688,17 @@ export default function ProductionOrdersPage() {
       ) : null}
 
       {issuePreview ? (
-        <div className="modalBackdrop" role="presentation">
-          <section
-            className="modalPanel"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="issue-materials-title"
-          >
-            <div className="detailHeader">
-              <div>
-                <p className="eyebrow">确认领料</p>
-                <h3 id="issue-materials-title">
-                  {issuePreview.production_order_no}
-                </h3>
-              </div>
-              <button
-                className="secondaryButton"
-                type="button"
-                onClick={() => setIssuePreview(null)}
-                disabled={Boolean(issuingOrderId)}
-              >
-                关闭
-              </button>
-            </div>
-
+        <Modal
+          open={Boolean(issuePreview)}
+          eyebrow="确认领料"
+          title={issuePreview.production_order_no}
+          maxWidth="xl"
+          onClose={() => {
+            if (!issuingOrderId) {
+              setIssuePreview(null);
+            }
+          }}
+        >
             <div className="detailGrid">
               <div className="detailItem">
                 <span>成品 SKU</span>
@@ -827,8 +821,7 @@ export default function ProductionOrdersPage() {
                 </button>
               </div>
             </div>
-          </section>
-        </div>
+        </Modal>
       ) : null}
     </main>
   );

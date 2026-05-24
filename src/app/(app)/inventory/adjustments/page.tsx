@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Modal } from "@/components/Modal";
 import {
   adjustInventoryItem,
   getInventoryForAdjustment,
@@ -569,24 +570,13 @@ export default function InventoryAdjustmentsPage() {
       </section>
 
       {selectedItem ? (
-        <div className="modalBackdrop">
-          <div className="modalPanel">
-            <div className="detailHeader">
-              <div>
-                <p className="eyebrow">库存调整</p>
-                <h3>{selectedItem.sku?.sku_code ?? "未命名 SKU"}</h3>
-              </div>
-              <div className="rowActions">
-                <button
-                  type="button"
-                  onClick={closeAdjustmentForm}
-                  disabled={submitting}
-                >
-                  关闭
-                </button>
-              </div>
-            </div>
-
+        <Modal
+          open={Boolean(selectedItem)}
+          eyebrow="库存调整"
+          title={selectedItem.sku?.sku_code ?? "未命名 SKU"}
+          maxWidth="xl"
+          onClose={closeAdjustmentForm}
+        >
             <div className="detailGrid">
               <div className="detailItem">
                 <span>SKU 编码</span>
@@ -751,8 +741,7 @@ export default function InventoryAdjustmentsPage() {
                 </div>
               </div>
             </form>
-          </div>
-        </div>
+        </Modal>
       ) : null}
     </main>
   );

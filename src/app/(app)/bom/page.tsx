@@ -159,6 +159,75 @@ function getSkuOptionLabel(sku: BomSkuOption) {
   return `${sku.sku_code} / ${sku.sku_name}${productName}`;
 }
 
+type BomSkuSearchSelectProps = {
+  label: string;
+  skus: BomSkuOption[];
+  value: string;
+  disabled?: boolean;
+  placeholder: string;
+  onChange: (skuId: string) => void;
+};
+
+function BomSkuSearchSelect({
+  label,
+  skus,
+  value,
+  disabled = false,
+  placeholder,
+  onChange
+}: BomSkuSearchSelectProps) {
+  const [keyword, setKeyword] = useState("");
+  const selectedSku = skus.find((sku) => sku.id === value);
+  const normalizedKeyword = keyword.trim().toLowerCase();
+  const filteredSkus = normalizedKeyword
+    ? skus.filter((sku) =>
+        getSkuOptionLabel(sku).toLowerCase().includes(normalizedKeyword)
+      )
+    : skus.slice(0, 8);
+
+  return (
+    <div className="fieldBlock">
+      <span>{label}</span>
+      <input
+        value={keyword}
+        onChange={(event) => setKeyword(event.target.value)}
+        disabled={disabled}
+        placeholder={
+          selectedSku ? `当前：${getSkuOptionLabel(selectedSku)}` : placeholder
+        }
+      />
+      {selectedSku ? (
+        <div className="selectedPickerValue">
+          <strong>{getSkuOptionLabel(selectedSku)}</strong>
+          <button type="button" onClick={() => onChange("")} disabled={disabled}>
+            清除
+          </button>
+        </div>
+      ) : null}
+      <div className="searchPickerList">
+        {filteredSkus.length === 0 ? (
+          <p className="tableHint">没有匹配的 SKU。</p>
+        ) : (
+          filteredSkus.map((sku) => (
+            <button
+              type="button"
+              key={sku.id}
+              className={sku.id === value ? "active" : undefined}
+              onClick={() => {
+                onChange(sku.id);
+                setKeyword("");
+              }}
+              disabled={disabled}
+            >
+              {getSkuOptionLabel(sku)}
+            </button>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 function getItemUnit(item: BomItemRow) {
   return item.component_sku?.unit ?? item.unit;
 }
@@ -208,6 +277,7 @@ export default function BomPage() {
   const [editingItem, setEditingItem] = useState<EditingBomItem | null>(null);
   const [showItemForm, setShowItemForm] = useState(false);
   const [selectedBomIds, setSelectedBomIds] = useState<string[]>([]);
+  const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [bomToDelete, setBomToDelete] = useState<BomListRow | null>(null);
   const [bomItemToDelete, setBomItemToDelete] = useState<BomItemRow | null>(null);
@@ -341,6 +411,7 @@ export default function BomPage() {
 
       setSuccessMessage(`BOM ${created.bom_code} 创建成功。`);
       setHeaderForm(initialHeaderForm);
+      setCreateOpen(false);
       await loadPageData();
       await loadBomDetail(created.id);
     } catch (error) {
@@ -568,14 +639,13 @@ export default function BomPage() {
         </div>
       ) : null}
 
-      <section className="formPanel">
-        <div className="sectionHeader">
-          <div>
-            <p className="eyebrow">新增 BOM</p>
-            <h3>创建成品 SKU 的 BOM 版本</h3>
-          </div>
-        </div>
-
+      <Modal
+        open={createOpen}
+        eyebrow="新增 BOM"
+        title="创建成品 SKU 的 BOM 版本"
+        maxWidth="lg"
+        onClose={() => setCreateOpen(false)}
+      >
         {selectedActiveBom ? (
           <div className="warningNotice">
             <strong>提示</strong>
@@ -587,27 +657,19 @@ export default function BomPage() {
         ) : null}
 
         <form className="dataForm bomHeaderForm" onSubmit={submitHeader}>
-          <label>
-            成品 SKU
-            <select
-              value={headerForm.productSkuId}
-              onChange={(event) =>
-                setHeaderForm((current) => ({
-                  ...current,
-                  productSkuId: event.target.value
-                }))
-              }
-              disabled={submittingHeader || loading}
-              required
-            >
-              <option value="">请选择成品 SKU</option>
-              {finishedGoodSkus.map((sku) => (
-                <option key={sku.id} value={sku.id}>
-                  {getSkuOptionLabel(sku)}
-                </option>
-              ))}
-            </select>
-          </label>
+          <BomSkuSearchSelect
+            label="成品 SKU"
+            skus={finishedGoodSkus}
+            value={headerForm.productSkuId}
+            disabled={submittingHeader || loading}
+            placeholder="搜索成品 SKU 编码、名称或产品"
+            onChange={(productSkuId) =>
+              setHeaderForm((current) => ({
+                ...current,
+                productSkuId
+              }))
+            }
+          />
 
           <label>
             BOM 版本
@@ -666,7 +728,7 @@ export default function BomPage() {
             </button>
           </div>
         </form>
-      </section>
+      </Modal>
 
       <section className="listPanel">
         <div className="sectionHeader">
@@ -688,6 +750,13 @@ export default function BomPage() {
             </button>
             <button type="button" onClick={refreshAll}>
               {loading ? "正在刷新..." : "刷新"}
+            </button>
+            <button
+              className="primaryButton"
+              type="button"
+              onClick={() => setCreateOpen(true)}
+            >
+              新增 BOM
             </button>
           </div>
         </div>
@@ -865,27 +934,19 @@ export default function BomPage() {
 
           {showItemForm ? (
             <form className="dataForm bomItemForm" onSubmit={submitItem}>
-              <label>
-                原材料 SKU
-                <select
-                  value={itemForm.componentSkuId}
-                  onChange={(event) =>
-                    setItemForm((current) => ({
-                      ...current,
-                      componentSkuId: event.target.value
-                    }))
-                  }
-                  disabled={submittingItem}
-                  required
-                >
-                  <option value="">请选择原材料 SKU</option>
-                  {materialSkus.map((sku) => (
-                    <option key={sku.id} value={sku.id}>
-                      {sku.sku_code} / {sku.sku_name} / {sku.unit}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <BomSkuSearchSelect
+                label="原材料 SKU"
+                skus={materialSkus}
+                value={itemForm.componentSkuId}
+                disabled={submittingItem}
+                placeholder="搜索原材料 SKU 编码或名称"
+                onChange={(componentSkuId) =>
+                  setItemForm((current) => ({
+                    ...current,
+                    componentSkuId
+                  }))
+                }
+              />
 
               <label>
                 单位用量

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { BulkActionBar } from "@/components/BulkActionBar";
 import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { ImageCell } from "@/components/ImageCell";
 import { Modal } from "@/components/Modal";
 import { Pagination } from "@/components/Pagination";
 import {
@@ -41,7 +42,9 @@ const skuTypeLabels: Record<string, string> = {
 type ProductFormState = {
   productCode: string;
   name: string;
+  category: string;
   description: string;
+  productImageUrl: string;
   status: ProductStatus;
 };
 
@@ -49,14 +52,18 @@ type ProductEditFormState = {
   productId: string;
   productCode: string;
   name: string;
+  category: string;
   description: string;
+  productImageUrl: string;
   status: ProductStatus;
 };
 
 const initialProductForm: ProductFormState = {
   productCode: "",
   name: "",
+  category: "",
   description: "",
+  productImageUrl: "",
   status: "active"
 };
 
@@ -69,20 +76,30 @@ const initialStats: ProductStats = {
 
 const productImportFields: CsvTemplateField[] = [
   {
-    key: "product_code",
-    label: "产品编码",
+    key: "spu",
+    label: "SPU",
     required: true,
     example: "PROD-001"
   },
   {
-    key: "product_name",
+    key: "name",
     label: "产品名称",
     required: true,
     example: "折叠收纳箱"
   },
   {
-    key: "remark",
-    label: "备注",
+    key: "category",
+    label: "分类",
+    example: "收纳用品"
+  },
+  {
+    key: "image_url",
+    label: "图片 URL",
+    example: "https://example.com/product.jpg"
+  },
+  {
+    key: "description",
+    label: "产品说明",
     example: "产品说明"
   },
   {
@@ -135,6 +152,7 @@ export default function AdminProductsPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
   const [page, setPage] = useState(1);
+  const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [productToDelete, setProductToDelete] =
     useState<ProductListRow | null>(null);
@@ -240,6 +258,7 @@ export default function AdminProductsPage() {
 
       setSuccessMessage(`产品 ${created.product_code} 新增成功。`);
       setProductForm(initialProductForm);
+      setCreateOpen(false);
       await loadPageData();
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
@@ -253,7 +272,9 @@ export default function AdminProductsPage() {
       productId: product.id,
       productCode: product.product_code,
       name: product.name,
+      category: product.category ?? "",
       description: product.description ?? "",
+      productImageUrl: product.product_image_url ?? "",
       status: toEditableStatus(product.status)
     });
     setErrorMessage("");
@@ -454,17 +475,16 @@ export default function AdminProductsPage() {
         </div>
       ) : null}
 
-      <section className="formPanel">
-        <div className="sectionHeader">
-          <div>
-            <p className="eyebrow">新增产品</p>
-            <h3>创建产品基础资料</h3>
-          </div>
-        </div>
-
+      <Modal
+        open={createOpen}
+        eyebrow="新增产品"
+        title="创建产品基础资料"
+        maxWidth="lg"
+        onClose={() => setCreateOpen(false)}
+      >
         <form className="dataForm productForm" onSubmit={submitCreateProduct}>
           <label>
-            产品编码
+            SPU
             <input
               value={productForm.productCode}
               onChange={(event) =>
@@ -496,6 +516,21 @@ export default function AdminProductsPage() {
           </label>
 
           <label>
+            分类
+            <input
+              value={productForm.category}
+              onChange={(event) =>
+                setProductForm((current) => ({
+                  ...current,
+                  category: event.target.value
+                }))
+              }
+              disabled={creating}
+              placeholder="例如 收纳用品"
+            />
+          </label>
+
+          <label>
             状态
             <select
               value={productForm.status}
@@ -510,6 +545,21 @@ export default function AdminProductsPage() {
               <option value="active">启用</option>
               <option value="inactive">停用</option>
             </select>
+          </label>
+
+          <label className="fullField">
+            图片 URL
+            <input
+              value={productForm.productImageUrl}
+              onChange={(event) =>
+                setProductForm((current) => ({
+                  ...current,
+                  productImageUrl: event.target.value
+                }))
+              }
+              disabled={creating}
+              placeholder="例如 https://example.com/product.jpg"
+            />
           </label>
 
           <label className="fullField">
@@ -533,7 +583,7 @@ export default function AdminProductsPage() {
             </button>
           </div>
         </form>
-      </section>
+      </Modal>
 
       {editForm ? (
         <Modal
@@ -564,6 +614,25 @@ export default function AdminProductsPage() {
             </label>
 
             <label>
+              分类
+              <input
+                value={editForm.category}
+                onChange={(event) =>
+                  setEditForm((current) =>
+                    current
+                      ? {
+                          ...current,
+                          category: event.target.value
+                        }
+                      : current
+                  )
+                }
+                disabled={updating}
+                placeholder="例如 收纳用品"
+              />
+            </label>
+
+            <label>
               状态
               <select
                 value={editForm.status}
@@ -582,6 +651,25 @@ export default function AdminProductsPage() {
                 <option value="active">启用</option>
                 <option value="inactive">停用</option>
               </select>
+            </label>
+
+            <label className="fullField">
+              图片 URL
+              <input
+                value={editForm.productImageUrl}
+                onChange={(event) =>
+                  setEditForm((current) =>
+                    current
+                      ? {
+                          ...current,
+                          productImageUrl: event.target.value
+                        }
+                      : current
+                  )
+                }
+                disabled={updating}
+                placeholder="例如 https://example.com/product.jpg"
+              />
             </label>
 
             <label className="fullField">
@@ -640,16 +728,23 @@ export default function AdminProductsPage() {
             <button type="button" onClick={refreshAll}>
               {loading ? "正在刷新..." : "刷新列表"}
             </button>
+            <button
+              className="primaryButton"
+              type="button"
+              onClick={() => setCreateOpen(true)}
+            >
+              新增产品
+            </button>
           </div>
         </div>
 
         <div className="listToolbar productToolbar">
           <label>
-            搜索产品名称 / 编码
+            搜索 SPU / 产品名称
             <input
               value={searchKeyword}
               onChange={(event) => setSearchKeyword(event.target.value)}
-              placeholder="输入产品名称或产品编码"
+              placeholder="输入 SPU 或产品名称"
             />
           </label>
 
@@ -699,8 +794,10 @@ export default function AdminProductsPage() {
                       onChange={toggleAllFilteredProducts}
                     />
                   </th>
-                  <th>产品编码</th>
+                  <th>产品图片</th>
+                  <th>SPU</th>
                   <th>产品名称</th>
+                  <th>分类</th>
                   <th>产品状态</th>
                   <th>关联 SKU 数量</th>
                   <th>创建时间</th>
@@ -724,8 +821,15 @@ export default function AdminProductsPage() {
                           onChange={() => toggleProductSelection(product.id)}
                         />
                       </td>
+                      <td>
+                        <ImageCell
+                          src={product.product_image_url}
+                          alt={`${product.product_code} ${product.name}`}
+                        />
+                      </td>
                       <td>{product.product_code}</td>
                       <td>{product.name}</td>
+                      <td>{product.category ?? "-"}</td>
                       <td>
                         <span className={`tablePill product-status-${product.status}`}>
                           {getStatusLabel(product.status)}
@@ -844,7 +948,7 @@ export default function AdminProductsPage() {
       <BulkImportDialog<ProductImportInput>
         open={importOpen}
         title="产品批量导入"
-        description="请按模板填写产品编码、产品名称、备注和状态。上传后会先逐行校验，确认导入后才写入 Supabase。"
+        description="请按模板填写 SPU、产品名称、分类、图片 URL、产品说明和状态。上传后会先逐行校验，重复 SPU 默认跳过不创建，确认导入后才写入 Supabase。"
         templateFileName="products-import-template.csv"
         fields={productImportFields}
         validateRows={validateProductImportRows}

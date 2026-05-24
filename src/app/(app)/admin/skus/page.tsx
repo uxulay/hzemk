@@ -201,6 +201,77 @@ function getProductOptionLabel(product: SkuProductOption) {
   return `${product.product_code} / ${product.name}${statusText}`;
 }
 
+type ProductSearchSelectProps = {
+  products: SkuProductOption[];
+  value: string;
+  disabled?: boolean;
+  required?: boolean;
+  onChange: (productId: string) => void;
+};
+
+function ProductSearchSelect({
+  products,
+  value,
+  disabled = false,
+  required = false,
+  onChange
+}: ProductSearchSelectProps) {
+  const [keyword, setKeyword] = useState("");
+  const selectedProduct = products.find((product) => product.id === value);
+  const normalizedKeyword = keyword.trim().toLowerCase();
+  const filteredProducts = normalizedKeyword
+    ? products.filter(
+        (product) =>
+          product.product_code.toLowerCase().includes(normalizedKeyword) ||
+          product.name.toLowerCase().includes(normalizedKeyword)
+      )
+    : products.slice(0, 8);
+
+  return (
+    <div className="fieldBlock">
+      <span>所属产品{required ? "（成品必选）" : ""}</span>
+      <input
+        value={keyword}
+        onChange={(event) => setKeyword(event.target.value)}
+        disabled={disabled}
+        placeholder={
+          selectedProduct
+            ? `当前：${getProductOptionLabel(selectedProduct)}`
+            : "搜索 SPU 或产品名称"
+        }
+      />
+      {selectedProduct ? (
+        <div className="selectedPickerValue">
+          <strong>{getProductOptionLabel(selectedProduct)}</strong>
+          <button type="button" onClick={() => onChange("")} disabled={disabled}>
+            清除
+          </button>
+        </div>
+      ) : null}
+      <div className="searchPickerList">
+        {filteredProducts.length === 0 ? (
+          <p className="tableHint">没有匹配的产品。</p>
+        ) : (
+          filteredProducts.map((product) => (
+            <button
+              type="button"
+              key={product.id}
+              className={product.id === value ? "active" : undefined}
+              onClick={() => {
+                onChange(product.id);
+                setKeyword("");
+              }}
+              disabled={disabled}
+            >
+              {getProductOptionLabel(product)}
+            </button>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 function getInventoryHref(skuType: string) {
   return skuType === "material" ? "/inventory/materials" : "/inventory/products";
 }
@@ -231,6 +302,7 @@ export default function AdminSkusPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedSkuIds, setSelectedSkuIds] = useState<string[]>([]);
   const [page, setPage] = useState(1);
+  const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [skuToDelete, setSkuToDelete] = useState<SkuListRow | null>(null);
   const [loading, setLoading] = useState(true);
@@ -360,6 +432,7 @@ export default function AdminSkusPage() {
 
       setSuccessMessage(`SKU ${created.sku_code} 新增成功。`);
       setSkuForm(initialSkuForm);
+      setCreateOpen(false);
       await loadPageData();
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
@@ -574,14 +647,13 @@ export default function AdminSkusPage() {
         </div>
       ) : null}
 
-      <section className="formPanel">
-        <div className="sectionHeader">
-          <div>
-            <p className="eyebrow">新增 SKU</p>
-            <h3>创建 SKU 基础资料</h3>
-          </div>
-        </div>
-
+      <Modal
+        open={createOpen}
+        eyebrow="新增 SKU"
+        title="创建 SKU 基础资料"
+        maxWidth="lg"
+        onClose={() => setCreateOpen(false)}
+      >
         <form className="dataForm skuForm" onSubmit={submitCreateSku}>
           <label>
             SKU 编码
@@ -633,27 +705,18 @@ export default function AdminSkusPage() {
             </select>
           </label>
 
-          <label>
-            所属产品
-            <select
-              value={skuForm.productId}
-              onChange={(event) =>
-                setSkuForm((current) => ({
-                  ...current,
-                  productId: event.target.value
-                }))
-              }
-              disabled={creating}
-              required={skuForm.skuType === "finished_good"}
-            >
-              <option value="">不选择产品</option>
-              {products.map((product) => (
-                <option key={product.id} value={product.id}>
-                  {getProductOptionLabel(product)}
-                </option>
-              ))}
-            </select>
-          </label>
+          <ProductSearchSelect
+            products={products}
+            value={skuForm.productId}
+            disabled={creating}
+            required={skuForm.skuType === "finished_good"}
+            onChange={(productId) =>
+              setSkuForm((current) => ({
+                ...current,
+                productId
+              }))
+            }
+          />
 
           <label>
             单位
@@ -709,7 +772,7 @@ export default function AdminSkusPage() {
             </button>
           </div>
         </form>
-      </section>
+      </Modal>
 
       {editForm ? (
         <Modal
@@ -760,31 +823,22 @@ export default function AdminSkusPage() {
               </span>
             </label>
 
-            <label>
-              所属产品
-              <select
-                value={editForm.productId}
-                onChange={(event) =>
-                  setEditForm((current) =>
-                    current
-                      ? {
-                          ...current,
-                          productId: event.target.value
-                        }
-                      : current
-                  )
-                }
-                disabled={updating}
-                required={editForm.skuType === "finished_good"}
-              >
-                <option value="">不选择产品</option>
-                {products.map((product) => (
-                  <option key={product.id} value={product.id}>
-                    {getProductOptionLabel(product)}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <ProductSearchSelect
+              products={products}
+              value={editForm.productId}
+              disabled={updating}
+              required={editForm.skuType === "finished_good"}
+              onChange={(productId) =>
+                setEditForm((current) =>
+                  current
+                    ? {
+                        ...current,
+                        productId
+                      }
+                    : current
+                )
+              }
+            />
 
             <label>
               单位
@@ -878,6 +932,13 @@ export default function AdminSkusPage() {
             </button>
             <button type="button" onClick={refreshAll}>
               {loading ? "正在刷新..." : "刷新列表"}
+            </button>
+            <button
+              className="primaryButton"
+              type="button"
+              onClick={() => setCreateOpen(true)}
+            >
+              新增 SKU
             </button>
           </div>
         </div>
