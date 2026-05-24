@@ -557,6 +557,157 @@ button:disabled {
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
+.replenishmentCreateForm {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.createMetaGrid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.detailActionBar {
+  align-items: center;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  display: flex;
+  justify-content: space-between;
+  padding: 14px;
+}
+
+.detailActionBar .rowActions {
+  flex-wrap: wrap;
+}
+
+.replenishmentDetailTable {
+  min-width: 1320px;
+}
+
+.tableNumberInput,
+.tableTextInput {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  min-height: 36px;
+  padding: 0 10px;
+  width: 100%;
+}
+
+.tableNumberInput {
+  max-width: 140px;
+}
+
+.detailSummaryBar {
+  align-items: center;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  justify-content: flex-end;
+  padding: 14px;
+}
+
+.detailSummaryBar span {
+  color: var(--muted);
+  display: inline-flex;
+  gap: 8px;
+}
+
+.detailSummaryBar strong {
+  color: var(--text);
+}
+
+.dangerText {
+  color: var(--danger) !important;
+}
+
+.importResultGrid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 12px;
+}
+
+.importResultGrid span {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.importResultGrid strong {
+  font-size: 15px;
+}
+
+.importNoteList,
+.importFailureList {
+  margin-top: 12px;
+}
+
+.importNoteList span {
+  color: var(--warning);
+}
+
+.skuPickerSearch {
+  color: var(--muted);
+  display: grid;
+  font-size: 13px;
+  gap: 8px;
+}
+
+.skuPickerSearch input {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--text);
+  min-height: 42px;
+  padding: 0 12px;
+  width: 100%;
+}
+
+.skuPickerLayout {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 320px minmax(0, 1fr);
+  margin-top: 16px;
+}
+
+.skuPickerProducts {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: 8px;
+  max-height: 520px;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+.skuPickerProductButton {
+  background: var(--surface);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  cursor: pointer;
+  padding: 10px;
+  text-align: left;
+}
+
+.skuPickerProductButton.active,
+.skuPickerProductButton:hover {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+}
+
+.skuPickerSkus {
+  min-width: 0;
+}
+
+.skuPickerSkuTable {
+  min-width: 900px;
+}
+
 .panel {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -2019,7 +2170,9 @@ button:disabled {
   .debugGrid,
   .dataForm,
   .listToolbar,
-  .detailGrid {
+  .detailGrid,
+  .createMetaGrid,
+  .skuPickerLayout {
     grid-template-columns: 1fr;
   }
 

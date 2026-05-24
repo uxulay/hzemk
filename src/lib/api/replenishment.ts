@@ -149,6 +149,27 @@ export type FbaReplenishmentImportInput = {
   remark: string | null;
 };
 
+export type FbaReplenishmentSkuOption = {
+  id: string;
+  product_id: string | null;
+  sku_code: string;
+  sku_name: string;
+  sku_type: string;
+  amazon_sku: string | null;
+  fnsku: string | null;
+  unit: string;
+  specs: string | null;
+  status: string;
+  product: {
+    id: string;
+    product_code: string;
+    name: string;
+    product_image_url: string | null;
+  } | null;
+  current_stock: number;
+  has_active_bom: boolean;
+};
+
 type MaybeRelation<T> = T | T[] | null;
 
 type RawFbaReplenishmentRequest = Omit<
@@ -206,12 +227,31 @@ type ImportWarehouseRow = {
   status?: string;
 };
 
+type RawFbaReplenishmentSkuOption = Omit<
+  FbaReplenishmentSkuOption,
+  "product" | "current_stock" | "has_active_bom"
+> & {
+  product: MaybeRelation<NonNullable<FbaReplenishmentSkuOption["product"]>>;
+};
+
+type InventoryStockRow = {
+  sku_id: string;
+  item_type: string | null;
+  quantity_on_hand: number | string | null;
+};
+
+type ActiveBomRow = {
+  product_sku_id: string;
+};
+
 const importPriorities: FbaRequestPriority[] = [
   "low",
   "normal",
   "high",
   "urgent"
 ];
+
+const finishedSkuTypes = ["finished_good", "finished_product"];
 
 const importAmazonSites = new Set([
   "US",
@@ -388,6 +428,23 @@ function singleRelation<T>(value: MaybeRelation<T>): T | null {
   return value;
 }
 
+function isFinishedSkuType(value: string | null | undefined) {
+  return Boolean(value && finishedSkuTypes.includes(value));
+}
+
+function normalizeFbaSkuOption(
+  sku: RawFbaReplenishmentSkuOption,
+  stockBySkuId: Map<string, number>,
+  activeBomSkuIds: Set<string>
+): FbaReplenishmentSkuOption {
+  return {
+    ...sku,
+    product: singleRelation(sku.product),
+    current_stock: stockBySkuId.get(sku.id) ?? 0,
+    has_active_bom: activeBomSkuIds.has(sku.id)
+  };
+}
+
 function normalizeFbaReplenishmentRequest(
   request: RawFbaReplenishmentRequest
 ): FbaReplenishmentRequest {
@@ -525,14 +582,18 @@ export async function createFbaReplenishmentDocument(
 
   const invalidQuantityItem = normalizedItems.find(
     (item) =>
-      !Number.isInteger(item.requestedQuantity) || item.requestedQuantity <= 0
+      !Number.isFinite(item.requestedQuantity) || item.requestedQuantity <= 0
   );
 
   if (invalidQuantityItem) {
-    throw new Error("SKU 备货数量必须是正整数，不能是负数或小数。");
+    throw new Error("SKU 备货数量必须是大于 0 的数字。");
   }
 
   const firstItem = normalizedItems[0];
+  const totalRequestedQuantity = normalizedItems.reduce(
+    (sum, item) => sum + item.requestedQuantity,
+    0
+  );
   const supabase = getSupabaseClient();
   const { data, error } = await withTimeout(
     supabase
@@ -543,7 +604,7 @@ export async function createFbaReplenishmentDocument(
         sku_id: firstItem.skuId,
         target_warehouse_id: input.targetWarehouseId,
         fba_warehouse_code: input.fbaWarehouseCode?.trim() || null,
-        requested_quantity: firstItem.requestedQuantity,
+        requested_quantity: totalRequestedQuantity,
         target_ship_date: input.targetShipDate || null,
         priority: input.priority || "normal",
         status: "submitted",
@@ -588,6 +649,85 @@ export async function createFbaReplenishmentDocument(
   }
 
   return created;
+}
+
+export async function getFbaReplenishmentSkuOptions(): Promise<
+  FbaReplenishmentSkuOption[]
+> {
+  const supabase = getSupabaseClient();
+  const [skuResult, stockResult, bomResult] = await Promise.all([
+    withTimeout(
+      supabase
+        .from("skus")
+        .select(
+          `
+            id,
+            product_id,
+            sku_code,
+            sku_name,
+            sku_type,
+            amazon_sku,
+            fnsku,
+            unit,
+            specs,
+            status,
+            product:products!skus_product_id_fkey (
+              id,
+              product_code,
+              name,
+              product_image_url
+            )
+          `
+        )
+        .in("sku_type", finishedSkuTypes)
+        .order("sku_code", { ascending: true }),
+      "读取可备货 SKU"
+    ),
+    withTimeout(
+      supabase
+        .from("inventory_items")
+        .select("sku_id, item_type, quantity_on_hand"),
+      "读取成品库存"
+    ),
+    withTimeout(
+      supabase
+        .from("bom_headers")
+        .select("product_sku_id")
+        .eq("status", "active"),
+      "读取启用 BOM"
+    )
+  ]);
+
+  if (skuResult.error) {
+    throw formatSupabaseError("读取可备货 SKU", skuResult.error);
+  }
+
+  if (stockResult.error) {
+    throw formatSupabaseError("读取成品库存", stockResult.error);
+  }
+
+  if (bomResult.error) {
+    throw formatSupabaseError("读取启用 BOM", bomResult.error);
+  }
+
+  const stockBySkuId = new Map<string, number>();
+
+  ((stockResult.data ?? []) as InventoryStockRow[])
+    .filter((row) => isFinishedSkuType(row.item_type))
+    .forEach((row) => {
+      stockBySkuId.set(
+        row.sku_id,
+        (stockBySkuId.get(row.sku_id) ?? 0) + Number(row.quantity_on_hand ?? 0)
+      );
+    });
+
+  const activeBomSkuIds = new Set(
+    ((bomResult.data ?? []) as ActiveBomRow[]).map((row) => row.product_sku_id)
+  );
+
+  return ((skuResult.data ?? []) as unknown as RawFbaReplenishmentSkuOption[])
+    .filter((sku) => isFinishedSkuType(sku.sku_type))
+    .map((sku) => normalizeFbaSkuOption(sku, stockBySkuId, activeBomSkuIds));
 }
 
 export async function validateFbaReplenishmentImportRows(

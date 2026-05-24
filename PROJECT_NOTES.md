@@ -37,8 +37,8 @@
 | --- | --- | --- |
 | `/dashboard` | 已完成第一版 | 后台首页数据看板。读取待排产 FBA 备货需求、生产中任务、缺料物料、待采购/待到货物料、待入库采购单、有库存成品 SKU、原材料低库存，并展示最新备货需求、进行中生产任务、缺料提醒、最近库存流水。 |
 | `/debug/master-data` | 已完成调试页 | Supabase 基础资料读取测试页。读取角色、产品、成品 SKU、原材料 SKU、供应商、仓库。这个页面用于排查 Supabase 连接、anon key、RLS 策略问题，后续不要删除。 |
-| `/replenishment` | 已完成列表第一版 | FBA 备货需求列表。支持按状态筛选、SKU 搜索、查看详情。编辑和删除按钮目前禁用，当前阶段不做修改和删除。 |
-| `/replenishment/new` | 已完成创建第一版 | 运营创建 FBA 备货需求。读取产品、成品 SKU、仓库，提交后写入 `fba_replenishment_requests`，状态为 `submitted`。当前还没有真实登录，所以 `requested_by` 暂时写 `null`。 |
+| `/replenishment` | 已完成列表和创建升级版 | FBA 备货需求列表。支持按状态筛选、SKU 搜索、查看详情；右上角“+ 创建备货单”打开创建弹窗，支持 CSV 模板导入多 SKU 明细、单个添加 SKU、明细编辑和提交整张备货单。编辑和删除按钮目前禁用，当前阶段不做修改和删除。 |
+| `/replenishment/new` | 过渡提示页 | 当前引导到 `/replenishment` 创建整张 FBA 备货单，避免保留两套创建入口。 |
 | `/production/planning` | 已完成排产第一版 | 厂长查看已提交/已接单的 FBA 备货需求，可以接单、拒绝、创建生产任务。创建生产任务时会按 BOM 自动生成物料需求，并把 FBA 备货需求状态更新为 `in_production`。 |
 | `/production/orders` | 已完成跟踪和领料第一版 | 生产任务列表。显示 FBA 备货需求数量、计划生产数量、超量生产数量、已入库数量、待入库数量、物料状态、领料状态、生产状态。支持查看详情、确认领料弹窗、自动扣原材料库存、写 `material_out` 库存流水，并把生产任务更新为 `in_progress`。 |
 | `/bom` | 已完成管理和批量维护第一版 | BOM 管理页面。读取 `bom_headers` 和 `bom_items`，支持新增 BOM、查看明细、添加原材料、编辑 BOM 明细的单位用量/损耗率/备注、启用/停用 BOM、CSV 批量导入、删除明细、删除/批量删除或停用 BOM，并在删除前检查生产任务引用。 |
@@ -103,37 +103,42 @@
 
 ### 4.1 运营提交 FBA 备货需求
 
-已完成单条创建和批量导入第一版。
+已完成“一张备货单 + 多个 SKU 明细”创建流程，并在 2026-05-24 优化为以 CSV 批量导入明细为主、弹窗单个添加为辅。
 
 入口：
 
-- `/replenishment`：FBA 备货需求列表。
-- `/replenishment/new`：创建备货需求，支持“单条创建”和“批量导入”。
+- `/replenishment`：FBA 备货需求列表，右上角“+ 创建备货单”打开创建弹窗。
+- `/replenishment/new`：当前保留为过渡提示页，引导到 `/replenishment` 创建整张备货单。
 
 当前逻辑：
 
-- 侧边栏中“FBA 备货”不再显示为不可点击分组标题，而是直接露出“创建备货需求”和“FBA 备货需求”两个入口。
-- “创建备货需求”在侧边栏中是绿色高亮主入口，方便业务员快速下备货需求单。
-- `/replenishment` 页面右上角有绿色“+ 创建备货需求”按钮，点击进入 `/replenishment/new`。
-- `/replenishment/new` 使用 Tab 分为“单条创建”和“批量导入”。
-- 单条创建保留原有逻辑：运营选择产品、成品 SKU、亚马逊站点、目标 FBA 仓库、FBA 仓库代码、备货数量、期望完成日期、优先级和备注。
-- 单条创建和批量导入都会写入 `fba_replenishment_requests`。
-- 单条创建和批量导入都会自动生成 `request_no`。
+- 侧边栏主入口为“FBA 备货需求”，直接进入 `/replenishment`。
+- `/replenishment` 页面右上角有绿色“+ 创建备货单”按钮。
+- 创建弹窗顶部是备货单基础信息：备货单号提交时自动生成、需求人显示当前模拟登录用户、需求日期默认今天、目的仓库、期望发货日期和备注。
+- 创建弹窗下方只显示已经导入或添加成功的 SKU 明细，不再在主页面直接展开所有产品和 SKU。
+- 明细区按钮顺序为：下载导入模板、批量导入、添加产品/SKU、清空明细。批量导入是主功能。
+- CSV 模板当前采用中文表头：`SKU编码`、`本次备货数量`、`备注`；程序也兼容 `sku_code`、`quantity`、`remark` 等英文表头。
+- 点击“下载导入模板”会下载 CSV 示例，示例行是 `100001,300,1米黑色备货` 和 `100002,500,2米黑色备货`。
+- 点击“批量导入”上传 CSV 后，页面会按 SKU 编码匹配系统里的成品 SKU，自动带出产品图片、产品名称/SPU、SKU 名称、SKU 编码、规格、当前成品库存和 BOM 提示。
+- 批量导入会在写入数据库前先生成当前备货单明细，用户确认无误后再提交整张备货单。
+- 同一个 CSV 里重复 SKU 会自动合并数量并提示；如果导入 SKU 已经存在于当前明细，也会自动合并数量并提示。
+- 有错误行时，成功行会先加入当前明细，错误行会在弹窗展示行号、SKU 编码和错误原因，并支持下载错误报告 CSV。
+- 单个添加作为备用功能：点击“添加产品/SKU”打开“选择产品和 SKU”弹窗，顶部支持按产品名称、SPU、SKU 名称、SKU 编码、规格搜索，左侧选产品，右侧勾选 SKU 并填写数量后确认添加。
+- 主页面明细表格字段：产品图片、产品名称/SPU、SKU 名称、SKU 编码、规格/米数、当前成品库存、本次备货数量、备注、操作。
+- 明细表格支持直接修改本次备货数量和备注，支持删除单行、清空全部，并在底部显示 SKU 种类数量和备货总数量。
+- 提交整张备货单时写入 `fba_replenishment_requests` 主表和 `fba_replenishment_request_items` 明细表。
+- 主表的 `requested_quantity` 现在保存明细总数量，兼容仍读取主表数量的旧页面；主表的 `sku_id` 仍使用第一条明细 SKU 作为兼容字段。
 - 新需求状态为 `submitted`。
-- 亚马逊站点当前写进 `notes` 文本里，不是单独字段。
+- 亚马逊站点当前仍按默认 `US` 写进 `notes` 文本里，不是单独字段。
+- 优先级当前仍按默认 `normal` 写入。
 - 当前还没有真实登录，所以 `requested_by` 暂时为空。
-- 批量导入支持 CSV 文件，上传后先预览和校验，不会直接写入数据库。
-- CSV 模板字段：`sku_code`、`target_warehouse_code`、`fba_warehouse_code`、`requested_quantity`、`expected_date`、`priority`、`remark`、`amazon_site`。
-- 批量导入校验：`sku_code` 必填且必须存在于 `skus`，SKU 必须是成品；`target_warehouse_code` 如果填写必须存在于 `warehouses`；`requested_quantity` 必填且大于 0；`expected_date` 如果填写必须是 `YYYY-MM-DD`；`priority` 只能是 `low`、`normal`、`high`、`urgent`；同一个 CSV 里完全重复的行会提示检查。
-- 点击“确认导入”后，才会逐行调用现有创建逻辑写入 `fba_replenishment_requests`，并显示成功数量和失败数量。
+- 批量导入校验：`SKU编码` 必填、`本次备货数量` 必填且必须大于 0、SKU 编码必须存在于系统成品 SKU、可选期望发货日期必须是 `YYYY-MM-DD`、可选目的仓库必须匹配仓库编码或仓库名称。
+- 如果导入 SKU 暂未找到启用 BOM，当前不阻止创建备货单，但会提示后续排产算料前需要补齐 BOM。
+- 厂长排产和生产任务仍保持“一张生产任务 + 多个 SKU 明细”，不要改成一个 SKU 一张生产任务。
 
 本次修改文件：
 
-- `src/lib/navigation.ts`
-- `src/components/layout/sidebar.tsx`
 - `src/app/(app)/replenishment/page.tsx`
-- `src/app/(app)/replenishment/new/page.tsx`
-- `src/app/(app)/replenishment/new/fba-replenishment-bulk-import-panel.tsx`
 - `src/lib/api/replenishment.ts`
 - `src/app/globals.css`
 - `PROJECT_NOTES.md`
@@ -142,21 +147,22 @@
 
 - 运行 `npm run typecheck`。
 - 运行 `npm run build`。
-- 打开 `/replenishment`，确认右上角有绿色“+ 创建备货需求”按钮，点击后进入 `/replenishment/new`。
-- 打开 `/replenishment/new`，确认可以在“单条创建”和“批量导入”之间切换。
-- 在“单条创建”里按原流程提交一条，确认还能正常创建。
-- 在“批量导入”里点击“下载模板”，填写 CSV 后上传，确认页面先显示预览和每行校验结果。
-- 上传包含错误数据的 CSV，例如不存在的 `sku_code`、数量为 0、错误日期、错误优先级或完全重复行，确认不能导入。
-- 上传全部校验通过的 CSV，点击“确认导入”，确认显示成功数量和失败数量。
-- 导入成功后进入 `/replenishment`，确认列表能看到新创建的备货需求。
+- 打开 `/replenishment`，点击“+ 创建备货单”，确认弹窗顶部显示备货单号、需求人、需求日期、目的仓库、期望发货日期和备注。
+- 点击“下载导入模板”，确认下载的 CSV 表头是 `SKU编码`、`本次备货数量`、`备注`。
+- 填写真实 SKU 编码和数量后点击“批量导入”，确认成功行进入主页面明细表格，且重复 SKU 会自动合并。
+- 上传包含错误数据的 CSV，例如空 SKU、空数量、数量为 0、数量为负数、不存在的 SKU、错误日期或不存在的仓库，确认弹窗展示错误行号和原因。
+- 在导入弹窗点击“下载错误报告”，确认能下载失败行 CSV。
+- 点击“添加产品/SKU”，确认可以搜索、左侧选产品、右侧勾选 SKU 并填写数量，确认添加后进入明细表格。
+- 在明细表格修改数量和备注，删除单行，清空明细，确认底部 SKU 种类数量和备货总数量同步变化。
+- 提交前不选目的仓库、没有明细、数量为空或数量小于等于 0，确认页面会阻止提交并提示。
+- 提交成功后回到 `/replenishment` 列表，确认能看到新备货单，详情里能看到多 SKU 明细。
 
 如果批量导入没生效，优先检查：
 
-- CSV 表头是否和模板一致，尤其是 `sku_code` 和 `requested_quantity`。
+- CSV 表头是否是 `SKU编码`、`本次备货数量`、`备注`，或兼容英文表头 `sku_code`、`quantity`、`remark`。
 - `skus.sku_code` 是否真实存在，且对应 SKU 是否为成品 SKU。
-- `warehouses.warehouse_code` 是否真实存在。
-- `priority` 是否只填写 `low`、`normal`、`high`、`urgent`。
-- Supabase RLS 是否已经允许读取 `skus`、`warehouses`，并允许插入 `fba_replenishment_requests`。
+- 如果填写了目的仓库，确认仓库编码或名称在 `warehouses` 里真实存在。
+- Supabase RLS 是否已经允许读取 `skus`、`products`、`warehouses`、`inventory_items`、`bom_headers`，并允许插入 `fba_replenishment_requests` 和 `fba_replenishment_request_items`。
 - `.env.local` 里的 `NEXT_PUBLIC_SUPABASE_URL` 和 `NEXT_PUBLIC_SUPABASE_ANON_KEY` 是否正确。
 - 浏览器控制台或页面错误提示里是否有更具体的 Supabase 报错。
 
