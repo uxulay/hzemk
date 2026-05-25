@@ -1645,12 +1645,31 @@ export async function deleteSuppliersByIds(
     const label = `${supplier.supplier_code} / ${supplier.name}`;
 
     try {
-      const hasPurchaseOrders = await hasReference(
-        "purchase_orders",
-        "supplier_id",
-        supplier.id,
-        "检查供应商采购单引用"
-      );
+      const [hasPurchaseOrders, hasDefaultMaterials] = await Promise.all([
+        hasReference(
+          "purchase_orders",
+          "supplier_id",
+          supplier.id,
+          "检查供应商采购单引用"
+        ),
+        hasReference(
+          "skus",
+          "default_supplier_id",
+          supplier.id,
+          "检查供应商默认辅料引用"
+        )
+      ]);
+
+      if (hasDefaultMaterials) {
+        results.push(
+          actionBlocked(
+            supplier.id,
+            label,
+            "该供应商已被辅料设置为默认供应商，不能删除，可改为停用。"
+          )
+        );
+        continue;
+      }
 
       if (hasPurchaseOrders) {
         results.push(

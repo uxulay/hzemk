@@ -1562,6 +1562,207 @@ button:disabled {
   margin-top: 18px;
 }
 
+.generatedOrderActions {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.generatedOrderActions div {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.generatedOrderActions span {
+  color: var(--text);
+  font-weight: 800;
+}
+
+.generatedOrderActions button {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+.purchaseOrderToolbar {
+  grid-template-columns: minmax(240px, 360px) auto;
+}
+
+.purchaseImagePreviewShell {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-top: 18px;
+  overflow-x: auto;
+  padding: 18px;
+}
+
+.purchaseImagePaper {
+  background: #ffffff;
+  color: #111827;
+  display: grid;
+  gap: 18px;
+  margin: 0 auto;
+  padding: 28px;
+  width: 760px;
+}
+
+.purchaseImageHeader {
+  align-items: flex-end;
+  border-bottom: 2px solid #111827;
+  display: flex;
+  justify-content: space-between;
+  padding-bottom: 16px;
+}
+
+.purchaseImageHeader p,
+.purchaseImageHeader h2,
+.purchaseImageBlock h3 {
+  margin: 0;
+}
+
+.purchaseImageHeader p {
+  color: #374151;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.purchaseImageHeader h2 {
+  font-size: 34px;
+  letter-spacing: 0;
+  line-height: 1.2;
+}
+
+.purchaseImageNo {
+  display: grid;
+  gap: 6px;
+  text-align: right;
+}
+
+.purchaseImageNo span,
+.purchaseImageMeta span,
+.purchaseImageInfoGrid span,
+.purchaseImageTotals span,
+.purchaseImageFooter span {
+  color: #6b7280;
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.purchaseImageNo strong {
+  font-size: 15px;
+}
+
+.purchaseImageMeta,
+.purchaseImageInfoGrid,
+.purchaseImageTotals,
+.purchaseImageFooter {
+  display: grid;
+  gap: 10px;
+}
+
+.purchaseImageMeta {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.purchaseImageInfoGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.purchaseImageMeta div,
+.purchaseImageInfoGrid div,
+.purchaseImageTotals div,
+.purchaseImageFooter div {
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  min-height: 56px;
+  padding: 10px;
+}
+
+.purchaseImageMeta strong,
+.purchaseImageInfoGrid strong,
+.purchaseImageTotals strong,
+.purchaseImageFooter strong {
+  display: block;
+  font-size: 13px;
+  line-height: 1.5;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.purchaseImageBlock {
+  display: grid;
+  gap: 10px;
+}
+
+.purchaseImageBlock h3 {
+  font-size: 15px;
+}
+
+.purchaseImageTable {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.purchaseImageTable th,
+.purchaseImageTable td {
+  border: 1px solid #d1d5db;
+  font-size: 10px;
+  line-height: 1.45;
+  padding: 7px 6px;
+  text-align: left;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+.purchaseImageTable th {
+  background: #f3f4f6;
+  color: #374151;
+  font-weight: 800;
+}
+
+.purchaseImageTable th:first-child,
+.purchaseImageTable td:first-child {
+  text-align: center;
+  width: 36px;
+}
+
+.purchaseImageTable th:nth-child(5),
+.purchaseImageTable td:nth-child(5) {
+  width: 44px;
+}
+
+.purchaseImageTable th:nth-child(6),
+.purchaseImageTable td:nth-child(6),
+.purchaseImageTable th:nth-child(7),
+.purchaseImageTable td:nth-child(7),
+.purchaseImageTable th:nth-child(8),
+.purchaseImageTable td:nth-child(8) {
+  text-align: right;
+  width: 62px;
+}
+
+.purchaseImageTotals {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.purchaseImageTotals strong {
+  font-size: 18px;
+}
+
+.purchaseImageFooter {
+  grid-template-columns: 1.5fr 1fr 1fr;
+}
+
 .inboundForm {
   margin-top: 18px;
 }

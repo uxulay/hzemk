@@ -15,12 +15,14 @@ import {
 } from "@/lib/api/bulk-management";
 import {
   createSupplier,
+  getSupplierDefaultMaterials,
   getSupplierPurchaseOrders,
   getSupplierStats,
   getSuppliers,
   toggleSupplierStatus,
   updateSupplier,
   type SupplierListRow,
+  type SupplierDefaultMaterialRow,
   type SupplierPurchaseOrderRow,
   type SupplierStats,
   type SupplierStatus
@@ -71,7 +73,8 @@ const initialStats: SupplierStats = {
   totalSuppliers: 0,
   activeSuppliers: 0,
   inactiveSuppliers: 0,
-  suppliersWithPurchaseOrders: 0
+  suppliersWithPurchaseOrders: 0,
+  suppliersWithDefaultMaterials: 0
 };
 
 const supplierImportFields: CsvTemplateField[] = [
@@ -172,6 +175,9 @@ export default function AdminSuppliersPage() {
   const [purchaseOrders, setPurchaseOrders] = useState<
     SupplierPurchaseOrderRow[]
   >([]);
+  const [defaultMaterials, setDefaultMaterials] = useState<
+    SupplierDefaultMaterialRow[]
+  >([]);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedSupplierIds, setSelectedSupplierIds] = useState<string[]>([]);
@@ -181,7 +187,7 @@ export default function AdminSuppliersPage() {
   const [supplierToDelete, setSupplierToDelete] =
     useState<SupplierListRow | null>(null);
   const [loading, setLoading] = useState(true);
-  const [purchaseOrdersLoading, setPurchaseOrdersLoading] = useState(false);
+  const [supplierDetailLoading, setSupplierDetailLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [statusUpdatingId, setStatusUpdatingId] = useState("");
@@ -254,6 +260,7 @@ export default function AdminSuppliersPage() {
       setSelectedSupplierIds([]);
       setSelectedSupplier(null);
       setPurchaseOrders([]);
+      setDefaultMaterials([]);
 
       return [];
     } finally {
@@ -282,7 +289,7 @@ export default function AdminSuppliersPage() {
     );
 
     if (supplierToRefresh) {
-      await openSupplierPurchaseOrders(supplierToRefresh, false);
+      await openSupplierDetail(supplierToRefresh, false);
     }
   };
 
@@ -452,12 +459,12 @@ export default function AdminSuppliersPage() {
     }
   };
 
-  const openSupplierPurchaseOrders = async (
+  const openSupplierDetail = async (
     supplier: SupplierListRow,
     clearMessage = true
   ) => {
     try {
-      setPurchaseOrdersLoading(true);
+      setSupplierDetailLoading(true);
       setErrorMessage("");
 
       if (clearMessage) {
@@ -465,12 +472,19 @@ export default function AdminSuppliersPage() {
       }
 
       setSelectedSupplier(supplier);
-      setPurchaseOrders(await getSupplierPurchaseOrders(supplier.id));
+      const [supplierPurchaseOrders, supplierMaterials] = await Promise.all([
+        getSupplierPurchaseOrders(supplier.id),
+        getSupplierDefaultMaterials(supplier.id)
+      ]);
+
+      setPurchaseOrders(supplierPurchaseOrders);
+      setDefaultMaterials(supplierMaterials);
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setPurchaseOrders([]);
+      setDefaultMaterials([]);
     } finally {
-      setPurchaseOrdersLoading(false);
+      setSupplierDetailLoading(false);
     }
   };
 
@@ -504,6 +518,10 @@ export default function AdminSuppliersPage() {
         <div className="metric">
           <span>已产生采购单的供应商</span>
           <strong>{stats.suppliersWithPurchaseOrders}</strong>
+        </div>
+        <div className="metric">
+          <span>已关联辅料的供应商</span>
+          <strong>{stats.suppliersWithDefaultMaterials}</strong>
         </div>
       </section>
 
@@ -928,6 +946,7 @@ export default function AdminSuppliersPage() {
                   <th>邮箱</th>
                   <th>地址</th>
                   <th>状态</th>
+                  <th>关联辅料数量</th>
                   <th>关联采购单数量</th>
                   <th>创建时间</th>
                   <th>更新时间</th>
@@ -967,6 +986,7 @@ export default function AdminSuppliersPage() {
                           {getSupplierStatusLabel(supplier.status)}
                         </span>
                       </td>
+                      <td>{supplier.default_material_count}</td>
                       <td>{supplier.purchase_order_count}</td>
                       <td>{formatDateTime(supplier.created_at)}</td>
                       <td>{formatDateTime(supplier.updated_at)}</td>
@@ -995,10 +1015,10 @@ export default function AdminSuppliersPage() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => openSupplierPurchaseOrders(supplier)}
-                            disabled={purchaseOrdersLoading}
+                            onClick={() => openSupplierDetail(supplier)}
+                            disabled={supplierDetailLoading}
                           >
-                            查看采购单
+                            查看关联
                           </button>
                           <button
                             className="dangerButton"
@@ -1028,62 +1048,136 @@ export default function AdminSuppliersPage() {
         ) : null}
       </section>
 
-      {purchaseOrdersLoading ? (
-        <div className="debugNotice">正在读取关联采购单...</div>
+      {supplierDetailLoading ? (
+        <div className="debugNotice">正在读取供应商关联资料...</div>
       ) : null}
 
       {selectedSupplier ? (
         <Modal
           open={Boolean(selectedSupplier)}
-          eyebrow="关联采购单"
+          eyebrow="供应商详情"
           title={`${selectedSupplier.supplier_code} / ${selectedSupplier.name}`}
           maxWidth="xl"
           onClose={() => {
             setSelectedSupplier(null);
             setPurchaseOrders([]);
+            setDefaultMaterials([]);
           }}
         >
-
-          {purchaseOrders.length === 0 ? (
-            <div className="emptyState">当前供应商暂无关联采购单</div>
-          ) : (
-            <div className="tableWrap">
-              <table className="dataTable supplierPurchaseTable">
-                <thead>
-                  <tr>
-                    <th>采购单号</th>
-                    <th>状态</th>
-                    <th>下单日期</th>
-                    <th>预计到货日期</th>
-                    <th>创建时间</th>
-                    <th>备注</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {purchaseOrders.map((purchaseOrder) => (
-                    <tr key={purchaseOrder.id}>
-                      <td>
-                        <strong>{purchaseOrder.purchase_order_no}</strong>
-                      </td>
-                      <td>
-                        <span
-                          className={`tablePill purchase-status-${purchaseOrder.status}`}
-                        >
-                          {getPurchaseStatusLabel(purchaseOrder.status)}
-                        </span>
-                      </td>
-                      <td>{formatDateTime(purchaseOrder.ordered_at)}</td>
-                      <td>{formatDate(purchaseOrder.expected_arrival_date)}</td>
-                      <td>{formatDateTime(purchaseOrder.created_at)}</td>
-                      <td className="notesCell">
-                        {getOptionalText(purchaseOrder.notes)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          <div className="detailGrid">
+            <div className="detailItem">
+              <span>关联辅料数量</span>
+              <strong>{defaultMaterials.length}</strong>
             </div>
-          )}
+            <div className="detailItem">
+              <span>关联采购单数量</span>
+              <strong>{purchaseOrders.length}</strong>
+            </div>
+            <div className="detailItem">
+              <span>联系人</span>
+              <strong>{getOptionalText(selectedSupplier.contact_name)}</strong>
+            </div>
+            <div className="detailItem">
+              <span>联系电话</span>
+              <strong>{getOptionalText(selectedSupplier.phone)}</strong>
+            </div>
+          </div>
+
+          <section className="detailSection">
+            <div className="sectionHeader">
+              <div>
+                <p className="eyebrow">默认供应辅料</p>
+                <h3>该供应商关联了哪些辅料</h3>
+              </div>
+            </div>
+            {defaultMaterials.length === 0 ? (
+              <div className="emptyState">当前供应商暂无默认辅料关联</div>
+            ) : (
+              <div className="tableWrap">
+                <table className="dataTable supplierPurchaseTable">
+                  <thead>
+                    <tr>
+                      <th>辅料编码</th>
+                      <th>辅料名称</th>
+                      <th>单位</th>
+                      <th>规格</th>
+                      <th>状态</th>
+                      <th>更新时间</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {defaultMaterials.map((material) => (
+                      <tr key={material.id}>
+                        <td>
+                          <strong>{material.sku_code}</strong>
+                        </td>
+                        <td>{material.sku_name}</td>
+                        <td>{material.unit}</td>
+                        <td className="notesCell">{material.specs ?? "-"}</td>
+                        <td>
+                          <span
+                            className={`tablePill sku-status-${material.status}`}
+                          >
+                            {getSupplierStatusLabel(material.status)}
+                          </span>
+                        </td>
+                        <td>{formatDateTime(material.updated_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          <section className="detailSection">
+            <div className="sectionHeader">
+              <div>
+                <p className="eyebrow">采购记录</p>
+                <h3>关联采购单</h3>
+              </div>
+            </div>
+            {purchaseOrders.length === 0 ? (
+              <div className="emptyState">当前供应商暂无关联采购单</div>
+            ) : (
+              <div className="tableWrap">
+                <table className="dataTable supplierPurchaseTable">
+                  <thead>
+                    <tr>
+                      <th>采购单号</th>
+                      <th>状态</th>
+                      <th>下单日期</th>
+                      <th>预计到货日期</th>
+                      <th>创建时间</th>
+                      <th>备注</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {purchaseOrders.map((purchaseOrder) => (
+                      <tr key={purchaseOrder.id}>
+                        <td>
+                          <strong>{purchaseOrder.purchase_order_no}</strong>
+                        </td>
+                        <td>
+                          <span
+                            className={`tablePill purchase-status-${purchaseOrder.status}`}
+                          >
+                            {getPurchaseStatusLabel(purchaseOrder.status)}
+                          </span>
+                        </td>
+                        <td>{formatDateTime(purchaseOrder.ordered_at)}</td>
+                        <td>{formatDate(purchaseOrder.expected_arrival_date)}</td>
+                        <td>{formatDateTime(purchaseOrder.created_at)}</td>
+                        <td className="notesCell">
+                          {getOptionalText(purchaseOrder.notes)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
         </Modal>
       ) : null}
 
@@ -1103,7 +1197,7 @@ export default function AdminSuppliersPage() {
         title="确认删除供应商"
         description={
           <p>
-            删除前会检查是否已有采购单引用。已有采购单的供应商不能物理删除，建议改为停用。
+            删除前会检查是否已有采购单引用，或是否被辅料设置为默认供应商。已有引用的供应商不能物理删除，建议改为停用。
           </p>
         }
         confirmLabel="确认删除"

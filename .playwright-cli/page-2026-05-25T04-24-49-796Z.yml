@@ -1,0 +1,83 @@
+- generic [ref=e2]:
+  - complementary [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: FBA
+      - generic [ref=e6]:
+        - strong [ref=e7]: 备货生产系统
+        - generic [ref=e8]: 内部管理后台
+    - navigation "后台菜单" [ref=e9]:
+      - link "首页" [ref=e10] [cursor=pointer]:
+        - /url: /dashboard
+        - generic [ref=e11]: 首页
+      - link "FBA 备货需求" [ref=e12] [cursor=pointer]:
+        - /url: /replenishment
+        - generic [ref=e13]: FBA 备货需求
+      - button "生产管理 4" [ref=e15] [cursor=pointer]:
+        - generic [ref=e16]: 生产管理
+        - generic [ref=e17]: "4"
+      - generic [ref=e19]:
+        - button "采购管理 2" [expanded] [ref=e20] [cursor=pointer]:
+          - generic [ref=e21]: 采购管理
+          - generic [ref=e22]: "2"
+        - generic [ref=e24]:
+          - link "采购单" [ref=e25] [cursor=pointer]:
+            - /url: /purchase/orders
+          - link "供应商管理" [ref=e26] [cursor=pointer]:
+            - /url: /admin/suppliers
+      - button "仓库库存 6" [ref=e28] [cursor=pointer]:
+        - generic [ref=e29]: 仓库库存
+        - generic [ref=e30]: "6"
+      - button "基础资料 5" [ref=e33] [cursor=pointer]:
+        - generic [ref=e34]: 基础资料
+        - generic [ref=e35]: "5"
+      - button "系统管理 1" [ref=e38] [cursor=pointer]:
+        - generic [ref=e39]: 系统管理
+        - generic [ref=e40]: "1"
+  - generic [ref=e42]:
+    - banner [ref=e43]:
+      - generic [ref=e44]:
+        - paragraph [ref=e45]: 内部管理系统
+        - heading "FBA 备货生产管理后台" [level=1] [ref=e46]
+      - generic [ref=e47]:
+        - generic [ref=e48]:
+          - generic [ref=e49]: 模拟角色
+          - combobox "切换模拟角色" [ref=e50]:
+            - option "运营"
+            - option "厂长"
+            - option "采购"
+            - option "仓库"
+            - option "管理员" [selected]
+        - generic [ref=e51]:
+          - strong [ref=e52]: 内部测试用户
+          - generic [ref=e53]: demo@company.local
+    - main [ref=e54]:
+      - generic [ref=e55]:
+        - generic [ref=e56]:
+          - paragraph [ref=e57]: 采购管理
+          - heading "采购单" [level=2] [ref=e58]
+          - paragraph [ref=e59]: 采购人员可以从缺料物料生成采购单，也可以主动创建常用原材料、包材和辅料采购单。
+        - generic [ref=e60]:
+          - generic [ref=e61]: Supabase 数据
+          - generic [ref=e62]:
+            - button "+ 新建采购单" [disabled] [ref=e63]
+            - button "批量导入采购单" [disabled] [ref=e64]
+      - generic [ref=e65]:
+        - generic [ref=e66]:
+          - generic [ref=e67]:
+            - paragraph [ref=e68]: 缺料物料
+            - heading "待采购清单" [level=3] [ref=e69]
+          - generic [ref=e70]:
+            - button "生成采购单" [disabled] [ref=e71]
+            - button "正在刷新..." [disabled] [ref=e72]
+        - generic [ref=e73]: 正在读取采购数据...
+      - generic [ref=e74]:
+        - generic [ref=e76]:
+          - paragraph [ref=e77]: 采购单
+          - heading "采购单列表" [level=3] [ref=e78]
+        - generic [ref=e79]:
+          - generic [ref=e80]:
+            - text: 供应商
+            - combobox "供应商" [ref=e81]:
+              - option "全部供应商" [selected]
+              - option "未设置供应商"
+          - button "正在刷新..." [ref=e82] [cursor=pointer]

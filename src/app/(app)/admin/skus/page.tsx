@@ -7,6 +7,7 @@ import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Modal } from "@/components/Modal";
 import { Pagination } from "@/components/Pagination";
+import { SupplierSearchSelect } from "@/components/SupplierSearchSelect";
 import {
   bulkImportSkus,
   deactivateSkusByIds,
@@ -27,6 +28,7 @@ import {
   type SkuProductOption,
   type SkuStatus
 } from "@/lib/api/skus";
+import { getSuppliers, type Supplier } from "@/lib/api/master-data";
 import { getBrandCodeName, getSkuBrandLabel } from "@/lib/brand-utils";
 import { downloadCsvTemplate, type CsvTemplateField } from "@/lib/utils/csv";
 import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
@@ -46,6 +48,7 @@ type SkuFormState = {
   skuName: string;
   skuType: SkuEditableType;
   productId: string;
+  defaultSupplierId: string;
   unit: string;
   specs: string;
   status: SkuStatus;
@@ -57,6 +60,7 @@ type SkuEditFormState = {
   skuName: string;
   skuType: string;
   productId: string;
+  defaultSupplierId: string;
   unit: string;
   specs: string;
   status: SkuStatus;
@@ -75,6 +79,7 @@ const initialSkuForm: SkuFormState = {
   skuName: "",
   skuType: "finished_good",
   productId: "",
+  defaultSupplierId: "",
   unit: "pcs",
   specs: "",
   status: "active"
@@ -203,6 +208,20 @@ function getProductOptionLabel(product: SkuProductOption) {
   return `${product.product_code} / ${product.name}${brandText}${statusText}`;
 }
 
+function getSkuDefaultSupplierLabel(sku: SkuListRow) {
+  if (sku.sku_type !== "material") {
+    return "-";
+  }
+
+  if (!sku.default_supplier) {
+    return "未设置";
+  }
+
+  const statusText = sku.default_supplier.status === "inactive" ? " / 停用" : "";
+
+  return `${sku.default_supplier.supplier_code} / ${sku.default_supplier.name}${statusText}`;
+}
+
 type ProductSearchSelectProps = {
   products: SkuProductOption[];
   value: string;
@@ -294,6 +313,7 @@ export default function AdminSkusPage() {
   const router = useRouter();
   const [skus, setSkus] = useState<SkuListRow[]>([]);
   const [products, setProducts] = useState<SkuProductOption[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [skuForm, setSkuForm] = useState<SkuFormState>(initialSkuForm);
   const [editForm, setEditForm] = useState<SkuEditFormState | null>(null);
   const [selectedBomSku, setSelectedBomSku] = useState<SkuListRow | null>(null);
@@ -349,6 +369,33 @@ export default function AdminSkusPage() {
     );
   }, [products]);
 
+  const supplierOptions = useMemo(() => {
+    const supplierById = new Map<string, Supplier>();
+
+    suppliers.forEach((supplier) => supplierById.set(supplier.id, supplier));
+    skus.forEach((sku) => {
+      if (sku.default_supplier) {
+        supplierById.set(sku.default_supplier.id, {
+          id: sku.default_supplier.id,
+          supplier_code: sku.default_supplier.supplier_code,
+          name: sku.default_supplier.name,
+          contact_name: sku.default_supplier.contact_name,
+          phone: sku.default_supplier.phone,
+          email: null,
+          address: null,
+          notes: null,
+          status: sku.default_supplier.status,
+          created_at: "",
+          updated_at: ""
+        });
+      }
+    });
+
+    return [...supplierById.values()].sort((first, second) =>
+      first.supplier_code.localeCompare(second.supplier_code, "zh-CN")
+    );
+  }, [skus, suppliers]);
+
   const filteredSkus = useMemo(() => {
     const keyword = searchKeyword.trim().toLowerCase();
 
@@ -401,13 +448,15 @@ export default function AdminSkusPage() {
       setLoading(true);
       setErrorMessage("");
 
-      const [skuData, productData] = await Promise.all([
+      const [skuData, productData, supplierData] = await Promise.all([
         getSkus(),
-        getProductsForSkuForm()
+        getProductsForSkuForm(),
+        getSuppliers()
       ]);
 
       setSkus(skuData);
       setProducts(productData);
+      setSuppliers(supplierData);
       setSelectedSkuIds((current) =>
         current.filter((skuId) => skuData.some((sku) => sku.id === skuId))
       );
@@ -422,6 +471,7 @@ export default function AdminSkusPage() {
       setErrorMessage(getErrorMessage(error));
       setSkus([]);
       setProducts([]);
+      setSuppliers([]);
       setSelectedSkuIds([]);
       setSelectedBomSku(null);
       setBomUsage(null);
@@ -476,6 +526,7 @@ export default function AdminSkusPage() {
       skuName: sku.sku_name,
       skuType: sku.sku_type,
       productId: sku.product_id ?? "",
+      defaultSupplierId: sku.default_supplier_id ?? "",
       unit: sku.unit,
       specs: sku.specs ?? "",
       status: toEditableStatus(sku.status)
@@ -722,7 +773,11 @@ export default function AdminSkusPage() {
               onChange={(event) =>
                 setSkuForm((current) => ({
                   ...current,
-                  skuType: event.target.value as SkuEditableType
+                  skuType: event.target.value as SkuEditableType,
+                  defaultSupplierId:
+                    event.target.value === "material"
+                      ? current.defaultSupplierId
+                      : ""
                 }))
               }
               disabled={creating}
@@ -745,6 +800,21 @@ export default function AdminSkusPage() {
               }))
             }
           />
+
+          {skuForm.skuType === "material" ? (
+            <SupplierSearchSelect
+              label="默认供应商"
+              suppliers={supplierOptions}
+              value={skuForm.defaultSupplierId}
+              disabled={creating}
+              onChange={(supplierId) =>
+                setSkuForm((current) => ({
+                  ...current,
+                  defaultSupplierId: supplierId
+                }))
+              }
+            />
+          ) : null}
 
           <label>
             单位
@@ -867,6 +937,25 @@ export default function AdminSkusPage() {
                 )
               }
             />
+
+            {editForm.skuType === "material" ? (
+              <SupplierSearchSelect
+                label="默认供应商"
+                suppliers={supplierOptions}
+                value={editForm.defaultSupplierId}
+                disabled={updating}
+                onChange={(supplierId) =>
+                  setEditForm((current) =>
+                    current
+                      ? {
+                          ...current,
+                          defaultSupplierId: supplierId
+                        }
+                      : current
+                  )
+                }
+              />
+            ) : null}
 
             <label>
               单位
@@ -1076,6 +1165,7 @@ export default function AdminSkusPage() {
                   <th>SKU 类型</th>
                   <th>所属产品</th>
                   <th>品牌</th>
+                  <th>默认供应商</th>
                   <th>单位</th>
                   <th>状态</th>
                   <th>当前库存数量</th>
@@ -1116,6 +1206,7 @@ export default function AdminSkusPage() {
                           product: sku.product
                         })}
                       </td>
+                      <td>{getSkuDefaultSupplierLabel(sku)}</td>
                       <td>{sku.unit}</td>
                       <td>
                         <span className={`tablePill sku-status-${sku.status}`}>
@@ -1232,6 +1323,10 @@ export default function AdminSkusPage() {
             <div className="detailItem">
               <span>SKU 类型</span>
               <strong>{getSkuTypeLabel(selectedBomSku.sku_type)}</strong>
+            </div>
+            <div className="detailItem">
+              <span>默认供应商</span>
+              <strong>{getSkuDefaultSupplierLabel(selectedBomSku)}</strong>
             </div>
           </div>
 

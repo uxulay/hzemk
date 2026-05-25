@@ -14,9 +14,19 @@ export type SkuProductOption = {
   brand: BrandSummary | null;
 };
 
+export type SkuSupplierOption = {
+  id: string;
+  supplier_code: string;
+  name: string;
+  contact_name: string | null;
+  phone: string | null;
+  status: string;
+};
+
 export type SkuRow = {
   id: string;
   product_id: string | null;
+  default_supplier_id: string | null;
   sku_code: string;
   sku_name: string;
   sku_type: string;
@@ -31,6 +41,7 @@ export type SkuRow = {
 
 export type SkuListRow = SkuRow & {
   product: SkuProductOption | null;
+  default_supplier: SkuSupplierOption | null;
   inventory_quantity: number;
   reserved_quantity: number;
   inventory_row_count: number;
@@ -48,6 +59,7 @@ export type CreateSkuInput = {
   skuName: string;
   skuType: SkuEditableType;
   productId?: string;
+  defaultSupplierId?: string;
   unit: string;
   specs?: string;
   status: SkuStatus;
@@ -59,6 +71,7 @@ export type UpdateSkuInput = {
   skuName: string;
   skuType: string;
   productId?: string;
+  defaultSupplierId?: string;
   unit: string;
   specs?: string;
   status: SkuStatus;
@@ -125,6 +138,7 @@ type RawSkuProductOption = Omit<SkuProductOption, "brand"> & {
 
 type RawSkuRow = SkuRow & {
   product: MaybeRelation<RawSkuProductOption>;
+  default_supplier: MaybeRelation<SkuSupplierOption>;
 };
 
 type RawInventorySummaryRow = {
@@ -219,6 +233,7 @@ function getSkuSelect() {
   return `
     id,
     product_id,
+    default_supplier_id,
     sku_code,
     sku_name,
     sku_type,
@@ -229,6 +244,14 @@ function getSkuSelect() {
     status,
     created_at,
     updated_at,
+    default_supplier:suppliers!skus_default_supplier_id_fkey (
+      id,
+      supplier_code,
+      name,
+      contact_name,
+      phone,
+      status
+    ),
     product:products!skus_product_id_fkey (
       id,
       brand_id,
@@ -256,6 +279,7 @@ function normalizeSkuRow(
     product: singleRelation(row.product)
       ? normalizeProductOption(singleRelation(row.product) as RawSkuProductOption)
       : null,
+    default_supplier: singleRelation(row.default_supplier),
     inventory_quantity: inventorySummary?.quantity_on_hand ?? 0,
     reserved_quantity: inventorySummary?.reserved_quantity ?? 0,
     inventory_row_count: inventorySummary?.inventory_row_count ?? 0
@@ -448,6 +472,8 @@ export async function createSku(input: CreateSkuInput): Promise<SkuRow> {
   const skuName = input.skuName.trim();
   const unit = input.unit.trim();
   const productId = normalizeOptionalId(input.productId);
+  const defaultSupplierId =
+    input.skuType === "material" ? normalizeOptionalId(input.defaultSupplierId) : null;
 
   if (!skuCode) {
     throw new Error("请填写 SKU 编码。");
@@ -472,6 +498,7 @@ export async function createSku(input: CreateSkuInput): Promise<SkuRow> {
         sku_code: skuCode,
         sku_name: skuName,
         sku_type: input.skuType,
+        default_supplier_id: defaultSupplierId,
         unit,
         specs: normalizeOptionalText(input.specs),
         status: input.status
@@ -492,6 +519,8 @@ export async function updateSku(input: UpdateSkuInput): Promise<void> {
   const skuName = input.skuName.trim();
   const unit = input.unit.trim();
   const productId = normalizeOptionalId(input.productId);
+  const defaultSupplierId =
+    input.skuType === "material" ? normalizeOptionalId(input.defaultSupplierId) : null;
 
   if (!input.skuId) {
     throw new Error("缺少 SKU ID。");
@@ -512,6 +541,7 @@ export async function updateSku(input: UpdateSkuInput): Promise<void> {
       .update({
         sku_name: skuName,
         product_id: productId,
+        default_supplier_id: defaultSupplierId,
         unit,
         specs: normalizeOptionalText(input.specs),
         status: input.status

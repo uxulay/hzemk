@@ -104,6 +104,7 @@ comment on column public.products.updated_at is '更新时间。';
 create table public.skus (
   id uuid primary key default gen_random_uuid(),
   product_id uuid references public.products(id) on delete set null,
+  default_supplier_id uuid,
   sku_code text not null unique,
   sku_name text not null,
   sku_type text not null default 'finished_product',
@@ -119,6 +120,7 @@ create table public.skus (
 comment on table public.skus is 'SKU 表：保存成品 SKU、原材料 SKU、半成品 SKU。用 sku_type 区分类型。';
 comment on column public.skus.id is '主键 ID。';
 comment on column public.skus.product_id is '所属产品 ID，原材料可为空。';
+comment on column public.skus.default_supplier_id is '辅料默认供应商 ID。仅 sku_type = material 的 SKU 使用，成品和半成品可为空。';
 comment on column public.skus.sku_code is '内部 SKU 编码。';
 comment on column public.skus.sku_name is 'SKU 名称。';
 comment on column public.skus.sku_type is 'SKU 类型，例如 finished_product、material、semi_finished。';
@@ -156,6 +158,10 @@ comment on column public.suppliers.status is '状态，例如 active、inactive�
 comment on column public.suppliers.notes is '备注。';
 comment on column public.suppliers.created_at is '创建时间。';
 comment on column public.suppliers.updated_at is '更新时间。';
+
+alter table public.skus
+add constraint skus_default_supplier_id_fkey
+foreign key (default_supplier_id) references public.suppliers(id) on delete set null;
 
 create table public.warehouses (
   id uuid primary key default gen_random_uuid(),
@@ -501,6 +507,7 @@ comment on column public.inventory_transactions.updated_at is '更新时间。';
 create index idx_profiles_role_id on public.profiles(role_id);
 create index idx_products_brand_id on public.products(brand_id);
 create index idx_skus_product_id on public.skus(product_id);
+create index idx_skus_default_supplier_id on public.skus(default_supplier_id);
 create index idx_bom_headers_product_sku_id on public.bom_headers(product_sku_id);
 create index idx_bom_items_bom_header_id on public.bom_items(bom_header_id);
 create index idx_bom_items_component_sku_id on public.bom_items(component_sku_id);

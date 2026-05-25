@@ -9,9 +9,19 @@ import { normalizeCsvValue } from "@/lib/utils/csv";
 
 export type MaterialStatus = "active" | "inactive";
 
+export type MaterialSupplier = {
+  id: string;
+  supplier_code: string;
+  name: string;
+  contact_name: string | null;
+  phone: string | null;
+  status: string;
+};
+
 export type MaterialRow = {
   id: string;
   product_id: string | null;
+  default_supplier_id: string | null;
   sku_code: string;
   sku_name: string;
   sku_type: string;
@@ -25,6 +35,7 @@ export type MaterialRow = {
 };
 
 export type MaterialListRow = MaterialRow & {
+  default_supplier: MaterialSupplier | null;
   inventory_quantity: number;
   reserved_quantity: number;
   safety_stock_quantity: number;
@@ -127,6 +138,7 @@ export type CreateMaterialInput = {
   skuName: string;
   unit: string;
   specs?: string;
+  defaultSupplierId?: string;
   status: MaterialStatus;
 };
 
@@ -135,6 +147,7 @@ export type UpdateMaterialInput = {
   skuName: string;
   unit: string;
   specs?: string;
+  defaultSupplierId?: string;
   status: MaterialStatus;
 };
 
@@ -144,10 +157,17 @@ export type MaterialImportInput = {
   skuName: string;
   unit: string;
   specs: string | null;
+  defaultSupplierId: string | null;
+  supplierCode: string | null;
+  supplierName: string | null;
   status: MaterialStatus;
 };
 
 type MaybeRelation<T> = T | T[] | null;
+
+type RawMaterialRow = MaterialRow & {
+  default_supplier: MaybeRelation<MaterialSupplier>;
+};
 
 type RawInventorySummaryRow = {
   sku_id: string;
@@ -250,7 +270,39 @@ function singleRelation<T>(value: MaybeRelation<T>): T | null {
   return value;
 }
 
+function getMaterialSelect() {
+  return `
+    id,
+    product_id,
+    default_supplier_id,
+    sku_code,
+    sku_name,
+    sku_type,
+    amazon_sku,
+    fnsku,
+    unit,
+    specs,
+    status,
+    created_at,
+    updated_at,
+    default_supplier:suppliers!skus_default_supplier_id_fkey (
+      id,
+      supplier_code,
+      name,
+      contact_name,
+      phone,
+      status
+    )
+  `;
+}
+
 function normalizeOptionalText(value?: string | null) {
+  const normalized = normalizeCsvValue(value);
+
+  return normalized ? normalized : null;
+}
+
+function normalizeOptionalId(value?: string | null) {
   const normalized = normalizeCsvValue(value);
 
   return normalized ? normalized : null;
@@ -324,6 +376,70 @@ async function getExistingSkuCodeSet() {
   );
 }
 
+async function getMaterialSuppliersForLookup() {
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase
+      .from("suppliers")
+      .select("id, supplier_code, name, contact_name, phone, status")
+      .order("supplier_code", { ascending: true }),
+    "读取供应商资料"
+  );
+
+  if (error) {
+    throw formatSupabaseError("读取供应商资料", error);
+  }
+
+  return (data ?? []) as MaterialSupplier[];
+}
+
+export async function getMaterialSupplierOptions(): Promise<MaterialSupplier[]> {
+  return getMaterialSuppliersForLookup();
+}
+
+function findSupplierForImport(input: {
+  supplierCode: string;
+  supplierName: string;
+  suppliers: MaterialSupplier[];
+  errors: string[];
+}) {
+  const supplierCode = input.supplierCode.trim();
+  const supplierName = input.supplierName.trim();
+
+  if (!supplierCode && !supplierName) {
+    return null;
+  }
+
+  if (supplierCode) {
+    const matched = input.suppliers.find(
+      (supplier) =>
+        supplier.supplier_code.toLowerCase() === supplierCode.toLowerCase()
+    );
+
+    if (!matched) {
+      input.errors.push("默认供应商编码匹配不到已有供应商。");
+    }
+
+    return matched ?? null;
+  }
+
+  const matchedByName = input.suppliers.filter(
+    (supplier) => supplier.name.toLowerCase() === supplierName.toLowerCase()
+  );
+
+  if (matchedByName.length === 0) {
+    input.errors.push("默认供应商名称匹配不到已有供应商。");
+    return null;
+  }
+
+  if (matchedByName.length > 1) {
+    input.errors.push("默认供应商名称匹配到多个供应商，请改用供应商编码。");
+    return null;
+  }
+
+  return matchedByName[0];
+}
+
 async function ensureMaterialCodeIsUnique(skuCode: string) {
   const supabase = getSupabaseClient();
   const { data, error } = await withTimeout(
@@ -357,13 +473,17 @@ function validateMaterialBasics(input: {
 }
 
 function normalizeMaterialRow(
-  row: MaterialRow,
+  row: MaterialRow | RawMaterialRow,
   inventorySummary?: MaterialInventorySummary,
   bomUsageCount = 0,
   purchaseUsageCount = 0
 ): MaterialListRow {
+  const rawDefaultSupplier =
+    "default_supplier" in row ? singleRelation(row.default_supplier) : null;
+
   return {
     ...row,
+    default_supplier: rawDefaultSupplier,
     inventory_quantity: inventorySummary?.quantity_on_hand ?? 0,
     reserved_quantity: inventorySummary?.reserved_quantity ?? 0,
     safety_stock_quantity: inventorySummary?.safety_stock_quantity ?? 0,
@@ -620,7 +740,7 @@ export async function getMaterials(): Promise<MaterialListRow[]> {
   const { data, error } = await withTimeout(
     supabase
       .from("skus")
-      .select("*")
+      .select(getMaterialSelect())
       .eq("sku_type", "material")
       .order("sku_code", { ascending: true }),
     "读取辅料列表"
@@ -630,7 +750,7 @@ export async function getMaterials(): Promise<MaterialListRow[]> {
     throw formatSupabaseError("读取辅料列表", error);
   }
 
-  const materialRows = (data ?? []) as MaterialRow[];
+  const materialRows = (data ?? []) as unknown as RawMaterialRow[];
   const materialIds = materialRows.map((material) => material.id);
   const [inventoryBySku, bomCounts, purchaseCounts] = await Promise.all([
     getInventorySummaryBySkuIds(materialIds),
@@ -659,6 +779,7 @@ export async function createMaterial(
   const skuCode = input.skuCode.trim();
   const skuName = input.skuName.trim();
   const unit = input.unit.trim() || "pcs";
+  const defaultSupplierId = normalizeOptionalId(input.defaultSupplierId);
 
   if (!skuCode) {
     throw new Error("请填写辅料编码。");
@@ -680,6 +801,7 @@ export async function createMaterial(
         sku_code: skuCode,
         sku_name: skuName,
         sku_type: "material",
+        default_supplier_id: defaultSupplierId,
         amazon_sku: null,
         fnsku: null,
         unit,
@@ -701,6 +823,7 @@ export async function createMaterial(
 export async function updateMaterial(input: UpdateMaterialInput): Promise<void> {
   const skuName = input.skuName.trim();
   const unit = input.unit.trim() || "pcs";
+  const defaultSupplierId = normalizeOptionalId(input.defaultSupplierId);
 
   if (!input.materialId) {
     throw new Error("缺少辅料 ID。");
@@ -720,6 +843,7 @@ export async function updateMaterial(input: UpdateMaterialInput): Promise<void> 
         sku_name: skuName,
         unit,
         specs: normalizeOptionalText(input.specs),
+        default_supplier_id: defaultSupplierId,
         status: input.status
       })
       .eq("id", input.materialId)
@@ -766,7 +890,7 @@ export async function getMaterialDetail(
   const { data: materialData, error: materialError } = await withTimeout(
     supabase
       .from("skus")
-      .select("*")
+      .select(getMaterialSelect())
       .eq("id", materialId)
       .eq("sku_type", "material")
       .single(),
@@ -788,7 +912,7 @@ export async function getMaterialDetail(
     )
   ]);
   const material = normalizeMaterialRow(
-    materialData as MaterialRow,
+    materialData as unknown as RawMaterialRow,
     inventoryBySku.get(materialId),
     bomCounts.get(materialId) ?? 0,
     purchaseCounts.get(materialId) ?? 0
@@ -949,7 +1073,10 @@ export async function getMaterialDetail(
 export async function validateMaterialImportRows(
   rows: CsvDataRow[]
 ): Promise<BulkImportValidationRow<MaterialImportInput>[]> {
-  const existingCodes = await getExistingSkuCodeSet();
+  const [existingCodes, suppliers] = await Promise.all([
+    getExistingSkuCodeSet(),
+    getMaterialSuppliersForLookup()
+  ]);
   const fileCodes = rows.map((row) =>
     getCsvValue(row, ["辅料编码", "sku_code"]).toLowerCase()
   );
@@ -961,6 +1088,8 @@ export async function validateMaterialImportRows(
     const skuName = getCsvValue(row, ["辅料名称", "sku_name", "name"]);
     const unit = getCsvValue(row, ["单位", "unit"]) || "pcs";
     const specs = normalizeOptionalText(getCsvValue(row, ["规格", "specs", "remark"]));
+    const supplierCode = getCsvValue(row, ["默认供应商编码", "supplier_code"]);
+    const supplierName = getCsvValue(row, ["默认供应商名称", "supplier_name"]);
     const statusText = getCsvValue(row, ["状态", "status"]);
     const errors: string[] = [];
 
@@ -973,6 +1102,12 @@ export async function validateMaterialImportRows(
     }
 
     validateStatus(statusText, errors);
+    const supplier = findSupplierForImport({
+      supplierCode,
+      supplierName,
+      suppliers,
+      errors
+    });
 
     const skuCodeKey = skuCode.toLowerCase();
 
@@ -995,13 +1130,20 @@ export async function validateMaterialImportRows(
               skuName,
               unit,
               specs,
+              defaultSupplierId: supplier?.id ?? null,
+              supplierCode: supplier?.supplier_code ?? (supplierCode || null),
+              supplierName: supplier?.name ?? (supplierName || null),
               status: normalizeStatus(statusText)
             }
           : undefined,
       errors,
       notes:
         errors.length === 0
-          ? ["导入时会固定写入 sku_type = material。"]
+          ? [
+              supplier
+                ? `导入时会固定写入 sku_type = material，并关联默认供应商 ${supplier.supplier_code}。`
+                : "导入时会固定写入 sku_type = material，默认供应商留空。"
+            ]
           : undefined
     };
   });
@@ -1043,6 +1185,7 @@ export async function bulkImportMaterials(
         sku_code: input.skuCode,
         sku_name: input.skuName,
         sku_type: "material",
+        default_supplier_id: input.defaultSupplierId,
         amazon_sku: null,
         fnsku: null,
         unit: input.unit,
@@ -1077,7 +1220,7 @@ export async function deactivateMaterialsByIds(
 ): Promise<BulkActionResult[]> {
   const materials = await getRowsByIds<MaterialRow>(
     "skus",
-    "id, product_id, sku_code, sku_name, sku_type, amazon_sku, fnsku, unit, specs, status, created_at, updated_at",
+    "id, product_id, default_supplier_id, sku_code, sku_name, sku_type, amazon_sku, fnsku, unit, specs, status, created_at, updated_at",
     ids
   );
   const results: BulkActionResult[] = [];
@@ -1106,7 +1249,7 @@ export async function deleteMaterialsByIds(
 ): Promise<BulkActionResult[]> {
   const materials = await getRowsByIds<MaterialRow>(
     "skus",
-    "id, product_id, sku_code, sku_name, sku_type, amazon_sku, fnsku, unit, specs, status, created_at, updated_at",
+    "id, product_id, default_supplier_id, sku_code, sku_name, sku_type, amazon_sku, fnsku, unit, specs, status, created_at, updated_at",
     ids
   );
   const results: BulkActionResult[] = [];

@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { toBlob, toPng } from "html-to-image";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { Modal } from "@/components/Modal";
 import { Pagination } from "@/components/Pagination";
+import { SupplierSearchSelect } from "@/components/SupplierSearchSelect";
 import { getSuppliers, type Supplier } from "@/lib/api/master-data";
 import {
   createPurchaseOrder,
@@ -46,6 +48,8 @@ const purchaseSourceLabels: Record<PurchaseOrderSource, string> = {
   bulk_import: "批量导入"
 };
 
+const defaultPurchaseCompanyName = "HZEMK 采购中心";
+
 const purchaseImportFields: CsvTemplateField[] = [
   { key: "purchase_order_no", label: "采购单号", example: "PUR-20260601-1234" },
   { key: "supplier_code", label: "供应商编码", required: true, example: "SUP-001" },
@@ -85,6 +89,8 @@ type DraftItem = {
   skuCode: string;
   skuName: string;
   productionOrderNo: string;
+  defaultSupplierId: string | null;
+  defaultSupplierLabel: string;
   orderedQuantity: string;
   shortageQuantity: number;
   unit: string;
@@ -160,6 +166,37 @@ function formatMoney(value: number | null | undefined) {
   });
 }
 
+function getLineAmount(item: Pick<PurchaseOrderItem, "ordered_quantity" | "unit_price">) {
+  return Number(item.ordered_quantity) * Number(item.unit_price ?? 0);
+}
+
+function getOrderTotalQuantity(order: PurchaseOrder) {
+  return order.items.reduce(
+    (sum, item) => sum + Number(item.ordered_quantity || 0),
+    0
+  );
+}
+
+function getOrderMaker(order: PurchaseOrder) {
+  return (
+    order.created_by_profile?.full_name ||
+    order.created_by_profile?.email ||
+    "系统生成"
+  );
+}
+
+function sanitizeFileNamePart(value: string) {
+  return value.trim().replace(/[\\/:*?"<>|\s]+/g, "_") || "未填写";
+}
+
+function getPurchaseOrderImageFileName(order: PurchaseOrder) {
+  const supplierName = order.supplier?.name ?? "未填写供应商";
+
+  return `采购单_${sanitizeFileNamePart(order.purchase_order_no)}_${sanitizeFileNamePart(
+    supplierName
+  )}.png`;
+}
+
 function formatDate(value: string | null | undefined) {
   if (!value) {
     return "-";
@@ -223,6 +260,50 @@ function getMaterialSkuLabel(sku: MaterialSkuOption) {
   return `${sku.sku_code} / ${sku.sku_name}`;
 }
 
+function getSupplierOptionLabel(supplier: Supplier) {
+  const statusText = supplier.status === "inactive" ? " / 停用" : "";
+
+  return `${supplier.supplier_code} / ${supplier.name}${statusText}`;
+}
+
+function getMaterialDefaultSupplierLabel(
+  sku: Pick<MaterialSkuOption, "default_supplier">
+) {
+  if (!sku.default_supplier) {
+    return "未设置";
+  }
+
+  const statusText =
+    sku.default_supplier.status === "inactive" ? " / 停用" : "";
+
+  return `${sku.default_supplier.supplier_code} / ${sku.default_supplier.name}${statusText}`;
+}
+
+function getDefaultSupplierSummary(
+  items: Array<{ skuId: string }>,
+  materialSkus: MaterialSkuOption[]
+) {
+  const selectedSkus = items
+    .map((item) => materialSkus.find((sku) => sku.id === item.skuId))
+    .filter((sku): sku is MaterialSkuOption => Boolean(sku));
+  const supplierIds = Array.from(
+    new Set(
+      selectedSkus
+        .map((sku) => sku.default_supplier_id)
+        .filter((supplierId): supplierId is string => Boolean(supplierId))
+    )
+  );
+  const missingCount = selectedSkus.filter(
+    (sku) => !sku.default_supplier_id
+  ).length;
+
+  return {
+    selectedCount: selectedSkus.length,
+    supplierIds,
+    missingCount
+  };
+}
+
 function MaterialSkuSearchSelect({
   skus,
   value,
@@ -270,6 +351,7 @@ function MaterialSkuSearchSelect({
               disabled={disabled}
             >
               {getMaterialSkuLabel(sku)}
+              <span>默认供应商：{getMaterialDefaultSupplierLabel(sku)}</span>
             </button>
           ))
         )}
@@ -357,6 +439,10 @@ function getDraftItem(requirement: ShortageMaterialRequirement): DraftItem {
     skuCode: requirement.material_sku?.sku_code ?? "-",
     skuName: requirement.material_sku?.sku_name ?? "-",
     productionOrderNo: requirement.production_order?.production_order_no ?? "-",
+    defaultSupplierId: requirement.material_sku?.default_supplier_id ?? null,
+    defaultSupplierLabel: requirement.material_sku
+      ? getMaterialDefaultSupplierLabel(requirement.material_sku)
+      : "未设置",
     orderedQuantity: String(Number(requirement.shortage_quantity)),
     shortageQuantity: Number(requirement.shortage_quantity),
     unit: requirement.unit,
@@ -365,6 +451,7 @@ function getDraftItem(requirement: ShortageMaterialRequirement): DraftItem {
 }
 
 export default function PurchaseOrdersPage() {
+  const purchaseOrderImageRef = useRef<HTMLDivElement | null>(null);
   const [shortages, setShortages] = useState<ShortageMaterialRequirement[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -377,13 +464,23 @@ export default function PurchaseOrdersPage() {
   );
   const [draftItems, setDraftItems] = useState<DraftItem[]>([]);
   const [supplierId, setSupplierId] = useState("");
+  const [draftSupplierNotice, setDraftSupplierNotice] = useState("");
+  const [supplierFilter, setSupplierFilter] = useState("all");
   const [orderDate, setOrderDate] = useState(getTodayInputValue());
   const [expectedArrivalDate, setExpectedArrivalDate] = useState("");
   const [notes, setNotes] = useState("");
   const [createdBy, setCreatedBy] = useState("");
   const [manualForm, setManualForm] = useState<ManualFormState | null>(null);
+  const [manualSupplierNotice, setManualSupplierNotice] = useState("");
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [detail, setDetail] = useState<PurchaseOrder | null>(null);
+  const [imagePreviewOrder, setImagePreviewOrder] =
+    useState<PurchaseOrder | null>(null);
+  const [imageExporting, setImageExporting] = useState(false);
+  const [imageActionMessage, setImageActionMessage] = useState("");
+  const [generatedOrders, setGeneratedOrders] = useState<
+    Array<{ id: string; purchaseOrderNo: string }>
+  >([]);
   const [shortagePage, setShortagePage] = useState(1);
   const [orderPage, setOrderPage] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -406,9 +503,23 @@ export default function PurchaseOrdersPage() {
     [shortagePage, shortages]
   );
 
+  const filteredPurchaseOrders = useMemo(() => {
+    return purchaseOrders.filter((order) => {
+      if (supplierFilter === "all") {
+        return true;
+      }
+
+      if (supplierFilter === "none") {
+        return !order.supplier_id;
+      }
+
+      return order.supplier_id === supplierFilter;
+    });
+  }, [purchaseOrders, supplierFilter]);
+
   const paginatedPurchaseOrders = useMemo(
-    () => paginateItems(purchaseOrders, orderPage),
-    [orderPage, purchaseOrders]
+    () => paginateItems(filteredPurchaseOrders, orderPage),
+    [filteredPurchaseOrders, orderPage]
   );
 
   const draftTotalAmount = draftItems.reduce((sum, item) => {
@@ -417,6 +528,37 @@ export default function PurchaseOrdersPage() {
 
     return sum + quantity * unitPrice;
   }, 0);
+
+  const imageGeneratedAt = useMemo(
+    () => new Date().toISOString(),
+    [imagePreviewOrder?.id]
+  );
+
+  const getSupplierNameById = (targetSupplierId: string) => {
+    const supplier = suppliers.find((item) => item.id === targetSupplierId);
+
+    return supplier ? getSupplierOptionLabel(supplier) : "默认供应商";
+  };
+
+  const getDraftSupplierDecision = (items: DraftItem[]) => {
+    const supplierIds = Array.from(
+      new Set(
+        items
+          .map((item) => item.defaultSupplierId)
+          .filter((itemSupplierId): itemSupplierId is string =>
+            Boolean(itemSupplierId)
+          )
+      )
+    );
+    const missingCount = items.filter((item) => !item.defaultSupplierId).length;
+
+    return {
+      supplierIds,
+      missingCount,
+      canAutoSplit:
+        items.length > 0 && supplierIds.length > 1 && missingCount === 0
+    };
+  };
 
   const loadPageData = async () => {
     try {
@@ -461,6 +603,10 @@ export default function PurchaseOrdersPage() {
     loadPageData();
   }, []);
 
+  useEffect(() => {
+    setOrderPage(1);
+  }, [supplierFilter]);
+
   const toggleRequirement = (requirementId: string) => {
     setSelectedRequirementIds((current) =>
       current.includes(requirementId)
@@ -483,8 +629,32 @@ export default function PurchaseOrdersPage() {
 
     setErrorMessage("");
     setSuccessMessage("");
-    setDraftItems(requirements.map(getDraftItem));
-    setSupplierId("");
+    setGeneratedOrders([]);
+    const nextDraftItems = requirements.map(getDraftItem);
+    const supplierDecision = getDraftSupplierDecision(nextDraftItems);
+
+    setDraftItems(nextDraftItems);
+    if (supplierDecision.supplierIds.length === 1 && supplierDecision.missingCount === 0) {
+      const [nextSupplierId] = supplierDecision.supplierIds;
+
+      setSupplierId(nextSupplierId);
+      setDraftSupplierNotice(
+        `已根据辅料默认供应商自动带出：${getSupplierNameById(nextSupplierId)}。`
+      );
+    } else if (supplierDecision.canAutoSplit) {
+      setSupplierId("");
+      setDraftSupplierNotice(
+        `这些缺料辅料默认供应商不一致，提交时会按默认供应商自动拆成 ${supplierDecision.supplierIds.length} 张采购单。`
+      );
+    } else if (supplierDecision.supplierIds.length > 0) {
+      setSupplierId("");
+      setDraftSupplierNotice(
+        "部分辅料未设置默认供应商，或默认供应商不完全一致，请手动选择供应商，或分开生成采购单。"
+      );
+    } else {
+      setSupplierId("");
+      setDraftSupplierNotice("这些缺料辅料还没有默认供应商，请手动选择供应商。");
+    }
     setCreatedBy("");
     setOrderDate(getTodayInputValue());
     setExpectedArrivalDate("");
@@ -497,6 +667,7 @@ export default function PurchaseOrdersPage() {
     }
 
     setDraftItems([]);
+    setDraftSupplierNotice("");
   };
 
   const updateDraftItem = (
@@ -516,6 +687,8 @@ export default function PurchaseOrdersPage() {
   const openManualCreateForm = () => {
     setErrorMessage("");
     setSuccessMessage("");
+    setGeneratedOrders([]);
+    setManualSupplierNotice("");
     setManualForm(getEmptyManualForm());
   };
 
@@ -530,6 +703,7 @@ export default function PurchaseOrdersPage() {
         return;
       }
 
+      setManualSupplierNotice("");
       setManualForm({
         mode: "edit",
         purchaseOrderId: order.id,
@@ -561,6 +735,7 @@ export default function PurchaseOrdersPage() {
   const closeManualForm = () => {
     if (!submitting) {
       setManualForm(null);
+      setManualSupplierNotice("");
     }
   };
 
@@ -581,30 +756,64 @@ export default function PurchaseOrdersPage() {
         return current;
       }
 
-      return {
-        ...current,
-        items: current.items.map((item) => {
-          if (item.localId !== localId) {
-            return item;
-          }
+      const nextItems = current.items.map((item) => {
+        if (item.localId !== localId) {
+          return item;
+        }
 
-          if (field === "skuId") {
-            const sku = materialSkus.find((option) => option.id === value);
-
-            return {
-              ...item,
-              skuId: value,
-              skuCode: sku?.sku_code ?? "",
-              skuName: sku?.sku_name ?? "",
-              unit: sku?.unit ?? ""
-            };
-          }
+        if (field === "skuId") {
+          const sku = materialSkus.find((option) => option.id === value);
 
           return {
             ...item,
-            [field]: value
+            skuId: value,
+            skuCode: sku?.sku_code ?? "",
+            skuName: sku?.sku_name ?? "",
+            unit: sku?.unit ?? ""
           };
-        })
+        }
+
+        return {
+          ...item,
+          [field]: value
+        };
+      });
+
+      if (field !== "skuId" || current.mode !== "create") {
+        return {
+          ...current,
+          items: nextItems
+        };
+      }
+
+      const supplierDecision = getDefaultSupplierSummary(nextItems, materialSkus);
+      const nextSupplierId =
+        supplierDecision.selectedCount > 0 &&
+        supplierDecision.supplierIds.length === 1 &&
+        supplierDecision.missingCount === 0
+          ? supplierDecision.supplierIds[0]
+          : "";
+
+      if (nextSupplierId) {
+        setManualSupplierNotice(
+          `已根据辅料默认供应商自动带出：${getSupplierNameById(nextSupplierId)}。`
+        );
+      } else if (supplierDecision.supplierIds.length > 1) {
+        setManualSupplierNotice(
+          "已选择的辅料默认供应商不一致，请手动选择供应商，或拆成多张采购单。"
+        );
+      } else if (supplierDecision.selectedCount > 0) {
+        setManualSupplierNotice(
+          "部分辅料未设置默认供应商，请手动确认供应商。"
+        );
+      } else {
+        setManualSupplierNotice("");
+      }
+
+      return {
+        ...current,
+        supplierId: nextSupplierId,
+        items: nextItems
       };
     });
   };
@@ -621,9 +830,33 @@ export default function PurchaseOrdersPage() {
         return current;
       }
 
+      const nextItems = current.items.filter((item) => item.localId !== localId);
+
+      if (current.mode !== "create") {
+        return {
+          ...current,
+          items: nextItems
+        };
+      }
+
+      const supplierDecision = getDefaultSupplierSummary(nextItems, materialSkus);
+      const nextSupplierId =
+        supplierDecision.selectedCount > 0 &&
+        supplierDecision.supplierIds.length === 1 &&
+        supplierDecision.missingCount === 0
+          ? supplierDecision.supplierIds[0]
+          : "";
+
+      setManualSupplierNotice(
+        nextSupplierId
+          ? `已根据辅料默认供应商自动带出：${getSupplierNameById(nextSupplierId)}。`
+          : ""
+      );
+
       return {
         ...current,
-        items: current.items.filter((item) => item.localId !== localId)
+        supplierId: nextSupplierId,
+        items: nextItems
       };
     });
   };
@@ -639,25 +872,71 @@ export default function PurchaseOrdersPage() {
       setSubmitting(true);
       setErrorMessage("");
       setSuccessMessage("");
+      setGeneratedOrders([]);
 
-      const created = await createPurchaseOrder({
-        supplierId,
-        createdBy,
-        orderDate,
-        expectedArrivalDate,
-        notes,
-        items: draftItems.map((item) => ({
+      const supplierDecision = getDraftSupplierDecision(draftItems);
+      const toPurchaseInputItems = (items: DraftItem[]) =>
+        items.map((item) => ({
           skuId: item.skuId,
           materialRequirementId: item.materialRequirementId,
           orderedQuantity: Number(item.orderedQuantity),
           unit: item.unit,
           unitPrice: item.unitPrice ? Number(item.unitPrice) : null,
           notes: `来源生产任务：${item.productionOrderNo}`
-        }))
-      });
+        }));
 
-      setSuccessMessage(`采购单 ${created.purchase_order_no} 创建成功。`);
+      if (!supplierId && supplierDecision.canAutoSplit) {
+        const createdLinks: Array<{ id: string; purchaseOrderNo: string }> = [];
+
+        for (const defaultSupplierId of supplierDecision.supplierIds) {
+          const groupItems = draftItems.filter(
+            (item) => item.defaultSupplierId === defaultSupplierId
+          );
+          const created = await createPurchaseOrder({
+            supplierId: defaultSupplierId,
+            createdBy,
+            orderDate,
+            expectedArrivalDate,
+            notes,
+            items: toPurchaseInputItems(groupItems)
+          });
+
+          createdLinks.push({
+            id: created.id,
+            purchaseOrderNo: created.purchase_order_no
+          });
+        }
+
+        setGeneratedOrders(createdLinks);
+        setSuccessMessage(
+          `已按默认供应商拆分生成 ${createdLinks.length} 张采购单：${createdLinks
+            .map((item) => item.purchaseOrderNo)
+            .join("、")}。`
+        );
+      } else {
+        if (!supplierId) {
+          throw new Error("请选择供应商，或只选择已设置默认供应商且可自动拆分的缺料辅料。");
+        }
+
+        const created = await createPurchaseOrder({
+          supplierId,
+          createdBy,
+          orderDate,
+          expectedArrivalDate,
+          notes,
+          items: toPurchaseInputItems(draftItems)
+        });
+
+        setSuccessMessage(`采购单 ${created.purchase_order_no} 创建成功。`);
+        setGeneratedOrders([
+          {
+            id: created.id,
+            purchaseOrderNo: created.purchase_order_no
+          }
+        ]);
+      }
       setDraftItems([]);
+      setDraftSupplierNotice("");
       setSelectedRequirementIds([]);
       await loadPageData();
     } catch (error) {
@@ -716,6 +995,12 @@ export default function PurchaseOrdersPage() {
           items
         });
         setSuccessMessage(`采购单 ${created.purchase_order_no} 创建成功。`);
+        setGeneratedOrders([
+          {
+            id: created.id,
+            purchaseOrderNo: created.purchase_order_no
+          }
+        ]);
       }
 
       setManualForm(null);
@@ -770,6 +1055,91 @@ export default function PurchaseOrdersPage() {
       downloadPurchaseOrderCsv(detailOrder);
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
+    }
+  };
+
+  const openOrderImagePreview = async (order: PurchaseOrder | string) => {
+    try {
+      setDetailLoading(true);
+      setErrorMessage("");
+      setImageActionMessage("");
+
+      const detailOrder =
+        typeof order === "string"
+          ? await getPurchaseOrderDetail(order)
+          : order.items.length > 0
+            ? order
+            : await getPurchaseOrderDetail(order.id);
+
+      setImagePreviewOrder(detailOrder);
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const downloadOrderImage = async () => {
+    if (!purchaseOrderImageRef.current || !imagePreviewOrder) {
+      return;
+    }
+
+    try {
+      setImageExporting(true);
+      setImageActionMessage("");
+      const dataUrl = await toPng(purchaseOrderImageRef.current, {
+        backgroundColor: "#ffffff",
+        cacheBust: true,
+        pixelRatio: 2
+      });
+      const link = document.createElement("a");
+
+      link.href = dataUrl;
+      link.download = getPurchaseOrderImageFileName(imagePreviewOrder);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setImageActionMessage("采购单图片已下载。");
+    } catch (error) {
+      setImageActionMessage(getErrorMessage(error));
+    } finally {
+      setImageExporting(false);
+    }
+  };
+
+  const copyOrderImage = async () => {
+    if (!purchaseOrderImageRef.current) {
+      return;
+    }
+
+    try {
+      setImageExporting(true);
+      setImageActionMessage("");
+
+      if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") {
+        throw new Error("当前浏览器不支持直接复制图片，请使用下载图片。");
+      }
+
+      const blob = await toBlob(purchaseOrderImageRef.current, {
+        backgroundColor: "#ffffff",
+        cacheBust: true,
+        pixelRatio: 2
+      });
+
+      if (!blob) {
+        throw new Error("图片生成失败，请重试下载。");
+      }
+
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          [blob.type || "image/png"]: blob
+        })
+      ]);
+      setImageActionMessage("采购单图片已复制，可以直接粘贴发送。");
+    } catch (error) {
+      setImageActionMessage(getErrorMessage(error));
+    } finally {
+      setImageExporting(false);
     }
   };
 
@@ -975,6 +1345,24 @@ export default function PurchaseOrdersPage() {
         <div className="successNotice">
           <strong>操作成功</strong>
           <p>{successMessage}</p>
+          {generatedOrders.length > 0 ? (
+            <div className="generatedOrderActions">
+              {generatedOrders.map((order) => (
+                <div key={order.id}>
+                  <span>{order.purchaseOrderNo}</span>
+                  <button type="button" onClick={() => viewDetail(order.id)}>
+                    查看
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openOrderImagePreview(order.id)}
+                  >
+                    导出图片
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -1030,6 +1418,7 @@ export default function PurchaseOrdersPage() {
                   <th>成品 SKU</th>
                   <th>原材料编码</th>
                   <th>原材料名称</th>
+                  <th>默认供应商</th>
                   <th>单位</th>
                   <th>总需求数量</th>
                   <th>当前库存数量</th>
@@ -1064,6 +1453,11 @@ export default function PurchaseOrdersPage() {
                     </td>
                     <td>{requirement.material_sku?.sku_code ?? "-"}</td>
                     <td>{requirement.material_sku?.sku_name ?? "-"}</td>
+                    <td>
+                      {requirement.material_sku
+                        ? getMaterialDefaultSupplierLabel(requirement.material_sku)
+                        : "-"}
+                    </td>
                     <td>{requirement.unit}</td>
                     <td>{formatQuantity(requirement.required_quantity)}</td>
                     <td>{formatQuantity(requirement.available_quantity)}</td>
@@ -1108,11 +1502,37 @@ export default function PurchaseOrdersPage() {
           </div>
         </div>
 
+        <div className="listToolbar purchaseOrderToolbar">
+          <label>
+            供应商
+            <select
+              value={supplierFilter}
+              onChange={(event) => setSupplierFilter(event.target.value)}
+            >
+              <option value="all">全部供应商</option>
+              <option value="none">未设置供应商</option>
+              {suppliers.map((supplier) => (
+                <option key={supplier.id} value={supplier.id}>
+                  {getSupplierOptionLabel(supplier)}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <button className="secondaryButton" type="button" onClick={loadPageData}>
+            {loading ? "正在刷新..." : "刷新"}
+          </button>
+        </div>
+
         {!loading && purchaseOrders.length === 0 ? (
           <div className="emptyState">暂无采购单</div>
         ) : null}
 
-        {!loading && purchaseOrders.length > 0 ? (
+        {!loading && purchaseOrders.length > 0 && filteredPurchaseOrders.length === 0 ? (
+          <div className="emptyState">当前供应商筛选下暂无采购单</div>
+        ) : null}
+
+        {!loading && filteredPurchaseOrders.length > 0 ? (
           <div className="tableWrap">
             <table className="dataTable">
               <thead>
@@ -1195,6 +1615,13 @@ export default function PurchaseOrdersPage() {
                           <button type="button" onClick={() => exportOrder(order)}>
                             导出
                           </button>
+                          <button
+                            type="button"
+                            onClick={() => openOrderImagePreview(order)}
+                            disabled={detailLoading}
+                          >
+                            导出图片
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -1205,11 +1632,11 @@ export default function PurchaseOrdersPage() {
           </div>
         ) : null}
 
-        {!loading && purchaseOrders.length > 0 ? (
+        {!loading && filteredPurchaseOrders.length > 0 ? (
           <Pagination
             page={orderPage}
             pageSize={DEFAULT_PAGE_SIZE}
-            total={purchaseOrders.length}
+            total={filteredPurchaseOrders.length}
             onPageChange={setOrderPage}
           />
         ) : null}
@@ -1230,6 +1657,10 @@ export default function PurchaseOrdersPage() {
               <strong>{detail.supplier?.name ?? "-"}</strong>
             </div>
             <div className="detailItem">
+              <span>供应商编码</span>
+              <strong>{detail.supplier?.supplier_code ?? "-"}</strong>
+            </div>
+            <div className="detailItem">
               <span>联系人</span>
               <strong>{detail.supplier?.contact_name ?? "-"}</strong>
             </div>
@@ -1240,6 +1671,10 @@ export default function PurchaseOrdersPage() {
             <div className="detailItem">
               <span>邮箱</span>
               <strong>{detail.supplier?.email ?? "-"}</strong>
+            </div>
+            <div className="detailItem detailItemWide">
+              <span>地址</span>
+              <strong>{detail.supplier?.address ?? "-"}</strong>
             </div>
             <div className="detailItem">
               <span>状态</span>
@@ -1261,6 +1696,14 @@ export default function PurchaseOrdersPage() {
               <span>总金额</span>
               <strong>{formatMoney(detail.total_amount)}</strong>
             </div>
+            <div className="detailItem">
+              <span>合计数量</span>
+              <strong>{formatQuantity(getOrderTotalQuantity(detail))}</strong>
+            </div>
+            <div className="detailItem">
+              <span>制单人</span>
+              <strong>{getOrderMaker(detail)}</strong>
+            </div>
             <div className="detailItem detailItemWide">
               <span>备注</span>
               <strong>{detail.notes ?? "-"}</strong>
@@ -1271,8 +1714,10 @@ export default function PurchaseOrdersPage() {
             <table className="dataTable">
               <thead>
                 <tr>
+                  <th>序号</th>
                   <th>原材料 SKU</th>
                   <th>原材料名称</th>
+                  <th>规格</th>
                   <th>采购数量</th>
                   <th>已到货数量</th>
                   <th>单位</th>
@@ -1284,19 +1729,17 @@ export default function PurchaseOrdersPage() {
                 </tr>
               </thead>
               <tbody>
-                {detail.items.map((item) => (
+                {detail.items.map((item, index) => (
                   <tr key={item.id}>
+                    <td>{index + 1}</td>
                     <td>{item.sku?.sku_code ?? "-"}</td>
                     <td>{item.sku?.sku_name ?? "-"}</td>
+                    <td className="notesCell">{item.sku?.specs ?? "-"}</td>
                     <td>{formatQuantity(item.ordered_quantity)}</td>
                     <td>{formatQuantity(item.received_quantity)}</td>
                     <td>{item.unit}</td>
                     <td>{formatMoney(item.unit_price)}</td>
-                    <td>
-                      {formatMoney(
-                        Number(item.ordered_quantity) * Number(item.unit_price ?? 0)
-                      )}
-                    </td>
+                    <td>{formatMoney(getLineAmount(item))}</td>
                     <td>{item.material_requirement_id ?? "-"}</td>
                     <td>
                       {item.material_requirement?.production_order
@@ -1310,10 +1753,16 @@ export default function PurchaseOrdersPage() {
           </div>
 
           <div className="modalFooter">
-            <strong>合计：{formatMoney(detail.total_amount)}</strong>
+            <strong>
+              合计数量：{formatQuantity(getOrderTotalQuantity(detail))}，合计金额：
+              {formatMoney(detail.total_amount)}
+            </strong>
             <div className="rowActions">
               <button type="button" onClick={() => exportOrder(detail)}>
-                导出采购单
+                导出 CSV
+              </button>
+              <button type="button" onClick={() => openOrderImagePreview(detail)}>
+                导出采购单图片
               </button>
               <button
                 type="button"
@@ -1346,6 +1795,177 @@ export default function PurchaseOrdersPage() {
         </Modal>
       ) : null}
 
+      {imagePreviewOrder ? (
+        <Modal
+          open={Boolean(imagePreviewOrder)}
+          eyebrow="采购单图片"
+          title={`${imagePreviewOrder.purchase_order_no} 图片预览`}
+          maxWidth="xl"
+          onClose={() => {
+            if (!imageExporting) {
+              setImagePreviewOrder(null);
+              setImageActionMessage("");
+            }
+          }}
+        >
+          <div className="purchaseImagePreviewShell">
+            <div className="purchaseImagePaper" ref={purchaseOrderImageRef}>
+              <div className="purchaseImageHeader">
+                <div>
+                  <p>{defaultPurchaseCompanyName}</p>
+                  <h2>采购单</h2>
+                </div>
+                <div className="purchaseImageNo">
+                  <span>采购单号</span>
+                  <strong>{imagePreviewOrder.purchase_order_no}</strong>
+                </div>
+              </div>
+
+              <div className="purchaseImageMeta">
+                <div>
+                  <span>下单日期</span>
+                  <strong>{formatDate(imagePreviewOrder.ordered_at)}</strong>
+                </div>
+                <div>
+                  <span>预计到货日期</span>
+                  <strong>
+                    {formatDate(imagePreviewOrder.expected_arrival_date)}
+                  </strong>
+                </div>
+                <div>
+                  <span>采购状态</span>
+                  <strong>
+                    {purchaseStatusLabels[imagePreviewOrder.status] ??
+                      imagePreviewOrder.status}
+                  </strong>
+                </div>
+              </div>
+
+              <section className="purchaseImageBlock">
+                <h3>供应商信息</h3>
+                <div className="purchaseImageInfoGrid">
+                  <div>
+                    <span>供应商名称</span>
+                    <strong>{imagePreviewOrder.supplier?.name ?? "-"}</strong>
+                  </div>
+                  <div>
+                    <span>联系人</span>
+                    <strong>
+                      {imagePreviewOrder.supplier?.contact_name ?? "-"}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>电话</span>
+                    <strong>{imagePreviewOrder.supplier?.phone ?? "-"}</strong>
+                  </div>
+                  <div>
+                    <span>地址</span>
+                    <strong>{imagePreviewOrder.supplier?.address ?? "-"}</strong>
+                  </div>
+                </div>
+              </section>
+
+              <section className="purchaseImageBlock">
+                <h3>采购明细</h3>
+                <table className="purchaseImageTable">
+                  <thead>
+                    <tr>
+                      <th>序号</th>
+                      <th>辅料编码</th>
+                      <th>辅料名称</th>
+                      <th>规格</th>
+                      <th>单位</th>
+                      <th>采购数量</th>
+                      <th>单价</th>
+                      <th>金额</th>
+                      <th>备注</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {imagePreviewOrder.items.map((item, index) => (
+                      <tr key={item.id}>
+                        <td>{index + 1}</td>
+                        <td>{item.sku?.sku_code ?? "-"}</td>
+                        <td>{item.sku?.sku_name ?? "-"}</td>
+                        <td>{item.sku?.specs ?? "-"}</td>
+                        <td>{item.unit}</td>
+                        <td>{formatQuantity(item.ordered_quantity)}</td>
+                        <td>{formatMoney(item.unit_price)}</td>
+                        <td>{formatMoney(getLineAmount(item))}</td>
+                        <td>{item.notes ?? "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </section>
+
+              <div className="purchaseImageTotals">
+                <div>
+                  <span>合计数量</span>
+                  <strong>
+                    {formatQuantity(getOrderTotalQuantity(imagePreviewOrder))}
+                  </strong>
+                </div>
+                <div>
+                  <span>合计金额</span>
+                  <strong>{formatMoney(imagePreviewOrder.total_amount)}</strong>
+                </div>
+              </div>
+
+              <div className="purchaseImageFooter">
+                <div>
+                  <span>备注</span>
+                  <strong>{imagePreviewOrder.notes ?? "-"}</strong>
+                </div>
+                <div>
+                  <span>制单人</span>
+                  <strong>{getOrderMaker(imagePreviewOrder)}</strong>
+                </div>
+                <div>
+                  <span>生成时间</span>
+                  <strong>{formatDateTime(imageGeneratedAt)}</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {imageActionMessage ? (
+            <div className="debugNotice">{imageActionMessage}</div>
+          ) : null}
+
+          <div className="modalFooter">
+            <strong>{getPurchaseOrderImageFileName(imagePreviewOrder)}</strong>
+            <div className="rowActions">
+              <button
+                type="button"
+                onClick={copyOrderImage}
+                disabled={imageExporting}
+              >
+                {imageExporting ? "正在生成..." : "复制采购单图片"}
+              </button>
+              <button
+                className="primaryButton"
+                type="button"
+                onClick={downloadOrderImage}
+                disabled={imageExporting}
+              >
+                {imageExporting ? "正在生成..." : "下载图片"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setImagePreviewOrder(null);
+                  setImageActionMessage("");
+                }}
+                disabled={imageExporting}
+              >
+                关闭
+              </button>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
+
       {manualForm ? (
         <Modal
           open={Boolean(manualForm)}
@@ -1360,24 +1980,23 @@ export default function PurchaseOrdersPage() {
         >
           <form onSubmit={submitManualPurchaseOrder}>
             <div className="dataForm purchaseForm">
-              <label>
-                供应商
-                <select
-                  value={manualForm.supplierId}
-                  onChange={(event) =>
-                    updateManualForm("supplierId", event.target.value)
+              <SupplierSearchSelect
+                label="供应商"
+                suppliers={suppliers}
+                value={manualForm.supplierId}
+                disabled={submitting}
+                placeholder="搜索供应商"
+                onChange={(nextSupplierId) => {
+                  updateManualForm("supplierId", nextSupplierId);
+                  if (nextSupplierId) {
+                    setManualSupplierNotice(
+                      `已手动选择供应商：${getSupplierNameById(nextSupplierId)}。`
+                    );
+                  } else {
+                    setManualSupplierNotice("");
                   }
-                  disabled={submitting}
-                  required
-                >
-                  <option value="">请选择供应商</option>
-                  {suppliers.map((supplier) => (
-                    <option key={supplier.id} value={supplier.id}>
-                      {supplier.supplier_code} / {supplier.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                }}
+              />
 
               <label>
                 采购负责人
@@ -1434,6 +2053,10 @@ export default function PurchaseOrdersPage() {
               </label>
             </div>
 
+            {manualSupplierNotice ? (
+              <div className="debugNotice">{manualSupplierNotice}</div>
+            ) : null}
+
             <div className="sectionHeader">
               <div>
                 <p className="eyebrow">采购明细</p>
@@ -1454,6 +2077,7 @@ export default function PurchaseOrdersPage() {
                   <tr>
                     <th>原材料 SKU</th>
                     <th>原材料名称</th>
+                    <th>默认供应商</th>
                     <th>单位</th>
                     <th>采购数量</th>
                     <th>单价</th>
@@ -1484,6 +2108,16 @@ export default function PurchaseOrdersPage() {
                           )}
                         </td>
                         <td>{item.skuName || "-"}</td>
+                        <td>
+                          {item.skuId
+                            ? getMaterialDefaultSupplierLabel(
+                                materialSkus.find((sku) => sku.id === item.skuId) ??
+                                  {
+                                    default_supplier: null
+                                  }
+                              )
+                            : "-"}
+                        </td>
                         <td>{item.unit || "-"}</td>
                         <td>
                           <input
@@ -1612,22 +2246,23 @@ export default function PurchaseOrdersPage() {
         >
           <form onSubmit={submitPurchaseOrder}>
             <div className="dataForm purchaseForm">
-              <label>
-                供应商
-                <select
-                  value={supplierId}
-                  onChange={(event) => setSupplierId(event.target.value)}
-                  disabled={submitting}
-                  required
-                >
-                  <option value="">请选择供应商</option>
-                  {suppliers.map((supplier) => (
-                    <option key={supplier.id} value={supplier.id}>
-                      {supplier.supplier_code} / {supplier.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <SupplierSearchSelect
+                label="供应商"
+                suppliers={suppliers}
+                value={supplierId}
+                disabled={submitting}
+                placeholder="搜索供应商"
+                onChange={(nextSupplierId) => {
+                  setSupplierId(nextSupplierId);
+                  if (nextSupplierId) {
+                    setDraftSupplierNotice(
+                      `已手动选择供应商：${getSupplierNameById(nextSupplierId)}。`
+                    );
+                  } else {
+                    setDraftSupplierNotice("");
+                  }
+                }}
+              />
 
               <label>
                 采购负责人
@@ -1676,12 +2311,17 @@ export default function PurchaseOrdersPage() {
               </label>
             </div>
 
+            {draftSupplierNotice ? (
+              <div className="debugNotice">{draftSupplierNotice}</div>
+            ) : null}
+
             <div className="tableWrap">
               <table className="dataTable">
                 <thead>
                   <tr>
                     <th>原材料 SKU</th>
                     <th>原材料名称</th>
+                    <th>默认供应商</th>
                     <th>采购数量</th>
                     <th>单位</th>
                     <th>单价</th>
@@ -1702,6 +2342,7 @@ export default function PurchaseOrdersPage() {
                           <span>{item.productionOrderNo}</span>
                         </td>
                         <td>{item.skuName}</td>
+                        <td>{item.defaultSupplierLabel}</td>
                         <td>
                           <input
                             className="tableInput"

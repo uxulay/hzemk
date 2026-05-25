@@ -8,6 +8,7 @@ import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Modal } from "@/components/Modal";
 import { Pagination } from "@/components/Pagination";
+import { SupplierSearchSelect } from "@/components/SupplierSearchSelect";
 import {
   bulkImportMaterials,
   createMaterial,
@@ -15,12 +16,14 @@ import {
   deleteMaterialsByIds,
   getMaterialDetail,
   getMaterials,
+  getMaterialSupplierOptions,
   toggleMaterialStatus,
   updateMaterial,
   validateMaterialImportRows,
   type MaterialDetail,
   type MaterialImportInput,
   type MaterialListRow,
+  type MaterialSupplier,
   type MaterialStatus
 } from "@/lib/api/materials";
 import { downloadCsvTemplate, type CsvTemplateField } from "@/lib/utils/csv";
@@ -31,6 +34,7 @@ type MaterialFormState = {
   skuName: string;
   unit: string;
   specs: string;
+  defaultSupplierId: string;
   status: MaterialStatus;
 };
 
@@ -40,6 +44,7 @@ type MaterialEditFormState = {
   skuName: string;
   unit: string;
   specs: string;
+  defaultSupplierId: string;
   status: MaterialStatus;
 };
 
@@ -56,6 +61,7 @@ const initialMaterialForm: MaterialFormState = {
   skuName: "",
   unit: "pcs",
   specs: "",
+  defaultSupplierId: "",
   status: "active"
 };
 
@@ -110,6 +116,18 @@ const materialImportFields: CsvTemplateField[] = [
     aliases: ["specs", "remark"]
   },
   {
+    key: "默认供应商编码",
+    label: "默认供应商编码",
+    example: "SUP-001",
+    aliases: ["supplier_code"]
+  },
+  {
+    key: "默认供应商名称",
+    label: "默认供应商名称",
+    example: "深圳某某包装有限公司",
+    aliases: ["supplier_name"]
+  },
+  {
     key: "状态",
     label: "状态",
     example: "active",
@@ -123,6 +141,8 @@ const materialImportSampleRows = [
     辅料名称: "黑色扎带",
     单位: "pcs",
     规格: "分类: 包装辅料；规格 4x200mm",
+    默认供应商编码: "SUP-001",
+    默认供应商名称: "",
     状态: "active"
   },
   {
@@ -130,6 +150,8 @@ const materialImportSampleRows = [
     辅料名称: "牛皮纸箱",
     单位: "box",
     规格: "分类: 包装辅料；30x20x15cm",
+    默认供应商编码: "",
+    默认供应商名称: "深圳某某包装有限公司",
     状态: "active"
   }
 ];
@@ -199,6 +221,17 @@ function getMaterialCategory(specs: string | null | undefined) {
   return match?.[1]?.trim() || "-";
 }
 
+function getMaterialSupplierLabel(material: Pick<MaterialListRow, "default_supplier">) {
+  if (!material.default_supplier) {
+    return "未设置";
+  }
+
+  const statusText =
+    material.default_supplier.status === "inactive" ? " / 停用" : "";
+
+  return `${material.default_supplier.supplier_code} / ${material.default_supplier.name}${statusText}`;
+}
+
 function isLowStock(material: MaterialListRow) {
   return (
     material.safety_stock_quantity > 0 &&
@@ -216,6 +249,7 @@ export default function AdminMaterialsPage() {
   const { user } = useMockRole();
   const canManageMaterials = user.role === "admin" || user.role === "procurement";
   const [materials, setMaterials] = useState<MaterialListRow[]>([]);
+  const [suppliers, setSuppliers] = useState<MaterialSupplier[]>([]);
   const [materialForm, setMaterialForm] =
     useState<MaterialFormState>(initialMaterialForm);
   const [editForm, setEditForm] = useState<MaterialEditFormState | null>(null);
@@ -227,6 +261,7 @@ export default function AdminMaterialsPage() {
   const [searchKeyword, setSearchKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [unitFilter, setUnitFilter] = useState("all");
+  const [supplierFilter, setSupplierFilter] = useState("all");
   const [selectedMaterialIds, setSelectedMaterialIds] = useState<string[]>([]);
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
@@ -272,6 +307,21 @@ export default function AdminMaterialsPage() {
     );
   }, [materials]);
 
+  const supplierOptions = useMemo(() => {
+    const supplierById = new Map<string, MaterialSupplier>();
+
+    suppliers.forEach((supplier) => supplierById.set(supplier.id, supplier));
+    materials.forEach((material) => {
+      if (material.default_supplier) {
+        supplierById.set(material.default_supplier.id, material.default_supplier);
+      }
+    });
+
+    return [...supplierById.values()].sort((first, second) =>
+      first.supplier_code.localeCompare(second.supplier_code, "zh-CN")
+    );
+  }, [materials, suppliers]);
+
   const filteredMaterials = useMemo(() => {
     const keyword = searchKeyword.trim().toLowerCase();
 
@@ -284,10 +334,15 @@ export default function AdminMaterialsPage() {
       const matchesStatus =
         statusFilter === "all" || material.status === statusFilter;
       const matchesUnit = unitFilter === "all" || material.unit === unitFilter;
+      const matchesSupplier =
+        supplierFilter === "all" ||
+        (supplierFilter === "none"
+          ? !material.default_supplier_id
+          : material.default_supplier_id === supplierFilter);
 
-      return matchesKeyword && matchesStatus && matchesUnit;
+      return matchesKeyword && matchesStatus && matchesUnit && matchesSupplier;
     });
-  }, [materials, searchKeyword, statusFilter, unitFilter]);
+  }, [materials, searchKeyword, statusFilter, supplierFilter, unitFilter]);
 
   const selectedMaterialRows = useMemo(
     () =>
@@ -309,9 +364,13 @@ export default function AdminMaterialsPage() {
       setLoading(true);
       setErrorMessage("");
 
-      const materialData = await getMaterials();
+      const [materialData, supplierData] = await Promise.all([
+        getMaterials(),
+        getMaterialSupplierOptions()
+      ]);
 
       setMaterials(materialData);
+      setSuppliers(supplierData);
       setSelectedMaterialIds((current) =>
         current.filter((materialId) =>
           materialData.some((material) => material.id === materialId)
@@ -327,6 +386,7 @@ export default function AdminMaterialsPage() {
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setMaterials([]);
+      setSuppliers([]);
       setSelectedMaterialIds([]);
       setSelectedDetailMaterial(null);
       setMaterialDetail(null);
@@ -341,7 +401,7 @@ export default function AdminMaterialsPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [searchKeyword, statusFilter, unitFilter]);
+  }, [searchKeyword, statusFilter, supplierFilter, unitFilter]);
 
   const refreshAll = async () => {
     const detailMaterial = selectedDetailMaterial;
@@ -391,6 +451,7 @@ export default function AdminMaterialsPage() {
       skuName: material.sku_name,
       unit: material.unit,
       specs: material.specs ?? "",
+      defaultSupplierId: material.default_supplier_id ?? "",
       status: toEditableStatus(material.status)
     });
     setErrorMessage("");
@@ -678,6 +739,19 @@ export default function AdminMaterialsPage() {
             />
           </label>
 
+          <SupplierSearchSelect
+            label="默认供应商"
+            suppliers={supplierOptions}
+            value={materialForm.defaultSupplierId}
+            disabled={creating}
+            onChange={(supplierId) =>
+              setMaterialForm((current) => ({
+                ...current,
+                defaultSupplierId: supplierId
+              }))
+            }
+          />
+
           <label>
             状态
             <select
@@ -773,6 +847,23 @@ export default function AdminMaterialsPage() {
                 required
               />
             </label>
+
+            <SupplierSearchSelect
+              label="默认供应商"
+              suppliers={supplierOptions}
+              value={editForm.defaultSupplierId}
+              disabled={updating}
+              onChange={(supplierId) =>
+                setEditForm((current) =>
+                  current
+                    ? {
+                        ...current,
+                        defaultSupplierId: supplierId
+                      }
+                    : current
+                )
+              }
+            />
 
             <label>
               状态
@@ -905,6 +996,23 @@ export default function AdminMaterialsPage() {
             </select>
           </label>
 
+          <label>
+            默认供应商
+            <select
+              value={supplierFilter}
+              onChange={(event) => setSupplierFilter(event.target.value)}
+            >
+              <option value="all">全部供应商</option>
+              <option value="none">未设置供应商</option>
+              {supplierOptions.map((supplier) => (
+                <option key={supplier.id} value={supplier.id}>
+                  {supplier.supplier_code} / {supplier.name}
+                  {supplier.status === "inactive" ? " / 停用" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+
           <button className="secondaryButton" type="button" onClick={refreshAll}>
             刷新
           </button>
@@ -950,6 +1058,9 @@ export default function AdminMaterialsPage() {
                   <th>分类</th>
                   <th>单位</th>
                   <th>规格</th>
+                  <th>默认供应商</th>
+                  <th>供应商联系人</th>
+                  <th>供应商电话</th>
                   <th>状态</th>
                   <th>当前库存</th>
                   <th>安全库存</th>
@@ -982,6 +1093,9 @@ export default function AdminMaterialsPage() {
                       <td>{getMaterialCategory(material.specs)}</td>
                       <td>{material.unit}</td>
                       <td className="notesCell">{material.specs ?? "-"}</td>
+                      <td>{getMaterialSupplierLabel(material)}</td>
+                      <td>{material.default_supplier?.contact_name ?? "-"}</td>
+                      <td>{material.default_supplier?.phone ?? "-"}</td>
                       <td>
                         <span
                           className={`tablePill sku-status-${material.status}`}
@@ -1101,6 +1215,20 @@ export default function AdminMaterialsPage() {
                   <strong>
                     {getMaterialStatusLabel(materialDetail.material.status)}
                   </strong>
+                </div>
+                <div className="detailItem">
+                  <span>默认供应商</span>
+                  <strong>{getMaterialSupplierLabel(materialDetail.material)}</strong>
+                </div>
+                <div className="detailItem">
+                  <span>供应商联系人</span>
+                  <strong>
+                    {materialDetail.material.default_supplier?.contact_name ?? "-"}
+                  </strong>
+                </div>
+                <div className="detailItem">
+                  <span>供应商电话</span>
+                  <strong>{materialDetail.material.default_supplier?.phone ?? "-"}</strong>
                 </div>
                 <div className="detailItem">
                   <span>当前库存汇总</span>
@@ -1342,7 +1470,7 @@ export default function AdminMaterialsPage() {
       <BulkImportDialog<MaterialImportInput>
         open={importOpen}
         title="辅料批量导入"
-        description="辅料会写入现有 skus 表，并固定写入 sku_type = material；product_id、amazon_sku、fnsku 都保持为空。上传后先预览校验，不会直接写入数据库。"
+        description="辅料会写入现有 skus 表，并固定写入 sku_type = material；默认供应商按供应商编码优先匹配，匹配不到会在预览里报错，不会自动创建供应商。"
         templateFileName="materials-import-template.csv"
         fields={materialImportFields}
         sampleRows={materialImportSampleRows}

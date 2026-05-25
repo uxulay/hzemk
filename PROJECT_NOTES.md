@@ -1,6 +1,6 @@
 # 项目进度说明
 
-最后整理日期：2026-05-24
+最后整理日期：2026-05-25
 
 本文档根据当前项目代码、页面路由、`src/lib/api`、`supabase` 目录、`schema.sql`、`seed.sql` 和已实现页面整理。后续 Codex 开发前请先阅读本文件。
 
@@ -43,7 +43,7 @@
 | `/production/orders` | 已完成跟踪和领料第一版 | 生产任务列表。显示品牌、FBA 备货需求数量、计划生产数量、超量生产数量、已入库数量、待入库数量、物料状态、领料状态、生产状态。支持按品牌筛选、查看详情、确认领料弹窗、自动扣原材料库存、写 `material_out` 库存流水，并把生产任务更新为 `in_progress`。 |
 | `/bom` | 已完成管理和批量维护第一版 | BOM 管理页面。读取 `bom_headers` 和 `bom_items`，显示成品 SKU 所属品牌，支持按品牌筛选、新增 BOM、查看明细、添加原材料、编辑 BOM 明细的单位用量/损耗率/备注、启用/停用 BOM、CSV 批量导入、删除明细、删除/批量删除或停用 BOM，并在删除前检查生产任务引用。 |
 | `/materials/requirements` | 已完成查询第一版 | 物料需求列表。读取 `material_requirements`，并回查 `bom_items` 显示 BOM 单位用量和损耗率。支持按状态筛选。当前是查询页，不直接新增、编辑、删除。 |
-| `/purchase/orders` | 已完成采购升级版 | 采购单页面。支持从缺料物料生成采购单、采购人员手动创建采购单、CSV 批量导入、CSV 导出给供应商、列表分页、详情弹窗和状态按钮。缺料生成仍会写入 `purchase_order_items.material_requirement_id` 并把对应物料需求状态更新为 `purchased`。实际库存入库建议走 `/inventory/inbound`。 |
+| `/purchase/orders` | 已完成采购升级版 | 采购单页面。支持从缺料物料生成采购单、采购人员手动创建采购单、CSV 批量导入、CSV 导出、采购单 PNG 图片导出、列表分页、按供应商筛选、详情弹窗和状态按钮。手动选择辅料或从缺料生成采购单时，会根据 `skus.default_supplier_id` 自动带出默认供应商；不同默认供应商的缺料可按供应商拆分生成采购单。缺料生成仍会写入 `purchase_order_items.material_requirement_id` 并把对应物料需求状态更新为 `purchased`。实际库存入库建议走 `/inventory/inbound`。 |
 | `/inventory/inbound` | 已完成入库第一版 | 入库管理。分为采购入库和生产入库。采购入库会写 `material_in` 库存流水、更新 `inventory_items`、采购明细到货数量、采购单状态和物料需求状态。生产入库会写 `product_in` 库存流水、更新成品库存、更新生产任务 `completed_quantity` 和状态。 |
 | `/inventory/fba-outbound` | 已完成 FBA 出库第一版 | FBA 出库单独处理。读取可出库 FBA 备货需求，显示并支持按品牌筛选，按成品库存和已出库数量计算待出库数量。提交后写 `product_out` 库存流水、扣减 `inventory_items`，累计出库数量达到备货需求数量后把备货需求标记为 `shipped`。 |
 | `/inventory/transactions` | 已完成查询第一版 | 库存流水页面。读取 `inventory_transactions`，支持按流水类型、仓库、品牌、SKU、日期筛选，显示关联采购单、生产任务或 FBA 备货单。当前只查询，不新增、编辑、删除。 |
@@ -52,9 +52,9 @@
 | `/inventory/products` | 已完成查询第一版 | 成品当前库存页面。读取 `inventory_items`，按成品 SKU 和品牌筛选，显示当前成品库存、品牌、仓库和查看流水入口。 |
 | `/admin/brands` | 已完成管理和批量维护第一版 | 品牌基础资料管理页面。读取 `brands` 和 `products`，支持品牌列表、搜索、状态筛选、汇总卡片、新增品牌、编辑品牌、查看品牌详情、启用/停用、CSV 批量导入、删除/批量删除或停用，并在删除前检查产品引用。 |
 | `/admin/products` | 已完成管理和批量维护第一版 | 产品基础资料管理页面。读取 `products`、`brands` 和 `skus`，支持产品列表显示品牌、搜索、品牌筛选、状态筛选、汇总卡片、新增产品选择品牌、编辑产品修改品牌、启用/停用产品、查看产品关联 SKU、CSV 批量导入品牌字段、删除/批量删除或停用，并在删除前检查 SKU 引用。 |
-| `/admin/skus` | 已完成管理和批量维护第一版 | SKU 基础资料管理页面。读取 `skus`、`products`、`brands`、`inventory_items`、`bom_headers`、`bom_items`，品牌通过 SKU 所属产品继承，不在 SKU 表重复保存。页面支持 SKU 列表显示品牌、按品牌筛选、搜索筛选、汇总卡片、新增 SKU、编辑 SKU、启用/停用 SKU、查看库存入口、查看 BOM/详情关联、CSV 批量导入、删除/批量删除或停用，并在删除前检查 BOM、FBA、生产、采购、库存和库存流水引用。 |
-| `/admin/materials` | 已完成管理和批量维护第一版 | 辅料管理页面。直接读取 `skus.sku_type = material` 的辅料资料，支持搜索筛选、汇总卡片、新增辅料、编辑辅料、启用/停用、查看库存/BOM/采购/流水详情、CSV 批量导入、删除/批量删除或停用，并在删除前检查 BOM、物料需求、采购、库存和库存流水引用。 |
-| `/admin/suppliers` | 已完成管理和批量维护第一版 | 供应商基础资料管理页面。读取 `suppliers` 和 `purchase_orders`，支持供应商列表、搜索、状态筛选、汇总卡片、新增供应商、编辑供应商、启用/停用供应商、查看关联采购单、CSV 批量导入、删除/批量删除或停用，并在删除前检查采购单引用。 |
+| `/admin/skus` | 已完成管理和批量维护第一版 | SKU 基础资料管理页面。读取 `skus`、`products`、`brands`、`suppliers`、`inventory_items`、`bom_headers`、`bom_items`，品牌通过 SKU 所属产品继承，不在 SKU 表重复保存。material 类型 SKU 可显示和编辑默认供应商，成品和半成品可保持为空。页面支持 SKU 列表显示品牌、默认供应商、按品牌筛选、搜索筛选、汇总卡片、新增 SKU、编辑 SKU、启用/停用 SKU、查看库存入口、查看 BOM/详情关联、CSV 批量导入、删除/批量删除或停用，并在删除前检查 BOM、FBA、生产、采购、库存和库存流水引用。 |
+| `/admin/materials` | 已完成管理和批量维护第一版 | 辅料管理页面。直接读取 `skus.sku_type = material` 的辅料资料，支持维护默认供应商、按供应商筛选、搜索筛选、汇总卡片、新增辅料、编辑辅料、启用/停用、查看库存/BOM/采购/流水详情、CSV 批量导入、删除/批量删除或停用，并在删除前检查 BOM、物料需求、采购、库存和库存流水引用。 |
+| `/admin/suppliers` | 已完成管理和批量维护第一版 | 供应商基础资料管理页面。读取 `suppliers`、`skus.default_supplier_id` 和 `purchase_orders`，支持供应商列表、搜索、状态筛选、汇总卡片、新增供应商、编辑供应商、启用/停用供应商、查看关联辅料和关联采购单、CSV 批量导入、删除/批量删除或停用，并在删除前检查采购单引用和辅料默认供应商引用。 |
 | `/admin/warehouses` | 已完成管理和批量维护第一版 | 仓库基础资料管理页面。读取 `warehouses`、`inventory_items`、`inventory_transactions` 和 `skus`，支持仓库列表、搜索筛选、汇总卡片、新增仓库、编辑仓库、启用/停用仓库、查看仓库库存、跳转查看流水、CSV 批量导入、删除/批量删除或停用，并在删除前检查库存、流水、FBA 备货和采购单引用。 |
 | `/admin/users` | 已完成管理第一版 | 用户管理页面。读取 `profiles` 和 `roles`，支持用户资料列表、搜索筛选、汇总卡片、新增/编辑 profiles、启用/停用用户、分配角色，并只读展示角色列表。当前不创建 Supabase Auth 登录账号。 |
 
@@ -187,18 +187,19 @@
 当前逻辑：
 
 - 辅料资料继续存在 `skus` 表，通过 `skus.sku_type = material` 和成品 SKU 区分。
+- 辅料默认供应商存放在 `skus.default_supplier_id`，关联 `suppliers.id`；只有 `sku_type = material` 的记录使用，成品和半成品可为空。
 - 页面只展示和维护 `sku_type = material` 的记录，不把辅料做成产品 SPU，也不强制绑定 `products.product_id`。
-- 新增辅料时固定写入 `sku_type = material`、`product_id = null`、`amazon_sku = null`、`fnsku = null`。
-- 编辑辅料时允许修改辅料名称、单位、规格和状态；辅料编码锁定，避免影响 BOM、采购、库存和流水记录。
-- 列表显示辅料编码、辅料名称、从规格里临时解析的分类、单位、规格、状态、当前库存汇总、安全库存汇总、BOM 引用次数和采购引用次数。
-- 顶部支持按辅料编码、名称、规格搜索，支持状态筛选、单位筛选、刷新、新增和批量导入。
+- 新增辅料时固定写入 `sku_type = material`、`product_id = null`、`amazon_sku = null`、`fnsku = null`，并可选择默认供应商。
+- 编辑辅料时允许修改辅料名称、单位、规格、默认供应商和状态；辅料编码锁定，避免影响 BOM、采购、库存和流水记录。
+- 列表显示辅料编码、辅料名称、从规格里临时解析的分类、单位、规格、默认供应商、供应商联系人、供应商电话、状态、当前库存汇总、安全库存汇总、BOM 引用次数和采购引用次数。
+- 顶部支持按辅料编码、名称、规格搜索，支持状态筛选、单位筛选、供应商筛选、刷新、新增和批量导入。
 - 汇总卡片显示辅料总数、启用辅料、停用辅料、有库存辅料、低库存辅料。
 - 详情弹窗展示基础资料、当前库存汇总、被哪些 BOM 使用、最近采购记录和最近库存流水。
 - 删除前检查 `bom_items.component_sku_id`、`material_requirements.material_sku_id`、`purchase_order_items.sku_id`、`inventory_items.sku_id`、`inventory_transactions.sku_id`，有引用时禁止硬删除并提示改为停用。
 - 批量导入复用 `BulkImportDialog`，上传后先预览和行级校验，有错误行时可下载错误报告，确认后才写入 Supabase。
-- 批量导入模板中文字段：`辅料编码`、`辅料名称`、`单位`、`规格`、`状态`。
-- 批量导入也兼容英文表头：`sku_code`、`sku_name`、`unit`、`specs`、`status`。
-- 批量导入规则：辅料编码和辅料名称必填，单位为空默认 `pcs`，状态为空默认 `active`，辅料编码重复时阻止导入并提示。
+- 批量导入模板中文字段：`辅料编码`、`辅料名称`、`单位`、`规格`、`默认供应商编码`、`默认供应商名称`、`状态`。
+- 批量导入也兼容英文表头：`sku_code`、`sku_name`、`unit`、`specs`、`supplier_code`、`supplier_name`、`status`。
+- 批量导入规则：辅料编码和辅料名称必填，单位为空默认 `pcs`，状态为空默认 `active`；导入时固定写入 `sku_type = material`；如果填写供应商编码，优先按 `suppliers.supplier_code` 匹配；没有编码但填写名称时，按 `suppliers.name` 匹配；供应商为空允许导入为未设置供应商；供应商匹配不到时该行报错，不会自动创建供应商。
 - 导航位置：基础资料 -> 辅料管理；角色可见范围为 `admin`、`procurement`、`warehouse`。当前页面里 admin 和 procurement 可新增/编辑/导入/删除，warehouse 只查看。
 
 本次修改文件：
@@ -219,8 +220,46 @@
 如果辅料管理读写失败，优先检查：
 
 - 当前 Supabase RLS 是否已经执行 `supabase/dev-skus-policies.sql` 或 `supabase/dev-bulk-import-delete-policies.sql` 中针对 `skus` 的开发阶段读写策略。
+- 是否已经在 Supabase SQL Editor 执行 `scripts/add-material-default-supplier.sql`；如果没有执行，页面读取 `skus.default_supplier_id` 会失败。
 - `inventory_items.safety_stock_quantity` 是否有数据；没有数据时低库存统计可能为 0。
-- 导入 CSV 是否使用了模板字段，或者英文兼容字段 `sku_code`、`sku_name`、`unit`、`specs`、`status`。
+- 导入 CSV 是否使用了模板字段，或者英文兼容字段 `sku_code`、`sku_name`、`unit`、`specs`、`supplier_code`、`supplier_name`、`status`。
+
+### 3.4.1 辅料默认供应商联动（2026-05-25）
+
+本次给辅料补充默认供应商能力，仍然不新建 `materials` 表，辅料继续由 `skus.sku_type = material` 区分。
+
+当前逻辑：
+
+- 新增 SQL 脚本 `scripts/add-material-default-supplier.sql`，给 `skus` 增加 `default_supplier_id uuid references suppliers(id) on delete set null`，并增加索引和字段说明。
+- `supabase/schema.sql` 已同步完整结构：`skus.default_supplier_id` 是辅料默认供应商字段，老数据允许为空。
+- `/admin/materials` 新增默认供应商维护、供应商筛选、列表供应商联系人和电话展示，新增/编辑弹窗里的供应商选择是可搜索选择器，只展示 active 供应商；如果旧辅料已绑定 inactive 供应商，详情和编辑仍能显示。
+- `/admin/materials` 批量导入模板新增 `默认供应商编码`、`默认供应商名称`，英文兼容 `supplier_code`、`supplier_name`；导入不会自动创建供应商，匹配不到会按行报错并支持下载错误报告。
+- `/purchase/orders` 手动新建采购单时，选择辅料后会根据辅料默认供应商自动带出供应商；多条辅料默认供应商一致时自动填入，一致性不满足时提示手动选择或拆分。
+- `/purchase/orders` 从缺料生成采购单时，会优先读取缺料辅料的默认供应商；多个缺料辅料默认供应商不同且都已设置时，提交会按供应商拆分生成多张采购单；未设置默认供应商的辅料仍可手动选择供应商，不阻止采购。
+- `/admin/suppliers` 详情弹窗显示该供应商关联了哪些辅料和关联辅料数量；删除供应商前会检查 `skus.default_supplier_id`，被辅料设置为默认供应商时禁止硬删除并提示改为停用。
+- `/admin/skus` 对 material 类型显示和编辑默认供应商，成品 SKU 和其他类型可为空，不强制绑定供应商。
+
+本次修改文件：
+
+- `scripts/add-material-default-supplier.sql`
+- `supabase/schema.sql`
+- `src/components/SupplierSearchSelect.tsx`
+- `src/lib/api/materials.ts`
+- `src/app/(app)/admin/materials/page.tsx`
+- `src/lib/api/purchase.ts`
+- `src/app/(app)/purchase/orders/page.tsx`
+- `src/lib/api/suppliers.ts`
+- `src/app/(app)/admin/suppliers/page.tsx`
+- `src/lib/api/skus.ts`
+- `src/app/(app)/admin/skus/page.tsx`
+- `src/lib/api/bulk-management.ts`
+- `PROJECT_NOTES.md`
+
+本次验证：
+
+- 已运行 `npm run typecheck`，通过。
+- 已运行 `npm run build`，通过。
+- 用户要求不要自动打开浏览器检查，所以本次不做浏览器自动检查。
 
 ### 3.5 品牌管理和产品品牌关联（2026-05-24）
 
@@ -426,9 +465,12 @@
 - 手动创建采购单默认写入 `purchase_orders.status = draft`，采购单号自动使用 `PUR-年月日-随机数`，例如 `PUR-20260601-1234`。
 - 手动创建和批量导入的采购明细 `material_requirement_id` 为空，不影响缺料需求。
 - 草稿采购单支持编辑供应商、采购负责人、日期、备注、采购数量、单价和明细备注。第一版不做删除采购单，不开放业务单据 delete。
-- 采购单列表显示采购单号、供应商、采购负责人、状态、下单日期、预计到货日期、总金额、明细数量、创建来源、创建时间和操作。
-- 详情使用弹窗展示，包含采购单主信息、供应商联系人信息、采购明细、总金额、关联物料需求和状态操作。
+- 采购单列表显示采购单号、供应商、采购负责人、状态、下单日期、预计到货日期、总金额、明细数量、创建来源、创建时间和操作，并支持按供应商筛选。
+- 详情使用弹窗展示，包含采购单主信息、供应商完整信息、采购明细、合计数量、合计金额、关联物料需求和状态操作。
 - 每行采购单和详情弹窗都支持导出 CSV，文件名格式为 `采购单号-供应商名称.csv`，字段用中文，方便直接发给供应商。
+- 详情弹窗新增“导出采购单图片”，采购单列表和缺料生成成功提示里也提供图片导出入口。图片预览使用正式采购单版式，支持下载 PNG，并在浏览器支持时复制图片。
+- 采购单图片文件名格式为 `采购单_采购单号_供应商名称.png`，内容包含公司名称、采购单号、下单日期、预计到货日期、供应商信息、明细表、合计数量、合计金额、备注、制单人和生成时间。
+- 图片导出使用前端依赖 `html-to-image`，只把当前详情数据渲染成 PNG，不写数据库，也不新增导出表。
 - 批量导入采购单复用 `BulkImportDialog` 和 `src/lib/utils/csv.ts`，上传后先预览和逐行校验，不会直接写入数据库。
 - 批量导入模板字段：`purchase_order_no`、`supplier_code`、`order_date`、`expected_arrival_date`、`material_sku_code`、`quantity`、`unit_price`、`remark`。
 - 批量导入分组规则：填写了 `purchase_order_no` 的行按采购单号合并；未填写采购单号的行按 `supplier_code + expected_arrival_date` 合并为一张采购单。
@@ -442,28 +484,39 @@
 - `src/app/(app)/purchase/orders/page.tsx`
 - `src/lib/api/purchase.ts`
 - `src/app/globals.css`
+- `package.json`
+- `package-lock.json`
 - `PROJECT_NOTES.md`
 
 测试方式：
 
 - 手动创建采购单：打开 `/purchase/orders`，点击“+ 新建采购单”，选择供应商、可选采购负责人、下单日期、预计到货日期和备注，添加一条或多条原材料 SKU 明细，确认数量大于 0、单价不小于 0 后保存，再回到采购单列表确认能看到新采购单。
 - 批量导入采购单：打开 `/purchase/orders`，点击“批量导入采购单”，先下载模板，填写 CSV 后上传，确认页面先显示预览、行级校验和将生成的采购单数量；有错误时不能导入，全部通过后点击“确认导入”。
-- 导出采购单：在采购单列表点击“导出”，或点“查看详情”后在详情弹窗点击“导出采购单”，确认下载的 CSV 表头是中文，且明细小计等于采购数量乘以单价。
+- 导出采购单 CSV：在采购单列表点击“导出”，或点“查看详情”后在详情弹窗点击“导出 CSV”，确认下载的 CSV 表头是中文，且明细小计等于采购数量乘以单价。
+- 导出采购单图片：点“查看详情”后点击“导出采购单图片”，确认弹窗里展示正式采购单版式，再点击“下载图片”下载 PNG；如果浏览器支持，也可以点“复制采购单图片”后直接粘贴到微信或钉钉。
 - 缺料生成采购单：在“待采购清单”勾选缺料物料，点击“生成采购单”，确认仍会写入 `purchase_order_items.material_requirement_id`，并把对应缺料需求更新为 `purchased`。
 - 侧边栏：确认顺序为首页、创建备货需求、FBA 备货需求、生产管理、采购管理、仓库库存、基础资料、系统管理，且不再出现不可点击的“FBA 备货”分组标题。
+
+本次验证：
+
+- 已运行 `npm run typecheck`，通过。
+- 已运行 `npm run build`，通过。
+- 已启动本地页面到 `/purchase/orders` 做快速检查；页面能打开，但当前 Supabase 数据库尚未执行 `scripts/add-material-default-supplier.sql`，真实数据请求返回 400，所以没有继续点开真实采购单图片预览。
 
 注意：
 
 - 采购单页面的状态按钮主要用于采购单状态流转。
 - 真正会增加库存、生成库存流水的采购入库，请优先走 `/inventory/inbound`。
 - 如果页面读写失败，优先确认 `supabase/dev-purchase-policies.sql` 是否已经在 Supabase SQL Editor 执行。该文件已包含采购单、采购明细、供应商、SKU、物料需求和 profiles 的开发阶段读写策略。
+- 如果采购单页面读取失败且 Supabase 返回 `default_supplier_id` 或 `skus_default_supplier_id_fkey` 相关错误，先执行 `scripts/add-material-default-supplier.sql`，因为采购单会读取辅料默认供应商。
+- 本地浏览器检查时，如果数据库尚未执行 `scripts/add-material-default-supplier.sql`，采购单页面会因真实 Supabase 字段缺失返回 400，导致无法完整验证图片弹窗。
 
 后续待优化：
 
 - 正式登录后，把 `created_by` 自动写成当前采购人员，而不是手动选择。
 - 采购单编辑第一版只编辑草稿主信息和已有明细数量/单价/备注，后续如需编辑时新增或删除明细，需要单独设计业务规则。
 - 批量导入当前按采购单逐张写入，后续可升级为数据库事务或 RPC，避免极端情况下主表成功但明细失败。
-- 后续可增加 Excel 导出、打印版 PDF、供应商确认回传等功能。
+- 后续可增加打印版 PDF、供应商确认回传等功能。
 
 ### 4.6 采购入库
 

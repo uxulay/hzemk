@@ -18,6 +18,7 @@ export type SupplierRow = {
 
 export type SupplierListRow = SupplierRow & {
   purchase_order_count: number;
+  default_material_count: number;
 };
 
 export type SupplierPurchaseOrderRow = {
@@ -32,11 +33,24 @@ export type SupplierPurchaseOrderRow = {
   updated_at: string;
 };
 
+export type SupplierDefaultMaterialRow = {
+  id: string;
+  default_supplier_id: string | null;
+  sku_code: string;
+  sku_name: string;
+  unit: string;
+  specs: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type SupplierStats = {
   totalSuppliers: number;
   activeSuppliers: number;
   inactiveSuppliers: number;
   suppliersWithPurchaseOrders: number;
+  suppliersWithDefaultMaterials: number;
 };
 
 export type CreateSupplierInput = {
@@ -64,6 +78,11 @@ export type UpdateSupplierInput = {
 type SupplierPurchaseOrderLink = {
   id: string;
   supplier_id: string | null;
+};
+
+type SupplierDefaultMaterialLink = {
+  id: string;
+  default_supplier_id: string | null;
 };
 
 function formatSupabaseError(action: string, error: { message: string }) {
@@ -139,9 +158,27 @@ function countPurchaseOrdersBySupplier(purchaseOrders: SupplierPurchaseOrderLink
   return orderCountBySupplier;
 }
 
+function countDefaultMaterialsBySupplier(materials: SupplierDefaultMaterialLink[]) {
+  const materialCountBySupplier = new Map<string, number>();
+
+  materials.forEach((material) => {
+    if (!material.default_supplier_id) {
+      return;
+    }
+
+    materialCountBySupplier.set(
+      material.default_supplier_id,
+      (materialCountBySupplier.get(material.default_supplier_id) ?? 0) + 1
+    );
+  });
+
+  return materialCountBySupplier;
+}
+
 export async function getSuppliers(): Promise<SupplierListRow[]> {
   const supabase = getSupabaseClient();
-  const [supplierResult, purchaseOrderResult] = await Promise.all([
+  const [supplierResult, purchaseOrderResult, defaultMaterialResult] =
+    await Promise.all([
     withTimeout(
       supabase
         .from("suppliers")
@@ -152,6 +189,14 @@ export async function getSuppliers(): Promise<SupplierListRow[]> {
     withTimeout(
       supabase.from("purchase_orders").select("id, supplier_id"),
       "统计供应商关联采购单数量"
+    ),
+    withTimeout(
+      supabase
+        .from("skus")
+        .select("id, default_supplier_id")
+        .eq("sku_type", "material")
+        .not("default_supplier_id", "is", null),
+      "统计供应商关联辅料数量"
     )
   ]);
 
@@ -166,19 +211,31 @@ export async function getSuppliers(): Promise<SupplierListRow[]> {
     );
   }
 
+  if (defaultMaterialResult.error) {
+    throw formatSupabaseError(
+      "统计供应商关联辅料数量",
+      defaultMaterialResult.error
+    );
+  }
+
   const orderCountBySupplier = countPurchaseOrdersBySupplier(
     (purchaseOrderResult.data ?? []) as SupplierPurchaseOrderLink[]
+  );
+  const materialCountBySupplier = countDefaultMaterialsBySupplier(
+    (defaultMaterialResult.data ?? []) as SupplierDefaultMaterialLink[]
   );
 
   return ((supplierResult.data ?? []) as SupplierRow[]).map((supplier) => ({
     ...supplier,
-    purchase_order_count: orderCountBySupplier.get(supplier.id) ?? 0
+    purchase_order_count: orderCountBySupplier.get(supplier.id) ?? 0,
+    default_material_count: materialCountBySupplier.get(supplier.id) ?? 0
   }));
 }
 
 export async function getSupplierStats(): Promise<SupplierStats> {
   const supabase = getSupabaseClient();
-  const [supplierResult, purchaseOrderResult] = await Promise.all([
+  const [supplierResult, purchaseOrderResult, defaultMaterialResult] =
+    await Promise.all([
     withTimeout(
       supabase.from("suppliers").select("id, status"),
       "统计供应商数量"
@@ -186,6 +243,14 @@ export async function getSupplierStats(): Promise<SupplierStats> {
     withTimeout(
       supabase.from("purchase_orders").select("id, supplier_id"),
       "统计已产生采购单的供应商数量"
+    ),
+    withTimeout(
+      supabase
+        .from("skus")
+        .select("id, default_supplier_id")
+        .eq("sku_type", "material")
+        .not("default_supplier_id", "is", null),
+      "统计已关联辅料的供应商数量"
     )
   ]);
 
@@ -200,6 +265,13 @@ export async function getSupplierStats(): Promise<SupplierStats> {
     );
   }
 
+  if (defaultMaterialResult.error) {
+    throw formatSupabaseError(
+      "统计已关联辅料的供应商数量",
+      defaultMaterialResult.error
+    );
+  }
+
   const suppliers = (supplierResult.data ?? []) as Array<{
     id: string;
     status: string;
@@ -207,6 +279,11 @@ export async function getSupplierStats(): Promise<SupplierStats> {
   const supplierIdsWithPurchaseOrders = new Set(
     ((purchaseOrderResult.data ?? []) as SupplierPurchaseOrderLink[])
       .map((purchaseOrder) => purchaseOrder.supplier_id)
+      .filter((supplierId): supplierId is string => Boolean(supplierId))
+  );
+  const supplierIdsWithDefaultMaterials = new Set(
+    ((defaultMaterialResult.data ?? []) as SupplierDefaultMaterialLink[])
+      .map((material) => material.default_supplier_id)
       .filter((supplierId): supplierId is string => Boolean(supplierId))
   );
 
@@ -217,7 +294,8 @@ export async function getSupplierStats(): Promise<SupplierStats> {
     inactiveSuppliers: suppliers.filter(
       (supplier) => supplier.status === "inactive"
     ).length,
-    suppliersWithPurchaseOrders: supplierIdsWithPurchaseOrders.size
+    suppliersWithPurchaseOrders: supplierIdsWithPurchaseOrders.size,
+    suppliersWithDefaultMaterials: supplierIdsWithDefaultMaterials.size
   };
 }
 
@@ -349,4 +427,31 @@ export async function getSupplierPurchaseOrders(
   }
 
   return (data ?? []) as SupplierPurchaseOrderRow[];
+}
+
+export async function getSupplierDefaultMaterials(
+  supplierId: string
+): Promise<SupplierDefaultMaterialRow[]> {
+  if (!supplierId) {
+    throw new Error("缺少供应商 ID。");
+  }
+
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase
+      .from("skus")
+      .select(
+        "id, default_supplier_id, sku_code, sku_name, unit, specs, status, created_at, updated_at"
+      )
+      .eq("sku_type", "material")
+      .eq("default_supplier_id", supplierId)
+      .order("sku_code", { ascending: true }),
+    "读取供应商关联辅料"
+  );
+
+  if (error) {
+    throw formatSupabaseError("读取供应商关联辅料", error);
+  }
+
+  return (data ?? []) as SupplierDefaultMaterialRow[];
 }
