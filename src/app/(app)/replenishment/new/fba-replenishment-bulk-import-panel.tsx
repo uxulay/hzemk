@@ -348,7 +348,7 @@ export function FbaReplenishmentBulkImportPanel() {
         <span>
           {errorRowCount > 0
             ? "有错误时不能确认导入。"
-            : "确认导入后才会创建 FBA 备货需求。"}
+            : "确认导入后才会创建备货需求。"}
         </span>
         <div className="rowActions">
           <button type="button" onClick={resetImport} disabled={importing}>

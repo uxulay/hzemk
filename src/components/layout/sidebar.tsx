@@ -11,14 +11,12 @@ import {
   DatabaseIcon,
   FactoryIcon,
   SettingsIcon,
-  UsersIcon,
   WarehouseIcon
 } from "@/components/ui/icons";
 import {
   getNavigationForRole,
   type NavigationGroup
 } from "@/lib/navigation";
-import { roleLabels } from "@/types/roles";
 
 function classNames(...names: Array<string | false | undefined>) {
   return names.filter(Boolean).join(" ");
@@ -45,7 +43,7 @@ function getGroupIcon(label: string) {
   if (label.includes("首页")) {
     return <DashboardIcon size={18} />;
   }
-  if (label.includes("FBA")) {
+  if (label.includes("备货")) {
     return <BoxIcon size={18} />;
   }
   if (label.includes("生产")) {
@@ -131,11 +129,11 @@ export function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="brand">
-        <div className="brandMark">F</div>
-        <div>
-          <strong>FBA 管理系统</strong>
-          <span>工贸一体内部后台</span>
-        </div>
+        <img
+          className="brandLogo"
+          src="https://wrxqiaphfxihjclqnged.supabase.co/storage/v1/object/public/public-assets/emk_logo.png"
+          alt="公司 Logo"
+        />
       </div>
 
       <nav className="navList" aria-label="后台菜单">
@@ -166,7 +164,7 @@ export function Sidebar() {
 
           return (
             <section
-              className={classNames("navGroup", groupIsActive && "active")}
+              className="navGroup"
               key={group.label}
             >
               <button
@@ -174,8 +172,7 @@ export function Sidebar() {
                 aria-expanded={isExpanded}
                 className={classNames(
                   "navGroupButton",
-                  isExpanded && "expanded",
-                  groupIsActive && "active"
+                  isExpanded && "expanded"
                 )}
                 onClick={() => toggleGroup(group.label)}
                 type="button"
@@ -183,7 +180,6 @@ export function Sidebar() {
                 <span className="navIcon">{getGroupIcon(group.label)}</span>
                 <span className="navGroupText">{group.label}</span>
                 <span className="navGroupMeta">
-                  {group.items.length}
                   <span className="navChevron" aria-hidden="true" />
                 </span>
               </button>
@@ -191,13 +187,14 @@ export function Sidebar() {
               <div className="navChildren" hidden={!isExpanded} id={panelId}>
                 {group.items.map((item) => {
                   const isActive = activeHref === item.href;
+                  const itemKey = `${group.label}-${item.label}-${item.href}`;
 
                   return (
                     <Link
                       aria-current={isActive ? "page" : undefined}
                       className={classNames("navItem", isActive && "active")}
                       href={item.href}
-                      key={item.href}
+                      key={itemKey}
                     >
                       <span className="navChildDot" aria-hidden="true" />
                       {item.label}
@@ -209,15 +206,6 @@ export function Sidebar() {
           );
         })}
       </nav>
-
-      <div className="sidebarUser">
-        <div className="avatar">{user.name.slice(0, 1).toUpperCase()}</div>
-        <div>
-          <strong>{user.name}</strong>
-          <span>{roleLabels[user.role]}</span>
-        </div>
-        <UsersIcon size={17} />
-      </div>
     </aside>
   );
 }

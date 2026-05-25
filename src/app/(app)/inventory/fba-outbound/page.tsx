@@ -334,7 +334,7 @@ export default function FbaOutboundPage() {
     event.preventDefault();
 
     if (!selectedRequest) {
-      setErrorMessage("请选择 FBA 备货需求。");
+      setErrorMessage("请选择备货需求。");
       return;
     }
 
@@ -351,7 +351,7 @@ export default function FbaOutboundPage() {
         operationNotes
       });
 
-      setSuccessMessage(`备货单 ${selectedRequest.request_no} FBA 出库成功。`);
+      setSuccessMessage(`备货单 ${selectedRequest.request_no} 出库成功。`);
       setSelectedRequestId("");
       setOutboundQuantity("");
       setLogisticsNotes("");
@@ -371,7 +371,7 @@ export default function FbaOutboundPage() {
           <p className="eyebrow">仓库管理</p>
           <h2>出库管理</h2>
           <p>
-            FBA 出库继续关联备货单；其他出库用于样品、损耗、退供应商和借出等非 FBA 场景。
+            备货出库继续关联备货单；其他出库用于样品、损耗、退供应商和借出等非平台场景。
           </p>
         </div>
         <span className="statusPill">Supabase 数据</span>
@@ -398,7 +398,7 @@ export default function FbaOutboundPage() {
             type="button"
             onClick={() => setActiveTab("fba")}
           >
-            FBA 出库
+            备货出库
           </button>
           <button
             className={activeTab === "other" ? "tabButton active" : "tabButton"}
@@ -413,7 +413,7 @@ export default function FbaOutboundPage() {
           <>
             <div className="sectionHeader">
           <div>
-            <p className="eyebrow">待发往 FBA</p>
+            <p className="eyebrow">待出库</p>
             <h3>可出库备货需求</h3>
           </div>
           <div className="rowActions">
@@ -480,7 +480,7 @@ export default function FbaOutboundPage() {
                   <th>SKU 名称</th>
                   <th>亚马逊站点</th>
                   <th>目标 FBA 仓库</th>
-                  <th>FBA 备货需求数量</th>
+                  <th>备货需求数量</th>
                   <th>当前成品库存</th>
                   <th>已出库数量</th>
                   <th>待出库数量</th>
@@ -546,7 +546,7 @@ export default function FbaOutboundPage() {
           <>
             <div className="sectionHeader">
               <div>
-                <p className="eyebrow">非 FBA 出库</p>
+                <p className="eyebrow">其他出库</p>
                 <h3>其他出库</h3>
               </div>
               <div className="rowActions">
@@ -697,7 +697,7 @@ export default function FbaOutboundPage() {
       {selectedRequest ? (
         <Modal
           open={Boolean(selectedRequest)}
-          eyebrow="创建 FBA 出库"
+          eyebrow="创建备货出库"
           title={selectedRequest.request_no}
           maxWidth="xl"
           onClose={() => {
@@ -709,7 +709,7 @@ export default function FbaOutboundPage() {
           <form onSubmit={submitOutbound}>
             <div className="detailGrid">
               <div className="detailItem">
-                <span>FBA 备货需求</span>
+                <span>备货需求</span>
                 <strong>{selectedRequest.request_no}</strong>
               </div>
               <div className="detailItem">
@@ -733,7 +733,7 @@ export default function FbaOutboundPage() {
                 <strong>{selectedRequest.fba_warehouse_code ?? "-"}</strong>
               </div>
               <div className="detailItem">
-                <span>FBA 备货需求数量</span>
+                <span>备货需求数量</span>
                 <strong>{formatQuantity(selectedRequest.requested_quantity)}</strong>
               </div>
               <div className="detailItem">
@@ -822,7 +822,7 @@ export default function FbaOutboundPage() {
                       Number(selectedRequest.pending_outbound_quantity)
                   }
                 >
-                  {submitting ? "正在出库..." : "确认 FBA 出库"}
+                  {submitting ? "正在出库..." : "确认出库"}
                 </button>
               </div>
             </div>

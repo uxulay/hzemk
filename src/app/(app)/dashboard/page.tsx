@@ -94,34 +94,6 @@ function getCardIcon(index: number) {
   return icons[index % icons.length];
 }
 
-function DashboardChart() {
-  return (
-    <div className="dashboardChart">
-      <svg viewBox="0 0 800 260" preserveAspectRatio="none">
-        <path
-          d="M0 210 C70 170 90 120 160 145 C225 170 260 72 340 95 C405 115 420 176 500 128 C575 82 610 108 680 62 C730 32 760 58 800 28 L800 260 L0 260 Z"
-          fill="rgba(22, 119, 255, 0.15)"
-        />
-        <path
-          d="M0 210 C70 170 90 120 160 145 C225 170 260 72 340 95 C405 115 420 176 500 128 C575 82 610 108 680 62 C730 32 760 58 800 28"
-          fill="none"
-          stroke="#1677ff"
-          strokeWidth="4"
-        />
-      </svg>
-      <div className="dashboardChartLabels">
-        <span>05-19</span>
-        <span>05-20</span>
-        <span>05-21</span>
-        <span>05-22</span>
-        <span>05-23</span>
-        <span>05-24</span>
-        <span>05-25</span>
-      </div>
-    </div>
-  );
-}
-
 function TodoMiniList({ section }: { section: DashboardListSection }) {
   return (
     <section className="modernCard">
@@ -240,6 +212,44 @@ const todoColumns: DataTableColumn<DashboardTodoItem>[] = [
   }
 ];
 
+const compactCardTitles = ["待排产", "生产中", "待采购", "待入库", "待出库", "库存预警"];
+const compactCardSubtitles = ["备货单", "生产任务", "物料", "入库单", "出库单", "预警"];
+
+function getCompactCard(
+  card: DashboardSummaryCard,
+  index: number
+): DashboardSummaryCard & { shortTitle: string; shortDescription: string } {
+  const id = card.id.toLowerCase();
+  let title = compactCardTitles[index] ?? card.label;
+  let description = compactCardSubtitles[index] ?? "待处理";
+
+  if (id.includes("planning") || id.includes("submitted")) {
+    title = "待排产";
+    description = "备货单";
+  } else if (id.includes("production") || id.includes("producing")) {
+    title = "生产中";
+    description = "生产任务";
+  } else if (id.includes("shortage") || id.includes("supplier")) {
+    title = "待采购";
+    description = "物料";
+  } else if (id.includes("inbound") || id.includes("ordered") || id.includes("purchase")) {
+    title = "待入库";
+    description = "入库单";
+  } else if (id.includes("outbound")) {
+    title = "待出库";
+    description = "出库单";
+  } else if (id.includes("stock") || id.includes("bom") || id.includes("overdue")) {
+    title = "库存预警";
+    description = "预警";
+  }
+
+  return {
+    ...card,
+    shortTitle: title,
+    shortDescription: description
+  };
+}
+
 export default function DashboardPage() {
   const { user } = useMockRole();
   const [dashboardData, setDashboardData] = useState<RoleDashboardData | null>(
@@ -279,7 +289,7 @@ export default function DashboardPage() {
       <PageHeader
         eyebrow="工作台"
         title={`欢迎回来，${roleLabels[user.role]}`}
-        description={`今天是 ${todayText}。这里汇总 FBA 备货、生产、采购和库存的重点待办。`}
+        description={`今天是 ${todayText}。这里汇总备货、生产、采购和库存的重点待办。`}
         actions={
           <button className="primaryButton" type="button" onClick={loadDashboard} disabled={loading}>
             {loading ? "刷新中..." : "刷新数据"}
@@ -295,57 +305,43 @@ export default function DashboardPage() {
       ) : null}
 
       <section className="modernStatGrid">
-        {(dashboardData?.summaryCards ?? []).slice(0, 6).map((card, index) => (
+        {(dashboardData?.summaryCards ?? []).slice(0, 6).map((card, index) => {
+          const compactCard = getCompactCard(card, index);
+
+          return (
           <Link href={card.href} key={card.id}>
             <StatCard
-              title={card.label}
+              title={compactCard.shortTitle}
               value={formatQuantity(card.value)}
-              change="点击处理"
+              change={compactCard.shortDescription}
               tone={getCardTone(card.tone)}
               icon={getCardIcon(index)}
             />
           </Link>
-        ))}
+        );
+        })}
       </section>
 
       {loading ? <div className="debugNotice">正在读取首页数据...</div> : null}
 
       {!loading && dashboardData ? (
         <>
-          <section className="dashboardMainGrid">
-            <div className="modernCard">
-              <div className="modernCardHeader">
-                <div>
-                  <p className="eyebrow">业务趋势</p>
-                  <h3>最近 7 天备货趋势</h3>
-                </div>
-                <div className="tabs">
-                  <button className="tabButton active" type="button">
-                    近7天
-                  </button>
-                  <button className="tabButton" type="button">
-                    近30天
-                  </button>
-                </div>
-              </div>
-              <DashboardChart />
-            </div>
-
+          <section className="dashboardWorkbenchGrid">
             {firstTodoSection ? <TodoMiniList section={firstTodoSection} /> : null}
+            <ExceptionPanel exceptions={dashboardData.exceptions} />
           </section>
 
           <section className="dashboardSecondaryGrid">
-            {dashboardData.listSections.slice(1, 3).map((section) => (
+            {dashboardData.listSections.slice(1, 4).map((section) => (
               <TodoMiniList key={section.id} section={section} />
             ))}
-            <ExceptionPanel exceptions={dashboardData.exceptions} />
           </section>
 
           <section className="modernCard">
             <div className="modernCardHeader">
               <div>
                 <p className="eyebrow">最新业务单据</p>
-                <h3>近期 FBA / 生产 / 采购 / 库存记录</h3>
+                <h3>近期备货 / 生产 / 采购 / 库存记录</h3>
               </div>
               <span className="statusPill">{latestRows.length} 条</span>
             </div>

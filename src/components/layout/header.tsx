@@ -1,6 +1,7 @@
 "use client";
 
-import { BellIcon, SearchIcon } from "@/components/ui/icons";
+import { GlobalSearch } from "@/components/GlobalSearch";
+import { NotificationDropdown } from "@/components/NotificationDropdown";
 import { useMockRole } from "@/components/auth/mock-role-provider";
 import { roleLabels, type UserRole } from "@/types/roles";
 
@@ -11,21 +12,9 @@ export function Header() {
 
   return (
     <header className="topHeader">
-      <div className="topHeaderTitle">
-        <strong>跨境电商工贸一体管理系统</strong>
-        <span>FBA 备货、生产、采购、库存协同</span>
-      </div>
-
       <div className="topHeaderActions">
-        <label className="globalSearch">
-          <SearchIcon size={18} />
-          <input placeholder="搜索功能、单据、产品、SKU等" />
-        </label>
-
-        <button className="iconButton" type="button" aria-label="通知">
-          <BellIcon size={18} />
-          <span className="notificationDot">3</span>
-        </button>
+        <GlobalSearch />
+        <NotificationDropdown />
 
         <label className="roleSwitch">
           <span>模拟角色</span>

@@ -1122,8 +1122,8 @@ export default function ReplenishmentPage() {
     <main className="pageShell">
       <section className="pageHero">
         <div>
-          <p className="eyebrow">FBA 备货</p>
-          <h2>FBA 备货需求</h2>
+          <p className="eyebrow">备货管理</p>
+          <h2>备货需求</h2>
           <p>
             按整张备货单查看运营需求。一张单可以包含多个产品和多个 SKU 明细。
           </p>
@@ -1203,7 +1203,7 @@ export default function ReplenishmentPage() {
         </div>
 
         {loading ? (
-          <div className="debugNotice">正在读取 FBA 备货需求列表...</div>
+          <div className="debugNotice">正在读取备货需求列表...</div>
         ) : null}
 
         {errorMessage ? (
@@ -1214,7 +1214,7 @@ export default function ReplenishmentPage() {
         ) : null}
 
         {!loading && !errorMessage && filteredRequests.length === 0 ? (
-          <div className="emptyState">暂无 FBA 备货需求</div>
+          <div className="emptyState">暂无备货需求</div>
         ) : null}
 
         {!loading && !errorMessage && filteredRequests.length > 0 ? (
@@ -1410,7 +1410,7 @@ export default function ReplenishmentPage() {
       <Modal
         open={createOpen}
         eyebrow="运营创建"
-        title="创建 FBA 备货单"
+        title="创建备货单"
         maxWidth="xl"
         onClose={() => {
           if (!submitting) {

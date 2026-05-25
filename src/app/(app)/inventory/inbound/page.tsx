@@ -426,7 +426,7 @@ export default function InventoryInboundPage() {
           <p className="eyebrow">仓库管理</p>
           <h2>入库管理</h2>
           <p>
-            采购到货、生产完成和其他来源入库都在这里处理；发往 FBA 后续单独做出库。
+            采购到货、生产完成和其他来源入库都在这里处理；备货发出后续单独做出库。
           </p>
         </div>
         <span className="statusPill">Supabase 数据</span>
@@ -867,13 +867,13 @@ export default function InventoryInboundPage() {
                 </strong>
               </div>
               <div className="detailItem">
-                <span>关联 FBA 备货需求</span>
+                <span>关联备货需求</span>
                 <strong>
                   {selectedProductionOrder.replenishment_request?.request_no ?? "-"}
                 </strong>
               </div>
               <div className="detailItem">
-                <span>FBA 备货需求数量</span>
+                <span>备货需求数量</span>
                 <strong>{formatQuantity(fbaRequestedQuantity)}</strong>
               </div>
               <div className="detailItem">

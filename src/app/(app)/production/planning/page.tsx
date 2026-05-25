@@ -350,7 +350,7 @@ export default function ProductionPlanningPage() {
 
   const validateForm = () => {
     if (!selectedRequest || !form) {
-      return "请先选择一个 FBA 备货需求。";
+      return "请先选择一个备货需求。";
     }
 
     if (selectedRequest.items.length === 0) {
@@ -431,9 +431,9 @@ export default function ProductionPlanningPage() {
       <section className="pageHero">
         <div>
           <p className="eyebrow">厂长排产</p>
-          <h2>厂长排产页面</h2>
+          <h2>厂长排产</h2>
           <p>
-            查看运营提交的 FBA 备货需求，完成接单、拒绝，或创建生产任务。
+            查看运营提交的备货需求，完成接单、拒绝，或创建生产任务。
             当前阶段先显示所有已提交和已接单的需求。
           </p>
         </div>
@@ -444,7 +444,7 @@ export default function ProductionPlanningPage() {
         <div className="sectionHeader">
           <div>
             <p className="eyebrow">待排产</p>
-            <h3>FBA 备货需求列表</h3>
+            <h3>备货需求列表</h3>
           </div>
           <button
             className="secondaryButton"
@@ -464,7 +464,7 @@ export default function ProductionPlanningPage() {
         ) : null}
 
         {loading ? (
-          <div className="debugNotice">正在读取待排产 FBA 备货需求...</div>
+          <div className="debugNotice">正在读取待排产备货需求...</div>
         ) : null}
 
         <div className="listToolbar">
@@ -494,7 +494,7 @@ export default function ProductionPlanningPage() {
         ) : null}
 
         {!loading && !errorMessage && filteredRequests.length === 0 ? (
-          <div className="emptyState">暂无待排产 FBA 备货需求</div>
+          <div className="emptyState">暂无待排产备货需求</div>
         ) : null}
 
         {!loading && filteredRequests.length > 0 ? (
@@ -612,7 +612,7 @@ export default function ProductionPlanningPage() {
 
           <form className="dataForm" onSubmit={handleCreateProductionOrder}>
             <ReadonlyField
-              label="关联的 FBA 备货需求"
+              label="关联的备货需求"
               value={selectedRequest.request_no}
             />
             <ReadonlyField

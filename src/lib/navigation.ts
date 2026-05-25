@@ -25,16 +25,15 @@ const allRoles: UserRole[] = [
 
 export const navigationGroups: NavigationGroup[] = [
   {
-    label: "首页",
+    label: "后台首页",
     href: "/dashboard",
     roles: allRoles,
     items: []
   },
   {
-    label: "FBA 备货需求",
+    label: "备货需求",
     href: "/replenishment",
     roles: ["operations", "plant_manager", "admin"],
-    variant: "primary",
     items: []
   },
   {
@@ -78,7 +77,7 @@ export const navigationGroups: NavigationGroup[] = [
     ]
   },
   {
-    label: "仓库库存",
+    label: "库存管理",
     items: [
       {
         label: "入库管理",
@@ -133,7 +132,10 @@ export const navigationGroups: NavigationGroup[] = [
   {
     label: "系统管理",
     items: [
-      { label: "用户管理", href: "/admin/users", roles: ["admin"] }
+      { label: "用户管理", href: "/admin/users", roles: ["admin"] },
+      { label: "角色权限", href: "/admin/roles", roles: ["admin"] },
+      { label: "组织架构", href: "/admin/organization", roles: ["admin"] },
+      { label: "系统设置", href: "/admin/settings", roles: ["admin"] }
     ]
   }
 ];

@@ -137,6 +137,7 @@
 
 - 已运行 `npm run typecheck`，通过。
 - 已运行 `npm run build`，通过。
+- 已运行 `npm run build`，通过。
 
 后续待优化：
 
@@ -219,6 +220,22 @@
 - 库存流水后续可以增加“导出当前筛选结果”。
 - 浏览器人工检查建议重点看 `/inventory/inbound`、`/inventory/fba-outbound`、`/inventory/adjustments` 和 `/purchase/orders` 的弹窗打开、关闭、提交按钮状态。
 
+### 3.4 后台页面顶部紧凑化（2026-05-25）
+
+本次只调整后台页面顶部视觉和文案，没有修改数据库字段、Supabase 查询或业务写入逻辑。
+
+已完成：
+
+- 全局压缩旧版 `pageHero` 大横幅样式：去掉白色大卡片、阴影、大段说明和状态胶囊，只保留紧凑标题和右侧操作按钮。
+- 全局压缩新版 `PageHeader`：标题字号改为后台常用尺寸，说明文字不再占据顶部空间。
+- 列表卡片和筛选区域向标题靠近，减少顶部空白，让页面更像日常使用的企业后台。
+- 页面文案精简：`FBA 备货需求` 改为 `备货需求`，`FBA 出库` 改为 `备货出库` 或 `出库管理`，生产、入库、排产相关页面同步去掉不必要的 FBA 字样。
+- 本次覆盖的主要页面包括：备货需求、备货出库、生产任务、厂长排产、采购单、采购入库、生产入库、原材料库存、成品库存、库存流水、产品管理、SKU 管理、BOM 管理、辅料管理、供应商管理和仓库管理。
+
+本次验证：
+
+- 已运行 `npm run typecheck`，通过。
+
 ### 3.4 后台 UI 现代化第一阶段（2026-05-25）
 
 本次按“先统一框架和样板页，再逐步替换业务页”的顺序处理，没有修改数据库 schema，没有关闭 RLS，也没有做浏览器自动测试。
@@ -275,6 +292,39 @@
 - 业务高频页：`/replenishment`、`/production/planning`、`/production/orders`、`/purchase/orders`。
 - 库存页：`/inventory/inbound`、`/inventory/fba-outbound`、`/inventory/adjustments`、`/inventory/transactions`、`/inventory/materials`、`/inventory/products`。
 - 系统页：`/admin/users`、角色权限、系统设置。
+
+### 3.6 后台 UI 细节优化：全局搜索、通知和工作台（2026-05-25）
+
+本次继续优化后台 UI 细节，没有修改数据库 schema，没有新增 notifications 表，没有关闭 RLS，也没有做浏览器自动测试。
+
+已完成：
+
+- 顶部全局搜索框从纯样式改成真实搜索组件 `GlobalSearch`。
+- 新增 `src/lib/api/global-search.ts`，基于现有表动态搜索，不新增数据库字段。
+- 全局搜索目前支持：
+  - 功能菜单：后台首页、备货需求、备货出库、厂长排产、生产任务、生产入库、采购单、采购入库、库存、产品管理、SKU 管理、BOM 管理、原材料管理、供应商管理、仓库管理、用户管理等。
+  - 产品：搜索 `products.product_code` 和 `products.name`。
+  - SKU / 原材料：搜索 `skus.sku_code`、`sku_name`、`amazon_sku`、`fnsku`、`specs`，其中 `sku_type = material` 的结果归到“原材料”。
+  - 单据：搜索 `fba_replenishment_requests.request_no`、`production_orders.production_order_no`、`purchase_orders.purchase_order_no`。
+- 搜索结果按“功能 / 单据 / 产品/SKU / 原材料”分组，下拉展示；点击结果后跳转到对应页面并带 `keyword` 查询参数。
+- 顶部通知铃铛从纯图标改成 `NotificationDropdown`。
+- 新增 `src/lib/api/notifications.ts`，通知内容基于现有 `getRoleDashboard(role)` 的真实待办和异常动态生成，不新增 notifications 表。
+- 通知目前覆盖待排产备货单、待采购物料、待入库采购单、待出库备货单、库存预警、生产缺料/异常等待办和异常；未读状态暂存在浏览器 `localStorage`。
+- 首页删除“业务趋势 / 最近 7 天备货趋势”图表模块，改成更偏实际工作台的待办布局。
+- 首页顶部统计卡片改成短标题：待排产、生产中、待采购、待入库、待出库、库存预警；卡片高度统一，文字过长会省略。
+- 侧边栏去掉“FBA 备货需求”的特殊主按钮样式，菜单名称简化为“备货需求”，新增“备货管理”分组，并整理生产、采购、库存、基础资料和系统管理分组。
+
+本次保持不变：
+
+- 没有新增数据库表或字段。
+- 没有改动业务写入流程。
+- 通知未读状态只是前端本地记录，不影响任何业务表。
+
+本次验证：
+
+- 已运行 `npm run typecheck`，通过。
+- 已运行 `npm run build`，通过。
+- 用户要求不使用浏览器自动测试，所以本阶段不做浏览器自动检查。
 
 ### 3.4 辅料管理页面（2026-05-24）
 

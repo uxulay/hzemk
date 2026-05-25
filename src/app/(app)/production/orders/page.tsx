@@ -347,9 +347,9 @@ export default function ProductionOrdersPage() {
       <section className="pageHero">
         <div>
           <p className="eyebrow">生产跟踪</p>
-          <h2>生产任务列表</h2>
+          <h2>生产任务</h2>
           <p>
-            查看所有生产任务的计划数量、实际入库、缺料情况和关联 FBA 备货需求。
+            查看所有生产任务的计划数量、实际入库、缺料情况和关联备货需求。
           </p>
         </div>
         <span className="statusPill">Supabase 数据</span>
@@ -465,7 +465,7 @@ export default function ProductionOrdersPage() {
               <thead>
                 <tr>
                   <th>生产任务单号</th>
-                  <th>关联 FBA 备货单号</th>
+                  <th>关联备货单号</th>
                   <th>产品数量</th>
                   <th>品牌</th>
                   <th>SKU 数量</th>
@@ -589,7 +589,7 @@ export default function ProductionOrdersPage() {
 
           <div className="detailGrid">
             <div className="detailItem">
-              <span>关联 FBA 备货需求</span>
+              <span>关联备货需求</span>
               <strong>{selectedDetail.replenishment_request?.request_no ?? "-"}</strong>
             </div>
             <div className="detailItem">
@@ -601,7 +601,7 @@ export default function ProductionOrdersPage() {
               <strong>{selectedDetail.sku_count}</strong>
             </div>
             <div className="detailItem">
-              <span>FBA 备货需求数量</span>
+              <span>备货需求数量</span>
               <strong>{formatQuantity(selectedDetail.requested_quantity)}</strong>
             </div>
             <div className="detailItem">
@@ -643,7 +643,7 @@ export default function ProductionOrdersPage() {
 
           {selectedDetail.overproduction_quantity > 0 ? (
             <div className="debugNotice">
-              这张生产任务比 FBA 备货需求多生产{" "}
+              这张生产任务比备货需求多生产{" "}
               {formatQuantity(selectedDetail.overproduction_quantity)}
               件。生产入库后，多出的部分会留在成品库存，不会自动发往 FBA。
             </div>

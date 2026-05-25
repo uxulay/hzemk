@@ -94,13 +94,13 @@ export default function NewReplenishmentPage() {
       <section className="pageHero">
         <div>
           <p className="eyebrow">创建入口已调整</p>
-          <h2>请前往 FBA 备货需求页面创建备货单</h2>
+          <h2>请前往备货需求页面创建备货单</h2>
           <p>
-            新流程是在 FBA 备货需求列表右上角点击“+ 创建备货单”，一次创建包含多个产品和多个 SKU 明细的整张备货单。
+            新流程是在备货需求列表右上角点击“+ 创建备货单”，一次创建包含多个产品和多个 SKU 明细的整张备货单。
           </p>
         </div>
         <Link className="primaryButton successButton" href="/replenishment">
-          前往 FBA 备货需求
+          前往备货需求
         </Link>
       </section>
     </main>
@@ -252,7 +252,7 @@ export default function NewReplenishmentPage() {
       <section className="pageHero">
         <div>
           <p className="eyebrow">运营创建</p>
-          <h2>创建 FBA 备货需求</h2>
+          <h2>创建备货需求</h2>
           <p>
             这里创建的是内部备货生产需求，不是客户订单，也不是销售订单。
             提交后状态会进入已提交，等待厂长接收并排产。
@@ -447,7 +447,7 @@ export default function NewReplenishmentPage() {
                   type="submit"
                   disabled={loadingOptions || submitting}
                 >
-                  {submitting ? "正在提交..." : "提交 FBA 备货需求"}
+                  {submitting ? "正在提交..." : "提交备货需求"}
                 </button>
               </div>
             </form>

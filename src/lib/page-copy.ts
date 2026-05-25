@@ -8,18 +8,18 @@ export type PageCopy = {
 export const pageCopy: Record<string, PageCopy> = {
   dashboard: {
     title: "后台首页",
-    description: "汇总 FBA 备货、生产、采购和库存的关键状态。",
+    description: "汇总备货、生产、采购和库存的关键状态。",
     owner: "所有角色",
     nextSteps: ["接入真实登录", "展示待处理备货单", "展示缺料和排产提醒"]
   },
   replenishment: {
-    title: "FBA 备货需求",
+    title: "备货需求",
     description: "运营发起和查看内部备货需求，这里不叫销售订单。",
     owner: "运营 / 厂长",
     nextSteps: ["增加筛选", "增加状态流转", "关联 SKU 和目标 FBA 仓"]
   },
   replenishmentNew: {
-    title: "创建 FBA 备货需求",
+    title: "创建备货需求",
     description: "运营填写 SKU、数量、目标仓库和期望发货时间。",
     owner: "运营",
     nextSteps: ["设计表单字段", "校验备货数量", "保存到 Supabase"]
