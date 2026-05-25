@@ -1,5 +1,6 @@
 "use client";
 
+import { BellIcon, SearchIcon } from "@/components/ui/icons";
 import { useMockRole } from "@/components/auth/mock-role-provider";
 import { roleLabels, type UserRole } from "@/types/roles";
 
@@ -9,13 +10,23 @@ export function Header() {
   const { user, setRole } = useMockRole();
 
   return (
-    <header className="header">
-      <div>
-        <p className="eyebrow">内部管理系统</p>
-        <h1>FBA 备货生产管理后台</h1>
+    <header className="topHeader">
+      <div className="topHeaderTitle">
+        <strong>跨境电商工贸一体管理系统</strong>
+        <span>FBA 备货、生产、采购、库存协同</span>
       </div>
 
-      <div className="headerActions">
+      <div className="topHeaderActions">
+        <label className="globalSearch">
+          <SearchIcon size={18} />
+          <input placeholder="搜索功能、单据、产品、SKU等" />
+        </label>
+
+        <button className="iconButton" type="button" aria-label="通知">
+          <BellIcon size={18} />
+          <span className="notificationDot">3</span>
+        </button>
+
         <label className="roleSwitch">
           <span>模拟角色</span>
           <select
@@ -30,9 +41,13 @@ export function Header() {
             ))}
           </select>
         </label>
-        <div className="userBadge">
-          <strong>{user.name}</strong>
-          <span>{user.email}</span>
+
+        <div className="topUser">
+          <div className="avatar">{user.name.slice(0, 1).toUpperCase()}</div>
+          <div>
+            <strong>{user.name}</strong>
+            <span>{roleLabels[user.role]}</span>
+          </div>
         </div>
       </div>
     </header>

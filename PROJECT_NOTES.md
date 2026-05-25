@@ -44,10 +44,10 @@
 | `/bom` | 已完成管理和批量维护第一版 | BOM 管理页面。读取 `bom_headers` 和 `bom_items`，显示成品 SKU 所属品牌，支持按品牌筛选、新增 BOM、查看明细、添加原材料、编辑 BOM 明细的单位用量/损耗率/备注、启用/停用 BOM、CSV 批量导入、删除明细、删除/批量删除或停用 BOM，并在删除前检查生产任务引用。 |
 | `/materials/requirements` | 已完成查询第一版 | 物料需求列表。读取 `material_requirements`，并回查 `bom_items` 显示 BOM 单位用量和损耗率。支持按状态筛选。当前是查询页，不直接新增、编辑、删除。 |
 | `/purchase/orders` | 已完成采购升级版 | 采购单页面。支持从缺料物料生成采购单、采购人员手动创建采购单、CSV 批量导入、CSV 导出、采购单 PNG 图片导出、列表分页、按供应商筛选、详情弹窗和状态按钮。手动选择辅料或从缺料生成采购单时，会根据 `skus.default_supplier_id` 自动带出默认供应商；不同默认供应商的缺料可按供应商拆分生成采购单。缺料生成仍会写入 `purchase_order_items.material_requirement_id` 并把对应物料需求状态更新为 `purchased`。实际库存入库建议走 `/inventory/inbound`。 |
-| `/inventory/inbound` | 已完成入库第一版 | 入库管理。分为采购入库和生产入库。采购入库会写 `material_in` 库存流水、更新 `inventory_items`、采购明细到货数量、采购单状态和物料需求状态。生产入库会写 `product_in` 库存流水、更新成品库存、更新生产任务 `completed_quantity` 和状态。 |
-| `/inventory/fba-outbound` | 已完成 FBA 出库第一版 | FBA 出库单独处理。读取可出库 FBA 备货需求，显示并支持按品牌筛选，按成品库存和已出库数量计算待出库数量。提交后写 `product_out` 库存流水、扣减 `inventory_items`，累计出库数量达到备货需求数量后把备货需求标记为 `shipped`。 |
+| `/inventory/inbound` | 已完成入库升级版 | 入库管理。分为采购入库、生产入库和其他入库。采购入库会写 `material_in` 库存流水、更新 `inventory_items`、采购明细到货数量、采购单状态和物料需求状态。生产入库会写 `product_in` 库存流水、更新成品库存、更新生产任务 `completed_quantity` 和状态。其他入库支持单个录入和“批量导入初始库存 / 其他入库”，可选择成品或辅料 SKU，不关联采购单或生产任务。 |
+| `/inventory/fba-outbound` | 已完成出库管理升级版 | 出库管理。路径暂时仍为 `/inventory/fba-outbound`，页面和导航名称改为“出库管理”。页面分为 FBA 出库和其他出库：FBA 出库继续关联 FBA 备货需求并在完成后更新备货状态；其他出库支持单个出库和批量导入，可选择成品或辅料 SKU，不关联 FBA 备货单。 |
 | `/inventory/transactions` | 已完成查询第一版 | 库存流水页面。读取 `inventory_transactions`，支持按流水类型、仓库、品牌、SKU、日期筛选，显示关联采购单、生产任务或 FBA 备货单。当前只查询，不新增、编辑、删除。 |
-| `/inventory/adjustments` | 已完成调整第一版 | 库存调整页面。读取当前库存，支持增加库存、减少库存、直接修正库存，每次调整都会更新 `inventory_items.quantity_on_hand` 并写入 `transaction_type = adjustment` 的库存流水。 |
+| `/inventory/adjustments` | 已完成调整升级版 | 库存调整页面。读取当前库存，支持增加库存、减少库存、直接修正库存，每次调整都会更新 `inventory_items.quantity_on_hand` 并写入 `transaction_type = adjustment` 的库存流水。现在也支持选择仓库 + SKU 后从 0 库存开始调整，没有 `inventory_items` 记录时可通过增加库存或直接修正创建库存记录。 |
 | `/inventory/materials` | 已完成查询第一版 | 原材料当前库存页面。读取 `inventory_items`，按 SKU 类型筛选原材料，显示当前库存、安全库存、库存状态、仓库和查看流水入口。 |
 | `/inventory/products` | 已完成查询第一版 | 成品当前库存页面。读取 `inventory_items`，按成品 SKU 和品牌筛选，显示当前成品库存、品牌、仓库和查看流水入口。 |
 | `/admin/brands` | 已完成管理和批量维护第一版 | 品牌基础资料管理页面。读取 `brands` 和 `products`，支持品牌列表、搜索、状态筛选、汇总卡片、新增品牌、编辑品牌、查看品牌详情、启用/停用、CSV 批量导入、删除/批量删除或停用，并在删除前检查产品引用。 |
@@ -173,12 +173,108 @@
 
 本次没有新增数据库字段，也没有新增 Supabase SQL。所有改动都沿用当前真实表结构：采购入库、生产入库、FBA 出库和库存调整仍通过 `inventory_items` 与 `inventory_transactions` 记录库存变化。
 
+### 3.3.1 库存出入库补齐（2026-05-25）
+
+本次继续优化库存模块，没有新增数据库字段，没有关闭 RLS，也没有自动打开浏览器。
+
+已完成：
+
+- `/inventory/inbound`：新增“其他入库”标签，用于初始库存录入、盘点补录、退货入库和其他非采购 / 非生产来源入库。
+- 其他入库支持单个录入：选择仓库、搜索并选择 SKU、填写数量、入库原因和备注；支持成品和辅料 SKU。
+- 其他入库支持 `BulkImportDialog` 批量导入，文案为“批量导入初始库存 / 其他入库”。导入模板中文字段：`仓库编码`、`SKU 编码`、`入库数量`、`入库原因`、`备注`；兼容英文表头：`warehouse_code`、`sku_code`、`quantity`、`reason`、`remark`。
+- `/inventory/fba-outbound`：页面标题和导航名称改为“出库管理”，路径暂时保留 `/inventory/fba-outbound`。
+- 出库管理新增 Tab：`FBA 出库` 和 `其他出库`。FBA 出库原逻辑保持：关联 FBA 备货需求，写 `product_out`，扣库存，完成后更新备货需求状态。
+- 其他出库支持单个出库：选择仓库、搜索并选择 SKU、填写数量、出库原因和备注；支持成品和辅料 SKU。
+- 其他出库支持 `BulkImportDialog` 批量导入。导入模板中文字段：`仓库编码`、`SKU 编码`、`出库数量`、`出库原因`、`备注`；兼容英文表头：`warehouse_code`、`sku_code`、`quantity`、`reason`、`remark`。
+- 其他出库会按 `quantity_on_hand - reserved_quantity` 校验可用库存；没有 `inventory_items` 记录时视为库存 0，不能出库；同一仓库 + SKU 多行导入时会合并校验总出库数量不能超过可用库存。
+- `/inventory/adjustments`：新增“按仓库 + SKU 调整”入口。即使某个仓库 + SKU 没有 `inventory_items` 记录，也能按当前库存 0 处理，并通过“增加库存”或“直接修正库存”创建库存记录；不允许减少成负数。
+- 库存调整直接修正到 0 且原来没有库存记录时，不创建库存记录和流水，页面提示“库存数量没有变化”。
+- 其他入库 / 其他出库 / 库存调整都会写 `inventory_transactions`，备注中标明来源、原因和操作备注，方便在 `/inventory/transactions` 追溯。
+
+本次库存写入一致性说明：
+
+- 新增的其他入库、其他出库、库存调整会在写库存后写流水；如果流水写入失败，会尝试把库存数量回滚到提交前。
+- 当前前端直连 Supabase，仍不是数据库级事务。后续如果要做到完全原子一致，建议迁移到 Supabase RPC，在数据库事务里同时更新 `inventory_items` 和插入 `inventory_transactions`。
+
+本次修改文件：
+
+- `src/lib/api/inventory.ts`
+- `src/app/(app)/inventory/inbound/page.tsx`
+- `src/app/(app)/inventory/fba-outbound/page.tsx`
+- `src/app/(app)/inventory/adjustments/page.tsx`
+- `src/lib/api/dashboard.ts`
+- `src/lib/navigation.ts`
+- `PROJECT_NOTES.md`
+
+本次验证：
+
+- 已运行 `npm run typecheck`，通过。
+- 已运行 `npm run build`，通过。
+- 用户要求不要自动打开浏览器检查，所以本次不做浏览器自动检查。
+
 后续建议：
 
 - 采购单供应商选择后续也可以改成可搜索选择器，适合供应商数量变多后继续优化。
 - 入库、出库、库存调整弹窗后续可以增加打印/导出单据能力。
 - 库存流水后续可以增加“导出当前筛选结果”。
 - 浏览器人工检查建议重点看 `/inventory/inbound`、`/inventory/fba-outbound`、`/inventory/adjustments` 和 `/purchase/orders` 的弹窗打开、关闭、提交按钮状态。
+
+### 3.4 后台 UI 现代化第一阶段（2026-05-25）
+
+本次按“先统一框架和样板页，再逐步替换业务页”的顺序处理，没有修改数据库 schema，没有关闭 RLS，也没有做浏览器自动测试。
+
+已完成第一阶段：
+
+- 优化统一后台外壳：左侧固定导航改为白底 SaaS 后台样式，当前菜单蓝色高亮，菜单增加图标，底部显示当前模拟登录用户。
+- 优化顶部栏：新增全局搜索框，占位文字为“搜索功能、单据、产品、SKU等”，增加通知按钮和用户头像区域，保留开发阶段模拟角色切换。
+- 新增通用 UI 组件：`PageHeader`、`StatCard`、`DataTable`、`SearchFilterBar`、`StatusBadge`、`ModalForm`、`DrawerForm`、`ImportDialog`、`ProductImage` 和一组本地 SVG 图标。
+- `/dashboard` 后台首页改为现代 Dashboard 样式：顶部统计卡片、最近 7 天趋势图、待办卡片、异常提醒和最新业务单据表格。
+- `/admin/products` 产品管理页作为列表型样板页改造：顶部 PageHeader、统计卡片、搜索筛选栏、产品图片、状态 Tag、统一表格和分页，新增/编辑/导入仍沿用原有弹窗和真实 Supabase 写入逻辑。
+
+本次保持不变：
+
+- 没有新增数据库字段。
+- 产品图片继续使用真实字段 `products.product_image_url`。
+- 产品新增、编辑、启用/停用、查看关联 SKU、批量导入和删除保护逻辑继续沿用原有 API。
+- 批量导入仍是上传后先预览和校验，不会直接写入数据库。
+
+本次验证：
+
+- 已运行 `npm run typecheck`，通过。
+- 已运行 `npm run build`，通过。
+- 用户要求不使用浏览器自动测试，所以本阶段不做浏览器自动检查。
+
+后续按同一套样板继续改：
+
+- 第二批：`/admin/skus`、`/bom`、`/replenishment`、`/production/planning`、`/production/orders`、`/purchase/orders`、库存相关页面。
+- 第三批：`/admin/users`、角色权限、系统设置。
+
+### 3.5 后台 UI 现代化第二阶段（2026-05-25）
+
+本次继续按第一阶段样板推进，先改基础资料里最核心的 SKU 和 BOM 页面，没有修改数据库 schema，没有关闭 RLS，也没有做浏览器自动测试。
+
+已完成页面：
+
+- `/admin/skus`：页面顶部改为统一 `PageHeader`，新增统计卡片，列表区域改为白色现代卡片；筛选区使用统一 `SearchFilterBar`；表格新增产品图片缩略图；SKU 类型和状态改为统一 `StatusBadge`；新增、编辑、批量导入、查看库存、查看 BOM、删除保护逻辑继续沿用原有实现。
+- `/bom`：页面顶部改为统一 `PageHeader`，新增 BOM 汇总统计卡片；列表区域改为白色现代卡片；新增 BOM / 批量导入入口移动到页面右上角；新增 BOM 搜索，可按 BOM 编号、版本、SKU、产品名称筛选；表格新增产品图片缩略图；BOM 状态改为统一 `StatusBadge`；BOM 明细弹窗和原材料维护逻辑继续沿用原有实现。
+
+本次兼容性处理：
+
+- 没有新增字段，只是在现有 `products.product_image_url` 基础上，让 SKU 和 BOM 的产品关联查询一起读取产品图片 URL。
+- SKU 品牌仍然通过 `sku.product.brand` 显示，不在 SKU 表重复保存品牌。
+- BOM 仍然使用真实表 `bom_headers` 和 `bom_items`，不新增额外表。
+
+本次验证：
+
+- 已运行 `npm run typecheck`，通过。
+- 已运行 `npm run build`，通过。
+- 用户要求不使用浏览器自动测试，所以本阶段不做浏览器自动检查。
+
+后续继续：
+
+- 业务高频页：`/replenishment`、`/production/planning`、`/production/orders`、`/purchase/orders`。
+- 库存页：`/inventory/inbound`、`/inventory/fba-outbound`、`/inventory/adjustments`、`/inventory/transactions`、`/inventory/materials`、`/inventory/products`。
+- 系统页：`/admin/users`、角色权限、系统设置。
 
 ### 3.4 辅料管理页面（2026-05-24）
 
@@ -276,10 +372,10 @@
 
 各角色首页重点：
 
-- 运营：待厂长接单的 FBA 备货需求、生产中的 FBA 备货需求、已生产完成待 FBA 出库、已超期但未 shipped 的备货单、可判断的成品库存异常；快捷入口包含创建 FBA 备货单、查看 FBA 备货需求、成品库存、FBA 出库。
+- 运营：待厂长接单的 FBA 备货需求、生产中的 FBA 备货需求、已生产完成待 FBA 出库、已超期但未 shipped 的备货单、可判断的成品库存异常；快捷入口包含创建 FBA 备货单、查看 FBA 备货需求、成品库存、出库管理。
 - 厂长：待接单/待排产、已接单但未创建生产任务、缺 BOM、缺料生产任务、可开工生产任务、生产中超期任务、待生产入库任务；快捷入口包含厂长排产、生产任务、BOM 管理、物料需求。
 - 采购：缺料待采购、已生成但未下单采购单、已下单待到货采购单、超期未到货采购单、未设置默认供应商辅料、停用供应商仍被辅料引用的异常；快捷入口包含采购单、物料需求、辅料管理、供应商管理。
-- 仓库：待采购入库、待生产入库、待 FBA 出库、原材料低库存、成品库存异常、最近库存调整记录；快捷入口包含入库管理、FBA 出库、原材料库存、成品库存、库存流水。
+- 仓库：待采购入库、待生产入库、待 FBA 出库、原材料低库存、成品库存异常、最近库存调整记录；快捷入口包含入库管理、出库管理、原材料库存、成品库存、库存流水。
 - 管理员：综合视角，展示待排产 FBA、生产中任务、缺料物料、待采购/待到货采购单、待采购入库、待生产入库、待 FBA 出库、未设置品牌产品、未设置默认供应商辅料、低库存辅料、最近库存流水。
 
 本次新增或修改的 API：
@@ -449,7 +545,7 @@
 
 ### 4.3 创建生产任务
 
-已完成第一版。
+已完成升级版。
 
 入口：`/production/planning`
 
@@ -653,13 +749,37 @@
 - 生产入库不等于发往 FBA。
 - 发往 FBA 必须单独走 `/inventory/fba-outbound`。
 
-### 4.8 FBA 出库
+### 4.7.1 其他入库 / 初始库存批量导入
 
-已完成第一版。
+已完成升级版。
+
+入口：`/inventory/inbound` 的“其他入库”标签。
+
+当前逻辑：
+
+- 用于初始库存录入、盘点补录、退货入库和其他非采购、非生产来源的库存增加。
+- 单个其他入库通过弹窗完成，字段包括入库仓库、SKU、入库数量、入库原因和备注。
+- SKU 可选择 `material`、`finished_good`、`finished_product`，也就是辅料和成品。
+- 如果仓库 + SKU 已经有 `inventory_items` 记录，则增加 `quantity_on_hand`。
+- 如果仓库 + SKU 没有 `inventory_items` 记录，则新增库存记录，`reserved_quantity = 0`，`safety_stock_quantity = 0`，单位使用 SKU 单位。
+- SKU 为 `material` 时流水类型写 `material_in`；SKU 为 `finished_good` / `finished_product` 时流水类型写 `product_in`。
+- 其他入库不关联 `purchase_order_id`、`production_order_id`、`replenishment_request_id`。
+- notes 会写明“其他入库”或“初始库存导入”、入库原因、单位和操作备注。
+- 批量导入复用 `BulkImportDialog`，上传后先预览和行级校验，有错误行时可下载错误报告，确认后才写库存和流水。
+- 批量导入模板中文字段：`仓库编码`、`SKU 编码`、`入库数量`、`入库原因`、`备注`。
+- 批量导入兼容英文表头：`warehouse_code`、`sku_code`、`quantity`、`reason`、`remark`。
+
+### 4.8 出库管理
+
+已完成升级版。
 
 入口：`/inventory/fba-outbound`
 
+页面名称和导航名称：出库管理。路径暂时保留 `/inventory/fba-outbound`。
+
 当前逻辑：
+
+FBA 出库：
 
 - 读取状态为 `accepted`、`in_production`、`completed` 的 FBA 备货需求。
 - 统计该备货需求已经 `product_out` 的数量。
@@ -670,6 +790,22 @@
 - 累计出库数量达到 FBA 备货需求数量后，更新备货需求状态为 `shipped`。
 - 第一版不允许超出库存，也不允许超发。
 
+其他出库：
+
+- 用于样品出库、损耗出库、退货给供应商、借出和其他非 FBA 出库。
+- 单个其他出库通过弹窗完成，字段包括出库仓库、SKU、出库数量、出库原因和备注。
+- SKU 可选择 `material`、`finished_good`、`finished_product`，也就是辅料和成品。
+- 出库前按 `inventory_items.quantity_on_hand - inventory_items.reserved_quantity` 校验可用库存。
+- 如果仓库 + SKU 没有 `inventory_items` 记录，视为库存 0，不能出库。
+- 出库数量不能大于可用库存，库存不能扣成负数。
+- SKU 为 `material` 时流水类型写 `material_out`；SKU 为 `finished_good` / `finished_product` 时流水类型写 `product_out`。
+- 其他出库不关联 FBA 备货单，不更新 `fba_replenishment_requests` 状态。
+- notes 会写明“其他出库”、出库原因、单位和操作备注。
+- 批量导入复用 `BulkImportDialog`，上传后先预览和行级校验，有错误行时可下载错误报告，确认后才扣减库存和写流水。
+- 批量导入模板中文字段：`仓库编码`、`SKU 编码`、`出库数量`、`出库原因`、`备注`。
+- 批量导入兼容英文表头：`warehouse_code`、`sku_code`、`quantity`、`reason`、`remark`。
+- 同一仓库 + SKU 多行导入时，先合并校验总出库数量不能超过可用库存，再逐行写库存流水。
+
 ### 4.9 库存流水记录
 
 已完成第一版。
@@ -679,9 +815,11 @@
 当前逻辑：
 
 - 采购入库写 `material_in`。
+- 其他入库按 SKU 类型写 `material_in` 或 `product_in`，notes 标明“其他入库”或“初始库存导入”。
 - 生产领料写 `material_out`。
 - 生产入库写 `product_in`。
 - FBA 出库写 `product_out`。
+- 其他出库按 SKU 类型写 `material_out` 或 `product_out`，notes 标明“其他出库”。
 - 页面可以查看流水类型、SKU、仓库、数量、关联单据、操作时间、备注。
 - 关联单据通过真实字段判断：`purchase_order_id`、`production_order_id`、`replenishment_request_id`。
 - 库存调整写 `adjustment`，调整原因、调整方式、调整前库存、调整后库存、调整差异和操作备注写入 `notes`，方便后续追溯。
@@ -696,6 +834,7 @@
 
 - 页面先读取 `inventory_items` 当前库存，并关联 `skus`、`products`、`warehouses` 显示 SKU 编码、名称、类型、产品、仓库、库存数量、单位和最后更新时间。
 - 支持按 SKU 编码 / 名称搜索，按 SKU 类型筛选全部 / 原材料 / 成品，按仓库筛选，并支持刷新列表。
+- 页面顶部新增“按仓库 + SKU 调整”入口，可直接选择仓库和 SKU 后打开调整弹窗，不再要求该 SKU 已经有库存记录。
 - SKU 类型展示规则：`material` 显示为“原材料”，`finished_good` / `finished_product` 显示为“成品”，其他值按原值显示。
 - 点击“调整库存”后打开调整表单，显示 SKU、仓库、当前库存和单位等只读信息。
 - 支持三种调整方式：增加库存、减少库存、直接修正为指定库存。
@@ -703,7 +842,10 @@
 - 减少库存时，调整数量必须大于 0，且不能大于当前库存，调整后库存 = 当前库存 - 调整数量。
 - 直接修正库存时，用户输入调整后库存，系统计算差异数量 = 调整后库存 - 当前库存；差异为 0 时禁止提交。
 - 不允许调整后库存小于 0。
-- 调整提交时先按真实库存记录重新读取当前库存，再更新 `inventory_items.quantity_on_hand`，并写入一条 `inventory_transactions.transaction_type = adjustment` 的流水。
+- 如果仓库 + SKU 没有 `inventory_items` 记录，系统按当前库存 0 处理；允许“增加库存”或“直接修正库存”创建库存记录，不允许“减少库存”把 0 扣成负数。
+- 新建库存记录时会写入 `warehouse_id`、`sku_id`、`item_type`、`quantity_on_hand`、`reserved_quantity = 0`、`safety_stock_quantity = 0`、`unit = SKU 单位`。
+- 如果直接修正到 0 且原来没有库存记录，系统不创建库存记录、不创建流水，并提示“库存数量没有变化”。
+- 调整提交时先按真实仓库 + SKU 重新读取当前库存，再更新或新增 `inventory_items`，并写入一条 `inventory_transactions.transaction_type = adjustment` 的流水。
 - 当前 schema 中 `inventory_transactions.quantity` 的注释说明是“入库为正数，出库也先记录正数，由类型判断方向”，所以库存调整流水的 `quantity` 也继续记录正数；实际增加或减少通过 `notes` 里的“调整差异：+数量 / -数量”追溯。
 - 当前没有真实登录，`operator_id` 仍暂时写 `null`；页面最近调整记录会兼容显示操作人。
 - 页面下方显示最近 `adjustment` 流水，包含操作时间、SKU、仓库、调整数量、调整原因、备注和操作人。
@@ -712,9 +854,6 @@
 
 - `src/lib/api/inventory.ts`
 - `src/app/(app)/inventory/adjustments/page.tsx`
-- `src/lib/navigation.ts`
-- `src/app/globals.css`
-- `supabase/dev-inventory-adjustment-policies.sql`
 - `PROJECT_NOTES.md`
 
 测试方式：
@@ -733,7 +872,7 @@
 - `.env.local` 里的 `NEXT_PUBLIC_SUPABASE_URL` 和 `NEXT_PUBLIC_SUPABASE_ANON_KEY` 是否正确。
 - Supabase 里是否已经执行基础 `dev-policies.sql`。
 - 如果读取或写入库存调整报 RLS 权限问题，请在 Supabase SQL Editor 执行 `supabase/dev-inventory-adjustment-policies.sql`。
-- `inventory_items` 是否有对应仓库和 SKU 的库存记录。
+- 如果是减少库存，先确认 `inventory_items` 是否有对应仓库和 SKU 的库存记录且可用库存足够；如果是增加库存或直接修正，可以从 0 库存创建记录。
 - `inventory_transactions` 是否有 `transaction_no`、`warehouse_id`、`sku_id`、`transaction_type`、`quantity`、`operator_id`、`occurred_at`、`notes` 等真实字段。
 - 如果页面提示“这条库存刚刚发生了变化”，说明提交期间库存被其他操作改过，需要刷新页面后重新调整。
 
@@ -1270,7 +1409,7 @@ RLS 策略：
 | FBA 备货需求 | 直接入口 `/replenishment` |
 | 生产管理 | 厂长排产 `/production/planning`、生产任务 `/production/orders`、BOM 管理 `/bom`、物料需求 `/materials/requirements` |
 | 采购管理 | 采购单 `/purchase/orders`、供应商管理 `/admin/suppliers` |
-| 仓库库存 | 入库管理 `/inventory/inbound`、FBA 出库 `/inventory/fba-outbound`、原材料库存 `/inventory/materials`、成品库存 `/inventory/products`、库存流水 `/inventory/transactions`、库存调整 `/inventory/adjustments` |
+| 仓库库存 | 入库管理 `/inventory/inbound`、出库管理 `/inventory/fba-outbound`、原材料库存 `/inventory/materials`、成品库存 `/inventory/products`、库存流水 `/inventory/transactions`、库存调整 `/inventory/adjustments` |
 | 基础资料 | 产品管理 `/admin/products`、SKU 管理 `/admin/skus`、仓库管理 `/admin/warehouses` |
 | 系统管理 | 用户管理 `/admin/users` |
 

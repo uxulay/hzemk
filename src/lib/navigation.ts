@@ -86,7 +86,7 @@ export const navigationGroups: NavigationGroup[] = [
         roles: ["warehouse", "procurement", "plant_manager", "admin"]
       },
       {
-        label: "FBA 出库",
+        label: "出库管理",
         href: "/inventory/fba-outbound",
         roles: ["warehouse", "operations", "admin"]
       },

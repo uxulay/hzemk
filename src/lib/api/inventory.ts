@@ -1,6 +1,12 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { fetchAllSupabaseRows } from "@/lib/supabase/pagination";
 import type { BrandSummary } from "@/lib/brand-utils";
+import type {
+  BulkImportResult,
+  BulkImportValidationRow,
+  CsvDataRow
+} from "@/lib/bulk-types";
+import { getCsvRowValue, type CsvTemplateField } from "@/lib/utils/csv";
 
 export type InventoryTransactionType =
   | "material_in"
@@ -319,6 +325,16 @@ export type AdjustInventoryItemInput = {
   notes?: string;
 };
 
+export type AdjustInventoryByWarehouseSkuInput = {
+  warehouseId: string;
+  skuId: string;
+  adjustmentMode: InventoryAdjustmentMode;
+  adjustmentQuantity?: number;
+  targetQuantity?: number;
+  reason: InventoryAdjustmentReason;
+  notes?: string;
+};
+
 export type CreateAdjustmentTransactionInput = {
   inventoryItem: InventoryAdjustmentRow;
   adjustmentMode: InventoryAdjustmentMode;
@@ -328,6 +344,41 @@ export type CreateAdjustmentTransactionInput = {
   signedDifference: number;
   notes?: string;
 };
+
+export type InventorySkuOption = {
+  id: string;
+  product_id: string | null;
+  sku_code: string;
+  sku_name: string;
+  sku_type: string;
+  unit: string;
+  status: string;
+  product: CurrentInventoryProduct;
+};
+
+export type OtherInventoryMovementInput = {
+  warehouseId: string;
+  skuId: string;
+  quantity: number;
+  reason: string;
+  notes?: string;
+};
+
+export type OtherInventoryMovementImportInput = {
+  warehouseId: string;
+  warehouseCode: string;
+  skuId: string;
+  skuCode: string;
+  skuName: string;
+  skuType: string;
+  unit: string;
+  quantity: number;
+  reason: string;
+  remark?: string;
+};
+
+export type OtherInventoryMovementValidationRow =
+  BulkImportValidationRow<OtherInventoryMovementImportInput>;
 
 type MaybeRelation<T> = T | T[] | null;
 
@@ -419,6 +470,10 @@ type RawCurrentInventoryRow = Omit<CurrentInventoryRow, "warehouse" | "sku"> & {
       product: MaybeRelation<NonNullable<CurrentInventoryProduct>>;
     }
   >;
+};
+
+type RawInventorySkuOption = Omit<InventorySkuOption, "product"> & {
+  product: MaybeRelation<NonNullable<CurrentInventoryProduct>>;
 };
 
 type InventoryItem = {
@@ -521,6 +576,36 @@ function getInventoryAdjustmentModeLabel(mode: InventoryAdjustmentMode) {
 
 function getInventoryAdjustmentReasonLabel(reason: InventoryAdjustmentReason) {
   return inventoryAdjustmentReasonLabels[reason];
+}
+
+function getInventoryItemTypeBySkuType(skuType: string) {
+  return skuType === "material" ? "material" : "finished_product";
+}
+
+function getInboundTransactionTypeBySkuType(
+  skuType: string
+): InventoryTransactionType {
+  return skuType === "material" ? "material_in" : "product_in";
+}
+
+function getOutboundTransactionTypeBySkuType(
+  skuType: string
+): InventoryTransactionType {
+  return skuType === "material" ? "material_out" : "product_out";
+}
+
+function isInventorySupportedSkuType(skuType: string) {
+  return (
+    skuType === "material" ||
+    skuType === "finished_good" ||
+    skuType === "finished_product"
+  );
+}
+
+function assertInventorySupportedSku(sku: Pick<InventorySkuOption, "sku_type">) {
+  if (!isInventorySupportedSkuType(sku.sku_type)) {
+    throw new Error("当前只支持辅料和成品 SKU 做其他出入库。");
+  }
 }
 
 function getPurchaseOrderSelect() {
@@ -845,6 +930,40 @@ function normalizeCurrentInventory(row: RawCurrentInventoryRow): CurrentInventor
   };
 }
 
+function normalizeInventorySkuOption(row: RawInventorySkuOption): InventorySkuOption {
+  return {
+    ...row,
+    product: normalizeProductBrand(singleRelation(row.product ?? null))
+  };
+}
+
+function createSyntheticInventoryRow(input: {
+  warehouse: CurrentInventoryWarehouse;
+  sku: InventorySkuOption;
+}): InventoryAdjustmentRow {
+  return {
+    id: "",
+    warehouse_id: input.warehouse.id,
+    sku_id: input.sku.id,
+    item_type: getInventoryItemTypeBySkuType(input.sku.sku_type),
+    quantity_on_hand: 0,
+    reserved_quantity: 0,
+    safety_stock_quantity: 0,
+    unit: input.sku.unit,
+    updated_at: new Date().toISOString(),
+    warehouse: input.warehouse,
+    sku: {
+      id: input.sku.id,
+      product_id: input.sku.product_id,
+      sku_code: input.sku.sku_code,
+      sku_name: input.sku.sku_name,
+      sku_type: input.sku.sku_type,
+      unit: input.sku.unit,
+      product: input.sku.product
+    }
+  };
+}
+
 function sortCurrentInventoryRows<T extends CurrentInventoryRow>(rows: T[]) {
   return [...rows].sort((a, b) => {
     const skuCompare = (a.sku?.sku_code ?? "").localeCompare(
@@ -1053,6 +1172,75 @@ export async function getWarehousesForFilter(): Promise<
   return (data ?? []) as InventoryTransactionWarehouse[];
 }
 
+export async function getSkuOptionsForInventory(): Promise<InventorySkuOption[]> {
+  const supabase = getSupabaseClient();
+  const data = await fetchAllSupabaseRows<RawInventorySkuOption>(
+    () =>
+      supabase
+        .from("skus")
+        .select(
+          `
+            id,
+            product_id,
+            sku_code,
+            sku_name,
+            sku_type,
+            unit,
+            status,
+            product:products!skus_product_id_fkey (
+              id,
+              brand_id,
+              product_code,
+              name,
+              brand:brands!products_brand_id_fkey (
+                id,
+                brand_code,
+                name,
+                english_name,
+                logo_url,
+                status
+              )
+            )
+          `
+        )
+        .in("sku_type", ["material", "finished_good", "finished_product"])
+        .order("sku_code", { ascending: true }),
+    "读取库存可选 SKU"
+  );
+
+  return data.map(normalizeInventorySkuOption);
+}
+
+export async function getInventoryItemByWarehouseAndSku(
+  warehouseId: string,
+  skuId: string
+): Promise<InventoryAdjustmentRow | null> {
+  if (!warehouseId || !skuId) {
+    return null;
+  }
+
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase
+      .from("inventory_items")
+      .select(getCurrentInventorySelect())
+      .eq("warehouse_id", warehouseId)
+      .eq("sku_id", skuId)
+      .maybeSingle(),
+    "读取仓库 SKU 库存"
+  );
+
+  if (error) {
+    throw formatSupabaseError("读取仓库 SKU 库存", error);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return normalizeCurrentInventory(data as unknown as RawCurrentInventoryRow);
+}
+
 export async function getInventoryTransactions(
   filters: InventoryTransactionFilters = {}
 ): Promise<InventoryTransactionRow[]> {
@@ -1238,6 +1426,718 @@ export async function createInventoryTransaction(input: {
   if (error) {
     throw formatSupabaseError("写入库存流水", error);
   }
+}
+
+async function getRawInventoryItemByWarehouseAndSku(input: {
+  warehouseId: string;
+  skuId: string;
+  action?: string;
+}): Promise<InventoryItem | null> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase
+      .from("inventory_items")
+      .select(
+        "id, warehouse_id, sku_id, item_type, quantity_on_hand, reserved_quantity, safety_stock_quantity, unit"
+      )
+      .eq("warehouse_id", input.warehouseId)
+      .eq("sku_id", input.skuId)
+      .maybeSingle(),
+    input.action ?? "读取当前库存"
+  );
+
+  if (error) {
+    throw formatSupabaseError(input.action ?? "读取当前库存", error);
+  }
+
+  return data as InventoryItem | null;
+}
+
+async function insertInventoryItemWithQuantity(input: {
+  warehouseId: string;
+  skuId: string;
+  itemType: string;
+  quantity: number;
+  unit: string;
+  action?: string;
+}): Promise<InventoryItem> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase
+      .from("inventory_items")
+      .insert({
+        warehouse_id: input.warehouseId,
+        sku_id: input.skuId,
+        item_type: input.itemType,
+        quantity_on_hand: input.quantity,
+        reserved_quantity: 0,
+        safety_stock_quantity: 0,
+        unit: input.unit
+      })
+      .select(
+        "id, warehouse_id, sku_id, item_type, quantity_on_hand, reserved_quantity, safety_stock_quantity, unit"
+      )
+      .single(),
+    input.action ?? "新增当前库存"
+  );
+
+  if (error) {
+    throw formatSupabaseError(input.action ?? "新增当前库存", error);
+  }
+
+  return data as InventoryItem;
+}
+
+async function updateInventoryItemQuantityById(input: {
+  inventoryItemId: string;
+  expectedQuantity: number;
+  nextQuantity: number;
+  action: string;
+}) {
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase
+      .from("inventory_items")
+      .update({ quantity_on_hand: input.nextQuantity })
+      .eq("id", input.inventoryItemId)
+      .eq("quantity_on_hand", input.expectedQuantity)
+      .select("id")
+      .maybeSingle(),
+    input.action
+  );
+
+  if (error) {
+    throw formatSupabaseError(input.action, error);
+  }
+
+  if (!data) {
+    throw new Error("这条库存刚刚发生了变化，请刷新列表后重新操作。");
+  }
+}
+
+async function getInventorySkuOptionById(skuId: string) {
+  const sku = (await getSkuOptionsForInventory()).find((item) => item.id === skuId);
+
+  if (!sku) {
+    throw new Error("SKU 不存在，请刷新页面后重试。");
+  }
+
+  assertInventorySupportedSku(sku);
+
+  return sku;
+}
+
+function validateOtherMovementInput(input: OtherInventoryMovementInput) {
+  if (!input.warehouseId) {
+    throw new Error("请选择仓库。");
+  }
+
+  if (!input.skuId) {
+    throw new Error("请选择 SKU。");
+  }
+
+  const quantity = Number(input.quantity);
+
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    throw new Error("数量必须大于 0。");
+  }
+
+  if (!input.reason.trim()) {
+    throw new Error("请填写原因。");
+  }
+
+  return roundQuantity(quantity);
+}
+
+function buildOtherInboundNotes(input: {
+  reason: string;
+  notes?: string;
+  unit: string;
+}) {
+  const source =
+    input.reason.includes("初始") || input.notes?.includes("初始")
+      ? "初始库存导入"
+      : "其他入库";
+
+  return [
+    source,
+    `入库原因：${input.reason.trim()}`,
+    `单位：${input.unit}`,
+    `操作备注：${input.notes?.trim() || "-"}`
+  ].join("\n");
+}
+
+function buildOtherOutboundNotes(input: {
+  reason: string;
+  notes?: string;
+  unit: string;
+}) {
+  return [
+    "其他出库",
+    `出库原因：${input.reason.trim()}`,
+    `单位：${input.unit}`,
+    `操作备注：${input.notes?.trim() || "-"}`
+  ].join("\n");
+}
+
+export async function createOtherInbound(input: OtherInventoryMovementInput) {
+  const quantity = validateOtherMovementInput(input);
+  const sku = await getInventorySkuOptionById(input.skuId);
+  const itemType = getInventoryItemTypeBySkuType(sku.sku_type);
+  const transactionType = getInboundTransactionTypeBySkuType(sku.sku_type);
+  const existing = await getRawInventoryItemByWarehouseAndSku({
+    warehouseId: input.warehouseId,
+    skuId: input.skuId
+  });
+  const beforeQuantity = roundQuantity(Number(existing?.quantity_on_hand ?? 0));
+  const afterQuantity = roundQuantity(beforeQuantity + quantity);
+  let changedItem = existing;
+
+  if (existing) {
+    await updateInventoryItemQuantityById({
+      inventoryItemId: existing.id,
+      expectedQuantity: beforeQuantity,
+      nextQuantity: afterQuantity,
+      action: "增加当前库存"
+    });
+  } else {
+    changedItem = await insertInventoryItemWithQuantity({
+      warehouseId: input.warehouseId,
+      skuId: input.skuId,
+      itemType,
+      quantity: afterQuantity,
+      unit: sku.unit
+    });
+  }
+
+  try {
+    await createInventoryTransaction({
+      warehouseId: input.warehouseId,
+      skuId: input.skuId,
+      transactionType,
+      quantity,
+      notes: buildOtherInboundNotes({
+        reason: input.reason,
+        notes: input.notes,
+        unit: sku.unit
+      })
+    });
+  } catch (error) {
+    if (changedItem) {
+      try {
+        await updateInventoryItemQuantityById({
+          inventoryItemId: changedItem.id,
+          expectedQuantity: afterQuantity,
+          nextQuantity: beforeQuantity,
+          action: "回滚当前库存"
+        });
+      } catch (rollbackError) {
+        throw new Error(
+          `库存已经增加，但库存流水写入失败，自动回滚也失败。原始错误：${getUnknownErrorMessage(
+            error
+          )}；回滚错误：${getUnknownErrorMessage(rollbackError)}。请立刻检查库存和流水。`
+        );
+      }
+    }
+
+    throw error;
+  }
+
+  return {
+    beforeQuantity,
+    afterQuantity,
+    quantity
+  };
+}
+
+export async function createOtherOutbound(input: OtherInventoryMovementInput) {
+  const quantity = validateOtherMovementInput(input);
+  const sku = await getInventorySkuOptionById(input.skuId);
+  const existing = await getRawInventoryItemByWarehouseAndSku({
+    warehouseId: input.warehouseId,
+    skuId: input.skuId,
+    action: "读取出库仓库存"
+  });
+
+  if (!existing) {
+    throw new Error("当前仓库没有这个 SKU 的库存记录，不能出库。");
+  }
+
+  const beforeQuantity = roundQuantity(Number(existing.quantity_on_hand));
+  const reservedQuantity = roundQuantity(Number(existing.reserved_quantity));
+  const availableQuantity = roundQuantity(beforeQuantity - reservedQuantity);
+
+  if (quantity > availableQuantity) {
+    throw new Error(
+      `当前可用库存只有 ${availableQuantity} ${sku.unit}，不能出库 ${quantity} ${sku.unit}。`
+    );
+  }
+
+  const afterQuantity = roundQuantity(beforeQuantity - quantity);
+
+  await updateInventoryItemQuantityById({
+    inventoryItemId: existing.id,
+    expectedQuantity: beforeQuantity,
+    nextQuantity: afterQuantity,
+    action: "扣减当前库存"
+  });
+
+  try {
+    await createInventoryTransaction({
+      warehouseId: input.warehouseId,
+      skuId: input.skuId,
+      transactionType: getOutboundTransactionTypeBySkuType(sku.sku_type),
+      quantity,
+      notes: buildOtherOutboundNotes({
+        reason: input.reason,
+        notes: input.notes,
+        unit: sku.unit
+      })
+    });
+  } catch (error) {
+    try {
+      await updateInventoryItemQuantityById({
+        inventoryItemId: existing.id,
+        expectedQuantity: afterQuantity,
+        nextQuantity: beforeQuantity,
+        action: "回滚当前库存"
+      });
+    } catch (rollbackError) {
+      throw new Error(
+        `库存已经扣减，但库存流水写入失败，自动回滚也失败。原始错误：${getUnknownErrorMessage(
+          error
+        )}；回滚错误：${getUnknownErrorMessage(rollbackError)}。请立刻检查库存和流水。`
+      );
+    }
+
+    throw error;
+  }
+
+  return {
+    beforeQuantity,
+    afterQuantity,
+    quantity
+  };
+}
+
+export async function adjustInventoryByWarehouseSku(
+  input: AdjustInventoryByWarehouseSkuInput
+) {
+  if (!input.warehouseId) {
+    throw new Error("请选择仓库。");
+  }
+
+  if (!input.skuId) {
+    throw new Error("请选择 SKU。");
+  }
+
+  if (!input.reason) {
+    throw new Error("请选择调整原因。");
+  }
+
+  const [sku, warehouses, existingRow, existingRaw] = await Promise.all([
+    getInventorySkuOptionById(input.skuId),
+    getWarehousesForFilter(),
+    getInventoryItemByWarehouseAndSku(input.warehouseId, input.skuId),
+    getRawInventoryItemByWarehouseAndSku({
+      warehouseId: input.warehouseId,
+      skuId: input.skuId
+    })
+  ]);
+  const warehouse = warehouses.find((item) => item.id === input.warehouseId);
+
+  if (!warehouse) {
+    throw new Error("仓库不存在，请刷新页面后重试。");
+  }
+
+  const currentQuantity = roundQuantity(Number(existingRaw?.quantity_on_hand ?? 0));
+  const { nextQuantity, signedDifference } = getAdjustmentTarget({
+    currentQuantity,
+    adjustmentMode: input.adjustmentMode,
+    adjustmentQuantity: input.adjustmentQuantity,
+    targetQuantity: input.targetQuantity
+  });
+  const inventoryItem =
+    existingRow ??
+    createSyntheticInventoryRow({
+      warehouse,
+      sku
+    });
+
+  let changedItem = existingRaw;
+
+  if (existingRaw) {
+    await updateInventoryItemQuantityById({
+      inventoryItemId: existingRaw.id,
+      expectedQuantity: currentQuantity,
+      nextQuantity,
+      action: "更新当前库存"
+    });
+  } else {
+    changedItem = await insertInventoryItemWithQuantity({
+      warehouseId: input.warehouseId,
+      skuId: input.skuId,
+      itemType: getInventoryItemTypeBySkuType(sku.sku_type),
+      quantity: nextQuantity,
+      unit: sku.unit
+    });
+  }
+
+  try {
+    await createAdjustmentTransaction({
+      inventoryItem,
+      adjustmentMode: input.adjustmentMode,
+      reason: input.reason,
+      beforeQuantity: currentQuantity,
+      afterQuantity: nextQuantity,
+      signedDifference,
+      notes: input.notes
+    });
+  } catch (error) {
+    if (changedItem) {
+      try {
+        await updateInventoryItemQuantityById({
+          inventoryItemId: changedItem.id,
+          expectedQuantity: nextQuantity,
+          nextQuantity: currentQuantity,
+          action: "回滚当前库存"
+        });
+      } catch (rollbackError) {
+        throw new Error(
+          `库存已经更新，但库存流水写入失败，自动回滚也失败。原始错误：${getUnknownErrorMessage(
+            error
+          )}；回滚错误：${getUnknownErrorMessage(rollbackError)}。请立刻检查库存和流水。`
+        );
+      }
+    }
+
+    throw error;
+  }
+
+  return {
+    inventoryItem,
+    beforeQuantity: currentQuantity,
+    afterQuantity: nextQuantity,
+    signedDifference
+  };
+}
+
+export const otherInboundImportFields: CsvTemplateField[] = [
+  {
+    key: "仓库编码",
+    label: "仓库编码",
+    required: true,
+    example: "WH-FIN-001",
+    aliases: ["warehouse_code"]
+  },
+  {
+    key: "SKU 编码",
+    label: "SKU 编码",
+    required: true,
+    example: "SKU-001",
+    aliases: ["sku_code"]
+  },
+  {
+    key: "入库数量",
+    label: "入库数量",
+    required: true,
+    example: "100",
+    aliases: ["quantity"]
+  },
+  {
+    key: "入库原因",
+    label: "入库原因",
+    required: true,
+    example: "初始库存导入",
+    aliases: ["reason"]
+  },
+  {
+    key: "备注",
+    label: "备注",
+    example: "期初盘点录入",
+    aliases: ["remark"]
+  }
+];
+
+export const otherOutboundImportFields: CsvTemplateField[] = [
+  {
+    key: "仓库编码",
+    label: "仓库编码",
+    required: true,
+    example: "WH-FIN-001",
+    aliases: ["warehouse_code"]
+  },
+  {
+    key: "SKU 编码",
+    label: "SKU 编码",
+    required: true,
+    example: "SKU-001",
+    aliases: ["sku_code"]
+  },
+  {
+    key: "出库数量",
+    label: "出库数量",
+    required: true,
+    example: "10",
+    aliases: ["quantity"]
+  },
+  {
+    key: "出库原因",
+    label: "出库原因",
+    required: true,
+    example: "样品出库",
+    aliases: ["reason"]
+  },
+  {
+    key: "备注",
+    label: "备注",
+    example: "业务样品",
+    aliases: ["remark"]
+  }
+];
+
+function getOtherMovementImportField(fields: CsvTemplateField[], key: string) {
+  const field = fields.find((item) => item.key === key);
+
+  if (!field) {
+    throw new Error(`导入字段不存在：${key}`);
+  }
+
+  return field;
+}
+
+async function validateOtherMovementImportRows(input: {
+  rows: CsvDataRow[];
+  fields: CsvTemplateField[];
+  movementType: "inbound" | "outbound";
+}): Promise<OtherInventoryMovementValidationRow[]> {
+  const [warehouses, skus] = await Promise.all([
+    getWarehousesForFilter(),
+    getSkuOptionsForInventory()
+  ]);
+  const warehouseByCode = new Map(
+    warehouses.map((warehouse) => [warehouse.warehouse_code.trim(), warehouse])
+  );
+  const skuByCode = new Map(skus.map((sku) => [sku.sku_code.trim(), sku]));
+  const warehouseCodeField = getOtherMovementImportField(input.fields, "仓库编码");
+  const skuCodeField = getOtherMovementImportField(input.fields, "SKU 编码");
+  const quantityField = getOtherMovementImportField(
+    input.fields,
+    input.movementType === "inbound" ? "入库数量" : "出库数量"
+  );
+  const reasonField = getOtherMovementImportField(
+    input.fields,
+    input.movementType === "inbound" ? "入库原因" : "出库原因"
+  );
+  const remarkField = getOtherMovementImportField(input.fields, "备注");
+  const validationRows = input.rows.map<OtherInventoryMovementValidationRow>(
+    (row, index) => {
+      const rowNumber = index + 2;
+      const errors: string[] = [];
+      const warehouseCode = getCsvRowValue(row, warehouseCodeField);
+      const skuCode = getCsvRowValue(row, skuCodeField);
+      const quantityText = getCsvRowValue(row, quantityField);
+      const reason = getCsvRowValue(row, reasonField);
+      const remark = getCsvRowValue(row, remarkField);
+      const warehouse = warehouseCode ? warehouseByCode.get(warehouseCode) : null;
+      const sku = skuCode ? skuByCode.get(skuCode) : null;
+      const quantity = Number(quantityText);
+
+      if (!warehouseCode) {
+        errors.push("仓库编码必填。");
+      } else if (!warehouse) {
+        errors.push(`仓库编码 ${warehouseCode} 不存在。`);
+      }
+
+      if (!skuCode) {
+        errors.push("SKU 编码必填。");
+      } else if (!sku) {
+        errors.push(`SKU 编码 ${skuCode} 不存在。`);
+      } else if (!isInventorySupportedSkuType(sku.sku_type)) {
+        errors.push("当前只支持辅料和成品 SKU。");
+      }
+
+      if (!quantityText) {
+        errors.push("数量必填。");
+      } else if (!Number.isFinite(quantity) || quantity <= 0) {
+        errors.push("数量必须大于 0。");
+      }
+
+      if (!reason) {
+        errors.push("原因必填。");
+      }
+
+      return {
+        rowNumber,
+        rawRow: row,
+        data:
+          warehouse && sku && Number.isFinite(quantity) && quantity > 0 && reason
+            ? {
+                warehouseId: warehouse.id,
+                warehouseCode,
+                skuId: sku.id,
+                skuCode,
+                skuName: sku.sku_name,
+                skuType: sku.sku_type,
+                unit: sku.unit,
+                quantity: roundQuantity(quantity),
+                reason,
+                remark
+              }
+            : undefined,
+        errors,
+        groupKey: warehouse && sku ? `${warehouse.id}:${sku.id}` : undefined
+      };
+    }
+  );
+
+  if (input.movementType === "outbound") {
+    await appendOtherOutboundStockValidation(validationRows);
+  }
+
+  return validationRows;
+}
+
+async function appendOtherOutboundStockValidation(
+  rows: OtherInventoryMovementValidationRow[]
+) {
+  const rowsWithData = rows.filter((row) => row.data && row.errors.length === 0);
+  const groupQuantity = new Map<string, number>();
+
+  for (const row of rowsWithData) {
+    if (!row.data || !row.groupKey) {
+      continue;
+    }
+
+    groupQuantity.set(
+      row.groupKey,
+      roundQuantity((groupQuantity.get(row.groupKey) ?? 0) + row.data.quantity)
+    );
+  }
+
+  if (groupQuantity.size === 0) {
+    return;
+  }
+
+  const supabase = getSupabaseClient();
+  const inventoryRows = await fetchAllSupabaseRows<
+    Pick<
+      InventoryItem,
+      "warehouse_id" | "sku_id" | "quantity_on_hand" | "reserved_quantity"
+    >
+  >(
+    () =>
+      supabase
+        .from("inventory_items")
+        .select("warehouse_id, sku_id, quantity_on_hand, reserved_quantity"),
+    "校验其他出库库存"
+  );
+  const availableByGroup = new Map<string, number>();
+
+  for (const item of inventoryRows) {
+    const key = `${item.warehouse_id}:${item.sku_id}`;
+    availableByGroup.set(
+      key,
+      roundQuantity(
+        Number(item.quantity_on_hand) - Number(item.reserved_quantity)
+      )
+    );
+  }
+
+  for (const row of rowsWithData) {
+    if (!row.data || !row.groupKey) {
+      continue;
+    }
+
+    const requestedQuantity = groupQuantity.get(row.groupKey) ?? 0;
+    const availableQuantity = availableByGroup.get(row.groupKey) ?? 0;
+
+    if (requestedQuantity > availableQuantity) {
+      row.errors.push(
+        `同仓库同 SKU 合计出库 ${requestedQuantity}，超过可用库存 ${availableQuantity}。`
+      );
+    }
+  }
+}
+
+export async function validateOtherInboundImportRows(rows: CsvDataRow[]) {
+  return validateOtherMovementImportRows({
+    rows,
+    fields: otherInboundImportFields,
+    movementType: "inbound"
+  });
+}
+
+export async function validateOtherOutboundImportRows(rows: CsvDataRow[]) {
+  return validateOtherMovementImportRows({
+    rows,
+    fields: otherOutboundImportFields,
+    movementType: "outbound"
+  });
+}
+
+export async function bulkCreateOtherInbound(
+  rows: OtherInventoryMovementImportInput[]
+): Promise<BulkImportResult> {
+  const errors: BulkImportResult["errors"] = [];
+  let successCount = 0;
+
+  for (const [index, row] of rows.entries()) {
+    try {
+      await createOtherInbound({
+        warehouseId: row.warehouseId,
+        skuId: row.skuId,
+        quantity: row.quantity,
+        reason: row.reason,
+        notes: row.remark
+      });
+      successCount += 1;
+    } catch (error) {
+      errors.push({
+        rowNumber: index + 2,
+        label: `${row.warehouseCode} / ${row.skuCode}`,
+        message: getUnknownErrorMessage(error)
+      });
+    }
+  }
+
+  return {
+    successCount,
+    failedCount: errors.length,
+    errors
+  };
+}
+
+export async function bulkCreateOtherOutbound(
+  rows: OtherInventoryMovementImportInput[]
+): Promise<BulkImportResult> {
+  const errors: BulkImportResult["errors"] = [];
+  let successCount = 0;
+
+  for (const [index, row] of rows.entries()) {
+    try {
+      await createOtherOutbound({
+        warehouseId: row.warehouseId,
+        skuId: row.skuId,
+        quantity: row.quantity,
+        reason: row.reason,
+        notes: row.remark
+      });
+      successCount += 1;
+    } catch (error) {
+      errors.push({
+        rowNumber: index + 2,
+        label: `${row.warehouseCode} / ${row.skuCode}`,
+        message: getUnknownErrorMessage(error)
+      });
+    }
+  }
+
+  return {
+    successCount,
+    failedCount: errors.length,
+    errors
+  };
 }
 
 async function getInventoryItemForAdjustment(

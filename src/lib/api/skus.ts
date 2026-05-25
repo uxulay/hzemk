@@ -11,6 +11,7 @@ export type SkuProductOption = {
   brand_id: string | null;
   product_code: string;
   name: string;
+  product_image_url: string | null;
   status: string;
   brand: BrandSummary | null;
 };
@@ -287,6 +288,7 @@ function getSkuSelect() {
       brand_id,
       product_code,
       name,
+      product_image_url,
       status,
       brand:brands!products_brand_id_fkey (
         id,
@@ -658,6 +660,7 @@ export async function getProductsForSkuForm(): Promise<SkuProductOption[]> {
           brand_id,
           product_code,
           name,
+          product_image_url,
           status,
           brand:brands!products_brand_id_fkey (
             id,
@@ -857,6 +860,7 @@ async function getMaterialSkuBomItems(
                 brand_id,
                 product_code,
                 name,
+                product_image_url,
                 status,
                 brand:brands!products_brand_id_fkey (
                   id,

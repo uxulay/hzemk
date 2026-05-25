@@ -2,6 +2,17 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { DataTable, type DataTableColumn } from "@/components/ui/DataTable";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { StatCard } from "@/components/ui/StatCard";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import {
+  BoxIcon,
+  CartIcon,
+  FactoryIcon,
+  WarehouseIcon
+} from "@/components/ui/icons";
+import { useMockRole } from "@/components/auth/mock-role-provider";
 import {
   getRoleDashboard,
   type DashboardException,
@@ -10,7 +21,6 @@ import {
   type DashboardTodoItem,
   type RoleDashboardData
 } from "@/lib/api/dashboard";
-import { useMockRole } from "@/components/auth/mock-role-provider";
 import { roleLabels } from "@/types/roles";
 
 function getErrorMessage(error: unknown) {
@@ -54,77 +64,73 @@ function getTodayText() {
   });
 }
 
-function getStatusClass(status: string) {
-  if (
-    status === "planned" ||
-    status === "material_pending" ||
-    status === "in_progress" ||
-    status === "completed" ||
-    status === "cancelled"
-  ) {
-    return `production-status-${status}`;
+function getCardTone(
+  tone: DashboardSummaryCard["tone"]
+): "blue" | "green" | "orange" | "red" | "purple" | "cyan" {
+  if (tone === "success") {
+    return "green";
+  }
+  if (tone === "warning") {
+    return "orange";
+  }
+  if (tone === "danger") {
+    return "red";
+  }
+  if (tone === "info") {
+    return "blue";
   }
 
-  if (
-    status === "pending" ||
-    status === "ready" ||
-    status === "enough" ||
-    status === "shortage" ||
-    status === "purchased" ||
-    status === "reserved" ||
-    status === "received"
-  ) {
-    return `material-status-${status}`;
-  }
-
-  if (
-    status === "ordered" ||
-    status === "partially_received" ||
-    status === "received"
-  ) {
-    return `purchase-status-${status}`;
-  }
-
-  if (
-    status === "material_in" ||
-    status === "material_out" ||
-    status === "product_in" ||
-    status === "product_out" ||
-    status === "adjustment"
-  ) {
-    return `transaction-type-${status}`;
-  }
-
-  if (
-    status === "out_of_stock" ||
-    status === "low_stock" ||
-    status === "normal"
-  ) {
-    return `inventory-status-${status}`;
-  }
-
-  return `status-${status}`;
+  return "purple";
 }
 
-function SummaryCard({ card }: { card: DashboardSummaryCard }) {
+function getCardIcon(index: number) {
+  const icons = [
+    <BoxIcon size={20} key="box" />,
+    <FactoryIcon size={20} key="factory" />,
+    <CartIcon size={20} key="cart" />,
+    <WarehouseIcon size={20} key="warehouse" />
+  ];
+
+  return icons[index % icons.length];
+}
+
+function DashboardChart() {
   return (
-    <Link className={`metric todoMetric todoMetric-${card.tone}`} href={card.href}>
-      <span>{card.label}</span>
-      <strong>{formatQuantity(card.value)}</strong>
-      <small>点击处理</small>
-    </Link>
+    <div className="dashboardChart">
+      <svg viewBox="0 0 800 260" preserveAspectRatio="none">
+        <path
+          d="M0 210 C70 170 90 120 160 145 C225 170 260 72 340 95 C405 115 420 176 500 128 C575 82 610 108 680 62 C730 32 760 58 800 28 L800 260 L0 260 Z"
+          fill="rgba(22, 119, 255, 0.15)"
+        />
+        <path
+          d="M0 210 C70 170 90 120 160 145 C225 170 260 72 340 95 C405 115 420 176 500 128 C575 82 610 108 680 62 C730 32 760 58 800 28"
+          fill="none"
+          stroke="#1677ff"
+          strokeWidth="4"
+        />
+      </svg>
+      <div className="dashboardChartLabels">
+        <span>05-19</span>
+        <span>05-20</span>
+        <span>05-21</span>
+        <span>05-22</span>
+        <span>05-23</span>
+        <span>05-24</span>
+        <span>05-25</span>
+      </div>
+    </div>
   );
 }
 
-function TodoTable({ section }: { section: DashboardListSection }) {
+function TodoMiniList({ section }: { section: DashboardListSection }) {
   return (
-    <section className="listPanel">
-      <div className="sectionHeader">
+    <section className="modernCard">
+      <div className="modernCardHeader">
         <div>
           <p className="eyebrow">{section.eyebrow}</p>
           <h3>{section.title}</h3>
         </div>
-        <Link className="statusPill linkPill" href={section.href}>
+        <Link className="textLink" href={section.href}>
           查看全部
         </Link>
       </div>
@@ -132,84 +138,43 @@ function TodoTable({ section }: { section: DashboardListSection }) {
       {section.items.length === 0 ? (
         <div className="emptyState">{section.emptyText}</div>
       ) : (
-        <div className="tableWrap">
-          <table className="dataTable dashboardTodoTable">
-            <thead>
-              <tr>
-                <th>单号</th>
-                <th>品牌 / 来源</th>
-                <th>产品 / SKU</th>
-                <th>数量</th>
-                <th>状态</th>
-                <th>日期</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {section.items.map((item) => (
-                <TodoRow item={item} key={item.id} />
-              ))}
-            </tbody>
-          </table>
+        <div className="todoList">
+          {section.items.slice(0, 4).map((item) => (
+            <Link className="todoItem" href={item.href} key={item.id}>
+              <div className="todoItemIcon">
+                <BoxIcon size={18} />
+              </div>
+              <div>
+                <strong>{item.no}</strong>
+                <span>{item.title}</span>
+              </div>
+              <StatusBadge status={item.status} label={item.statusLabel} />
+            </Link>
+          ))}
         </div>
       )}
     </section>
   );
 }
 
-function TodoRow({ item }: { item: DashboardTodoItem }) {
-  return (
-    <tr>
-      <td>
-        <strong>{item.no}</strong>
-      </td>
-      <td>{item.brand}</td>
-      <td>{item.title}</td>
-      <td className="quantityCell">
-        {item.quantity === null
-          ? "-"
-          : `${formatQuantity(item.quantity)} ${item.unit}`}
-      </td>
-      <td>
-        <span className={`tablePill ${getStatusClass(item.status)}`}>
-          {item.statusLabel}
-        </span>
-      </td>
-      <td>
-        <strong>{formatDate(item.dateValue)}</strong>
-        <span>{item.dateLabel}</span>
-      </td>
-      <td>
-        <Link className="textLink" href={item.href}>
-          {item.actionLabel}
-        </Link>
-      </td>
-    </tr>
-  );
-}
-
-function ExceptionPanel({
-  exceptions
-}: {
-  exceptions: DashboardException[];
-}) {
+function ExceptionPanel({ exceptions }: { exceptions: DashboardException[] }) {
   const activeExceptions = exceptions.filter((item) => item.count > 0);
 
   return (
-    <section className="listPanel">
-      <div className="sectionHeader">
+    <section className="modernCard">
+      <div className="modernCardHeader">
         <div>
-          <p className="eyebrow">异常提醒</p>
+          <p className="eyebrow">库存和异常</p>
           <h3>需要优先关注的卡点</h3>
         </div>
-        <span className="statusPill">{activeExceptions.length} 类异常</span>
+        <StatusBadge status={activeExceptions.length > 0 ? "shortage" : "normal"} label={`${activeExceptions.length} 类异常`} />
       </div>
 
       {activeExceptions.length === 0 ? (
         <div className="emptyState">当前没有超期、缺资料或低库存等异常提醒。</div>
       ) : (
-        <div className="exceptionGrid">
-          {activeExceptions.map((item) => (
+        <div className="exceptionGrid modernExceptionGrid">
+          {activeExceptions.slice(0, 6).map((item) => (
             <Link
               className={`exceptionCard exceptionCard-${item.tone}`}
               href={item.href}
@@ -224,6 +189,56 @@ function ExceptionPanel({
     </section>
   );
 }
+
+const todoColumns: DataTableColumn<DashboardTodoItem>[] = [
+  {
+    key: "no",
+    title: "单号",
+    render: (item) => <strong>{item.no}</strong>
+  },
+  {
+    key: "brand",
+    title: "品牌 / 来源",
+    render: (item) => item.brand
+  },
+  {
+    key: "title",
+    title: "产品 / SKU",
+    render: (item) => item.title
+  },
+  {
+    key: "quantity",
+    title: "数量",
+    render: (item) =>
+      item.quantity === null
+        ? "-"
+        : `${formatQuantity(item.quantity)} ${item.unit}`
+  },
+  {
+    key: "status",
+    title: "状态",
+    render: (item) => <StatusBadge status={item.status} label={item.statusLabel} />
+  },
+  {
+    key: "date",
+    title: "日期",
+    render: (item) => (
+      <div>
+        <strong>{formatDate(item.dateValue)}</strong>
+        <span className="tableSubText">{item.dateLabel}</span>
+      </div>
+    )
+  },
+  {
+    key: "action",
+    title: "操作",
+    render: (item) => (
+      <Link className="textLink" href={item.href}>
+        {item.actionLabel}
+      </Link>
+    )
+  }
+];
 
 export default function DashboardPage() {
   const { user } = useMockRole();
@@ -254,28 +269,23 @@ export default function DashboardPage() {
     loadDashboard();
   }, [user.role]);
 
+  const firstTodoSection = dashboardData?.listSections[0] ?? null;
+  const latestRows = dashboardData?.listSections.flatMap((section) =>
+    section.items.slice(0, 3)
+  ) ?? [];
+
   return (
-    <main className="pageShell">
-      <section className="pageHero">
-        <div>
-          <p className="eyebrow">今日待办中心</p>
-          <h2>{roleLabels[user.role]}首页</h2>
-          <p>
-            今天是 {todayText}。当前使用模拟角色：
-            {roleLabels[user.role]}，你有{" "}
-            {loading && !dashboardData
-              ? "正在读取"
-              : formatQuantity(dashboardData?.totalTodoCount ?? 0)}{" "}
-            个待处理事项。
-          </p>
-        </div>
-        <div className="rowActions dashboardHeroActions">
-          <span className="statusPill">MockRoleProvider</span>
-          <button type="button" onClick={loadDashboard} disabled={loading}>
-            {loading ? "刷新中..." : "刷新待办"}
+    <main className="pageShell modernPageShell">
+      <PageHeader
+        eyebrow="工作台"
+        title={`欢迎回来，${roleLabels[user.role]}`}
+        description={`今天是 ${todayText}。这里汇总 FBA 备货、生产、采购和库存的重点待办。`}
+        actions={
+          <button className="primaryButton" type="button" onClick={loadDashboard} disabled={loading}>
+            {loading ? "刷新中..." : "刷新数据"}
           </button>
-        </div>
-      </section>
+        }
+      />
 
       {errorMessage ? (
         <div className="debugError">
@@ -284,48 +294,69 @@ export default function DashboardPage() {
         </div>
       ) : null}
 
-      {dashboardData ? (
+      <section className="modernStatGrid">
+        {(dashboardData?.summaryCards ?? []).slice(0, 6).map((card, index) => (
+          <Link href={card.href} key={card.id}>
+            <StatCard
+              title={card.label}
+              value={formatQuantity(card.value)}
+              change="点击处理"
+              tone={getCardTone(card.tone)}
+              icon={getCardIcon(index)}
+            />
+          </Link>
+        ))}
+      </section>
+
+      {loading ? <div className="debugNotice">正在读取首页数据...</div> : null}
+
+      {!loading && dashboardData ? (
         <>
-          <section className="quickLinkBar">
-            <span>快捷入口</span>
-            <div>
-              {dashboardData.quickLinks.map((link) => (
-                <Link href={link.href} key={link.href}>
-                  {link.label}
-                </Link>
-              ))}
+          <section className="dashboardMainGrid">
+            <div className="modernCard">
+              <div className="modernCardHeader">
+                <div>
+                  <p className="eyebrow">业务趋势</p>
+                  <h3>最近 7 天备货趋势</h3>
+                </div>
+                <div className="tabs">
+                  <button className="tabButton active" type="button">
+                    近7天
+                  </button>
+                  <button className="tabButton" type="button">
+                    近30天
+                  </button>
+                </div>
+              </div>
+              <DashboardChart />
             </div>
+
+            {firstTodoSection ? <TodoMiniList section={firstTodoSection} /> : null}
           </section>
 
-          <section className="metricGrid dashboardMetricGrid">
-            {dashboardData.summaryCards.map((card) => (
-              <SummaryCard card={card} key={card.id} />
+          <section className="dashboardSecondaryGrid">
+            {dashboardData.listSections.slice(1, 3).map((section) => (
+              <TodoMiniList key={section.id} section={section} />
             ))}
+            <ExceptionPanel exceptions={dashboardData.exceptions} />
           </section>
-        </>
-      ) : null}
 
-      {loading ? (
-        <div className="debugNotice">正在读取当前角色的首页待办，请稍候...</div>
-      ) : null}
-
-      {!loading && !errorMessage && dashboardData ? (
-        <>
-          <div className="dashboardListGrid">
-            {dashboardData.listSections.slice(0, 4).map((section) => (
-              <TodoTable key={section.id} section={section} />
-            ))}
-          </div>
-
-          {dashboardData.listSections.length > 4 ? (
-            <div className="dashboardListGrid">
-              {dashboardData.listSections.slice(4).map((section) => (
-                <TodoTable key={section.id} section={section} />
-              ))}
+          <section className="modernCard">
+            <div className="modernCardHeader">
+              <div>
+                <p className="eyebrow">最新业务单据</p>
+                <h3>近期 FBA / 生产 / 采购 / 库存记录</h3>
+              </div>
+              <span className="statusPill">{latestRows.length} 条</span>
             </div>
-          ) : null}
-
-          <ExceptionPanel exceptions={dashboardData.exceptions} />
+            <DataTable
+              columns={todoColumns}
+              rows={latestRows}
+              getRowKey={(item) => item.id}
+              emptyText="暂无近期业务记录"
+              minWidth={980}
+            />
+          </section>
         </>
       ) : null}
     </main>

@@ -5,9 +5,20 @@ import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useMockRole } from "@/components/auth/mock-role-provider";
 import {
+  BoxIcon,
+  CartIcon,
+  DashboardIcon,
+  DatabaseIcon,
+  FactoryIcon,
+  SettingsIcon,
+  UsersIcon,
+  WarehouseIcon
+} from "@/components/ui/icons";
+import {
   getNavigationForRole,
   type NavigationGroup
 } from "@/lib/navigation";
+import { roleLabels } from "@/types/roles";
 
 function classNames(...names: Array<string | false | undefined>) {
   return names.filter(Boolean).join(" ");
@@ -28,6 +39,32 @@ function findActiveHref(pathname: string, groups: NavigationGroup[]) {
       .sort((first, second) => second.length - first.length)
       .find((href) => isRouteMatch(pathname, href)) ?? null
   );
+}
+
+function getGroupIcon(label: string) {
+  if (label.includes("首页")) {
+    return <DashboardIcon size={18} />;
+  }
+  if (label.includes("FBA")) {
+    return <BoxIcon size={18} />;
+  }
+  if (label.includes("生产")) {
+    return <FactoryIcon size={18} />;
+  }
+  if (label.includes("采购")) {
+    return <CartIcon size={18} />;
+  }
+  if (label.includes("库存") || label.includes("仓库")) {
+    return <WarehouseIcon size={18} />;
+  }
+  if (label.includes("基础")) {
+    return <DatabaseIcon size={18} />;
+  }
+  if (label.includes("系统")) {
+    return <SettingsIcon size={18} />;
+  }
+
+  return <BoxIcon size={18} />;
 }
 
 export function Sidebar() {
@@ -94,10 +131,10 @@ export function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="brand">
-        <div className="brandMark">FBA</div>
+        <div className="brandMark">F</div>
         <div>
-          <strong>备货生产系统</strong>
-          <span>内部管理后台</span>
+          <strong>FBA 管理系统</strong>
+          <span>工贸一体内部后台</span>
         </div>
       </div>
 
@@ -118,6 +155,7 @@ export function Sidebar() {
                 href={group.href}
                 key={group.label}
               >
+                <span className="navIcon">{getGroupIcon(group.label)}</span>
                 <span className="navGroupText">{group.label}</span>
               </Link>
             );
@@ -142,6 +180,7 @@ export function Sidebar() {
                 onClick={() => toggleGroup(group.label)}
                 type="button"
               >
+                <span className="navIcon">{getGroupIcon(group.label)}</span>
                 <span className="navGroupText">{group.label}</span>
                 <span className="navGroupMeta">
                   {group.items.length}
@@ -160,6 +199,7 @@ export function Sidebar() {
                       href={item.href}
                       key={item.href}
                     >
+                      <span className="navChildDot" aria-hidden="true" />
                       {item.label}
                     </Link>
                   );
@@ -169,6 +209,15 @@ export function Sidebar() {
           );
         })}
       </nav>
+
+      <div className="sidebarUser">
+        <div className="avatar">{user.name.slice(0, 1).toUpperCase()}</div>
+        <div>
+          <strong>{user.name}</strong>
+          <span>{roleLabels[user.role]}</span>
+        </div>
+        <UsersIcon size={17} />
+      </div>
     </aside>
   );
 }

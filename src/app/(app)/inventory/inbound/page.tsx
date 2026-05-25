@@ -1,18 +1,26 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { Modal } from "@/components/Modal";
 import { getWarehouses, type Warehouse } from "@/lib/api/master-data";
 import {
+  bulkCreateOtherInbound,
+  createOtherInbound,
   getReceivableProductionOrders,
   getReceivablePurchaseOrders,
+  getSkuOptionsForInventory,
+  otherInboundImportFields,
   receiveProductionOrder,
   receivePurchaseOrderItems,
+  validateOtherInboundImportRows,
+  type InventorySkuOption,
+  type OtherInventoryMovementValidationRow,
   type ReceivableProductionOrder,
   type ReceivablePurchaseOrder
 } from "@/lib/api/inventory";
 
-type InboundTab = "purchase" | "production";
+type InboundTab = "purchase" | "production" | "other";
 
 const productionStatusLabels: Record<string, string> = {
   planned: "已计划",
@@ -79,10 +87,19 @@ export default function InventoryInboundPage() {
     ReceivableProductionOrder[]
   >([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [skuOptions, setSkuOptions] = useState<InventorySkuOption[]>([]);
   const [selectedPurchaseOrderId, setSelectedPurchaseOrderId] = useState("");
   const [selectedProductionOrderId, setSelectedProductionOrderId] = useState("");
   const [purchaseWarehouseId, setPurchaseWarehouseId] = useState("");
   const [productionWarehouseId, setProductionWarehouseId] = useState("");
+  const [otherInboundOpen, setOtherInboundOpen] = useState(false);
+  const [otherImportOpen, setOtherImportOpen] = useState(false);
+  const [otherWarehouseId, setOtherWarehouseId] = useState("");
+  const [otherSkuId, setOtherSkuId] = useState("");
+  const [otherSkuKeyword, setOtherSkuKeyword] = useState("");
+  const [otherQuantity, setOtherQuantity] = useState("");
+  const [otherReason, setOtherReason] = useState("");
+  const [otherNotes, setOtherNotes] = useState("");
   const [purchaseQuantities, setPurchaseQuantities] = useState<
     Record<string, string>
   >({});
@@ -125,6 +142,30 @@ export default function InventoryInboundPage() {
     [warehouses]
   );
 
+  const activeWarehouses = useMemo(
+    () => warehouses.filter((warehouse) => warehouse.status === "active"),
+    [warehouses]
+  );
+
+  const filteredSkuOptions = useMemo(() => {
+    const keyword = otherSkuKeyword.trim().toLowerCase();
+
+    if (!keyword) {
+      return skuOptions;
+    }
+
+    return skuOptions.filter((sku) =>
+      [sku.sku_code, sku.sku_name, sku.product?.name]
+        .filter(Boolean)
+        .some((value) => value?.toLowerCase().includes(keyword))
+    );
+  }, [otherSkuKeyword, skuOptions]);
+
+  const selectedOtherSku = useMemo(
+    () => skuOptions.find((sku) => sku.id === otherSkuId) ?? null,
+    [otherSkuId, skuOptions]
+  );
+
   const purchaseInboundTotal = Object.values(purchaseQuantities).reduce(
     (sum, value) => sum + (Number(value) || 0),
     0
@@ -154,15 +195,18 @@ export default function InventoryInboundPage() {
       setLoading(true);
       setErrorMessage("");
 
-      const [purchaseData, productionData, warehouseData] = await Promise.all([
+      const [purchaseData, productionData, warehouseData, skuData] =
+        await Promise.all([
         getReceivablePurchaseOrders(),
         getReceivableProductionOrders(),
-        getWarehouses()
+        getWarehouses(),
+        getSkuOptionsForInventory()
       ]);
 
       setPurchaseOrders(purchaseData);
       setProductionOrders(productionData);
       setWarehouses(warehouseData);
+      setSkuOptions(skuData.filter((sku) => sku.status === "active"));
 
       setSelectedPurchaseOrderId((current) =>
         purchaseData.some((order) => order.id === current)
@@ -180,11 +224,15 @@ export default function InventoryInboundPage() {
       setProductionWarehouseId((current) =>
         current || getDefaultWarehouseId(warehouseData, "finished_product")
       );
+      setOtherWarehouseId((current) =>
+        current || getDefaultWarehouseId(warehouseData, "finished_product")
+      );
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setPurchaseOrders([]);
       setProductionOrders([]);
       setWarehouses([]);
+      setSkuOptions([]);
     } finally {
       setLoading(false);
     }
@@ -313,6 +361,64 @@ export default function InventoryInboundPage() {
     setSuccessMessage("");
   };
 
+  const openOtherInbound = () => {
+    setActiveTab("other");
+    setOtherInboundOpen(true);
+    setOtherWarehouseId(
+      otherWarehouseId || getDefaultWarehouseId(warehouses, "finished_product")
+    );
+    setOtherSkuId("");
+    setOtherSkuKeyword("");
+    setOtherQuantity("");
+    setOtherReason("");
+    setOtherNotes("");
+    setErrorMessage("");
+    setSuccessMessage("");
+  };
+
+  const submitOtherInbound = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    try {
+      setSubmitting(true);
+      setErrorMessage("");
+      setSuccessMessage("");
+
+      await createOtherInbound({
+        warehouseId: otherWarehouseId,
+        skuId: otherSkuId,
+        quantity: Number(otherQuantity),
+        reason: otherReason,
+        notes: otherNotes
+      });
+
+      setSuccessMessage(
+        `${selectedOtherSku?.sku_code ?? "该 SKU"} 其他入库成功，库存已增加。`
+      );
+      setOtherInboundOpen(false);
+      await loadPageData();
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const importOtherInboundRows = async (
+    rows: OtherInventoryMovementValidationRow[]
+  ) => {
+    const result = await bulkCreateOtherInbound(
+      rows.flatMap((row) => (row.data ? [row.data] : []))
+    );
+
+    await loadPageData();
+    setSuccessMessage(
+      `批量其他入库完成：成功 ${result.successCount} 条，失败 ${result.failedCount} 条。`
+    );
+
+    return result;
+  };
+
   return (
     <main className="pageShell">
       <section className="pageHero">
@@ -320,7 +426,7 @@ export default function InventoryInboundPage() {
           <p className="eyebrow">仓库管理</p>
           <h2>入库管理</h2>
           <p>
-            采购到货先进入原材料库存，生产完成先进入成品库存；发往 FBA 后续单独做出库。
+            采购到货、生产完成和其他来源入库都在这里处理；发往 FBA 后续单独做出库。
           </p>
         </div>
         <span className="statusPill">Supabase 数据</span>
@@ -357,6 +463,13 @@ export default function InventoryInboundPage() {
             onClick={() => setActiveTab("production")}
           >
             生产入库
+          </button>
+          <button
+            className={activeTab === "other" ? "tabButton active" : "tabButton"}
+            type="button"
+            onClick={() => setActiveTab("other")}
+          >
+            其他入库
           </button>
         </div>
 
@@ -512,6 +625,48 @@ export default function InventoryInboundPage() {
                 </table>
               </div>
             )}
+          </>
+        ) : null}
+
+        {!loading && activeTab === "other" ? (
+          <>
+            <div className="sectionHeader">
+              <div>
+                <p className="eyebrow">非采购 / 非生产</p>
+                <h3>批量导入初始库存 / 其他入库</h3>
+              </div>
+              <div className="rowActions">
+                <button type="button" onClick={openOtherInbound} disabled={submitting}>
+                  其他入库
+                </button>
+                <button
+                  className="primaryButton"
+                  type="button"
+                  onClick={() => setOtherImportOpen(true)}
+                  disabled={submitting}
+                >
+                  批量导入
+                </button>
+                <button type="button" onClick={loadPageData} disabled={loading}>
+                  刷新
+                </button>
+              </div>
+            </div>
+
+            <div className="detailGrid">
+              <div className="detailItem">
+                <span>适用场景</span>
+                <strong>初始库存、盘点补录、退货入库</strong>
+              </div>
+              <div className="detailItem">
+                <span>支持 SKU</span>
+                <strong>成品 SKU 和辅料 SKU</strong>
+              </div>
+              <div className="detailItem">
+                <span>库存流水</span>
+                <strong>自动写入 material_in / product_in</strong>
+              </div>
+            </div>
           </>
         ) : null}
       </section>
@@ -780,6 +935,162 @@ export default function InventoryInboundPage() {
           </form>
         </Modal>
       ) : null}
+
+      {otherInboundOpen ? (
+        <Modal
+          open={otherInboundOpen}
+          eyebrow="其他入库"
+          title="新增其他入库"
+          maxWidth="xl"
+          onClose={() => {
+            if (!submitting) {
+              setOtherInboundOpen(false);
+            }
+          }}
+        >
+          <form className="dataForm inboundForm" onSubmit={submitOtherInbound}>
+            <label>
+              入库仓库
+              <select
+                value={otherWarehouseId}
+                onChange={(event) => setOtherWarehouseId(event.target.value)}
+                disabled={submitting}
+                required
+              >
+                <option value="">请选择仓库</option>
+                {(activeWarehouses.length > 0 ? activeWarehouses : warehouses).map(
+                  (warehouse) => (
+                    <option key={warehouse.id} value={warehouse.id}>
+                      {warehouse.warehouse_code} / {warehouse.name}
+                    </option>
+                  )
+                )}
+              </select>
+            </label>
+
+            <label>
+              搜索 SKU
+              <input
+                value={otherSkuKeyword}
+                onChange={(event) => setOtherSkuKeyword(event.target.value)}
+                placeholder="输入 SKU 编码 / SKU 名称"
+                disabled={submitting}
+              />
+            </label>
+
+            <label>
+              SKU
+              <select
+                value={otherSkuId}
+                onChange={(event) => setOtherSkuId(event.target.value)}
+                disabled={submitting}
+                required
+              >
+                <option value="">请选择 SKU</option>
+                {filteredSkuOptions.map((sku) => (
+                  <option key={sku.id} value={sku.id}>
+                    {sku.sku_code} / {sku.sku_name} / {sku.unit}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              入库数量
+              <input
+                min="0.0001"
+                step="0.0001"
+                type="number"
+                value={otherQuantity}
+                onChange={(event) => setOtherQuantity(event.target.value)}
+                disabled={submitting}
+                required
+              />
+            </label>
+
+            <label>
+              入库原因
+              <input
+                value={otherReason}
+                onChange={(event) => setOtherReason(event.target.value)}
+                placeholder="例如初始库存导入、盘点补录、退货入库"
+                disabled={submitting}
+                required
+              />
+            </label>
+
+            <label className="fullField">
+              备注
+              <textarea
+                value={otherNotes}
+                onChange={(event) => setOtherNotes(event.target.value)}
+                placeholder="可填写来源说明或盘点说明"
+                disabled={submitting}
+              />
+            </label>
+
+            <div className="modalFooter fullField">
+              <span>提交后会增加库存，并写入库存流水。</span>
+              <div className="rowActions">
+                <button
+                  type="button"
+                  onClick={() => setOtherInboundOpen(false)}
+                  disabled={submitting}
+                >
+                  取消
+                </button>
+                <button
+                  className="primaryButton"
+                  type="submit"
+                  disabled={
+                    submitting ||
+                    !otherWarehouseId ||
+                    !otherSkuId ||
+                    Number(otherQuantity) <= 0 ||
+                    !otherReason.trim()
+                  }
+                >
+                  {submitting ? "正在入库..." : "确认其他入库"}
+                </button>
+              </div>
+            </div>
+          </form>
+        </Modal>
+      ) : null}
+
+      <BulkImportDialog
+        open={otherImportOpen}
+        title="批量导入初始库存 / 其他入库"
+        description="上传后先预览和校验，不会直接写入数据库。确认导入后逐行增加库存并写入库存流水。"
+        templateFileName="other-inbound-template.csv"
+        fields={otherInboundImportFields}
+        sampleRows={[
+          {
+            仓库编码: "WH-FIN-001",
+            "SKU 编码": "SKU-001",
+            入库数量: "100",
+            入库原因: "初始库存导入",
+            备注: "期初盘点录入"
+          }
+        ]}
+        validateRows={validateOtherInboundImportRows}
+        onImport={importOtherInboundRows}
+        onClose={() => setOtherImportOpen(false)}
+        renderPreviewSummary={(rows) => {
+          const validRows = rows.filter((row) => row.errors.length === 0);
+          const totalQuantity = validRows.reduce(
+            (sum, row) => sum + Number(row.data?.quantity ?? 0),
+            0
+          );
+
+          return (
+            <div className="debugNotice">
+              预览通过 {validRows.length} 行，合计入库{" "}
+              {formatQuantity(totalQuantity)} 件。
+            </div>
+          );
+        }}
+      />
     </main>
   );
 }

@@ -7,6 +7,19 @@ import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Modal } from "@/components/Modal";
 import { Pagination } from "@/components/Pagination";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { ProductImage } from "@/components/ui/ProductImage";
+import { SearchFilterBar } from "@/components/ui/SearchFilterBar";
+import { StatCard } from "@/components/ui/StatCard";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import {
+  BoxIcon,
+  DatabaseIcon,
+  DownloadIcon,
+  PlusIcon,
+  UploadIcon,
+  WarehouseIcon
+} from "@/components/ui/icons";
 import { SupplierSearchSelect } from "@/components/SupplierSearchSelect";
 import {
   bulkImportSkus,
@@ -665,40 +678,40 @@ export default function AdminSkusPage() {
   };
 
   return (
-    <main className="pageShell">
-      <section className="pageHero">
-        <div>
-          <p className="eyebrow">基础资料</p>
-          <h2>SKU 管理</h2>
-          <p>
-            管理公司 SKU 基础资料。成品 SKU 用于 FBA 备货、生产和成品库存；
-            原材料 SKU 用于 BOM、物料需求、采购和原材料库存。
-          </p>
-        </div>
-        <span className="statusPill">Supabase 数据</span>
-      </section>
+    <main className="pageShell modernPageShell">
+      <PageHeader
+        eyebrow="基础资料"
+        title="SKU 管理"
+        description="管理成品 SKU 和原材料 SKU。成品用于 FBA、生产和成品库存；原材料用于 BOM、采购和原材料库存。"
+        actions={
+          <div className="rowActions">
+            <button
+              type="button"
+              onClick={() =>
+                downloadCsvTemplate("skus-import-template.csv", skuImportFields)
+              }
+            >
+              <DownloadIcon size={16} />
+              下载模板
+            </button>
+            <button type="button" onClick={() => setImportOpen(true)}>
+              <UploadIcon size={16} />
+              批量导入
+            </button>
+            <button className="primaryButton" type="button" onClick={() => setCreateOpen(true)}>
+              <PlusIcon size={16} />
+              新增 SKU
+            </button>
+          </div>
+        }
+      />
 
-      <section className="transactionSummaryGrid">
-        <div className="metric">
-          <span>当前筛选 SKU</span>
-          <strong>{stats.totalSkus}</strong>
-        </div>
-        <div className="metric">
-          <span>本页成品 SKU</span>
-          <strong>{stats.finishedGoodSkus}</strong>
-        </div>
-        <div className="metric">
-          <span>本页原材料 SKU</span>
-          <strong>{stats.materialSkus}</strong>
-        </div>
-        <div className="metric">
-          <span>本页有库存 SKU</span>
-          <strong>{stats.inStockSkus}</strong>
-        </div>
-        <div className="metric">
-          <span>本页无库存 SKU</span>
-          <strong>{stats.outOfStockSkus}</strong>
-        </div>
+      <section className="modernStatGrid skuStatGrid">
+        <StatCard title="当前筛选 SKU" value={stats.totalSkus} change="符合当前条件" tone="blue" icon={<DatabaseIcon size={20} />} />
+        <StatCard title="本页成品 SKU" value={stats.finishedGoodSkus} change="用于生产和 FBA" tone="green" icon={<BoxIcon size={20} />} />
+        <StatCard title="本页原材料 SKU" value={stats.materialSkus} change="用于 BOM 和采购" tone="orange" icon={<DatabaseIcon size={20} />} />
+        <StatCard title="本页有库存 SKU" value={stats.inStockSkus} change="已有库存记录" tone="purple" icon={<WarehouseIcon size={20} />} />
+        <StatCard title="本页无库存 SKU" value={stats.outOfStockSkus} change="暂无库存记录" tone="red" icon={<WarehouseIcon size={20} />} />
       </section>
 
       {successMessage ? (
@@ -1018,49 +1031,37 @@ export default function AdminSkusPage() {
         </Modal>
       ) : null}
 
-      <section className="listPanel">
-        <div className="sectionHeader">
+      <section className="modernCard">
+        <div className="modernCardHeader">
           <div>
             <p className="eyebrow">SKU 列表</p>
             <h3>所有 SKU</h3>
           </div>
           <div className="rowActions">
-            <button
-              type="button"
-              onClick={() =>
-                downloadCsvTemplate("skus-import-template.csv", skuImportFields)
-              }
-            >
-              下载模板
-            </button>
-            <button type="button" onClick={() => setImportOpen(true)}>
-              批量导入
-            </button>
             <button type="button" onClick={refreshAll}>
               {loading ? "正在刷新..." : "刷新列表"}
-            </button>
-            <button
-              className="primaryButton"
-              type="button"
-              onClick={() => setCreateOpen(true)}
-            >
-              新增 SKU
             </button>
           </div>
         </div>
 
-        <div className="listToolbar skuToolbar">
-          <label>
-            搜索 SKU 编码 / 名称 / 规格
-            <input
-              value={searchKeyword}
-              onChange={(event) => {
-                resetToFirstPage();
-                setSearchKeyword(event.target.value);
-              }}
-              placeholder="输入 SKU 编码、名称或规格"
-            />
-          </label>
+        <SearchFilterBar
+          searchLabel="搜索 SKU 编码 / 名称 / 规格"
+          searchValue={searchKeyword}
+          searchPlaceholder="输入 SKU 编码、名称或规格"
+          onSearchChange={(value) => {
+            resetToFirstPage();
+            setSearchKeyword(value);
+          }}
+          onReset={() => {
+            resetToFirstPage();
+            setSearchKeyword("");
+            setSkuTypeFilter("all");
+            setBrandFilter("all");
+            setProductFilter("all");
+            setSupplierFilter("all");
+            setStatusFilter("all");
+          }}
+        >
 
           <label>
             SKU 类型
@@ -1148,11 +1149,7 @@ export default function AdminSkusPage() {
               ))}
             </select>
           </label>
-
-          <button className="secondaryButton" type="button" onClick={refreshAll}>
-            刷新
-          </button>
-        </div>
+        </SearchFilterBar>
 
         <BulkActionBar
           selectedItems={selectedSkuRows}
@@ -1183,6 +1180,7 @@ export default function AdminSkusPage() {
                       onChange={toggleAllPageSkus}
                     />
                   </th>
+                  <th>产品图片</th>
                   <th>SKU 编码</th>
                   <th>SKU 名称</th>
                   <th>SKU 类型</th>
@@ -1214,13 +1212,17 @@ export default function AdminSkusPage() {
                         />
                       </td>
                       <td>
+                        <ProductImage
+                          src={sku.product?.product_image_url}
+                          alt={`${sku.sku_code} ${sku.sku_name}`}
+                        />
+                      </td>
+                      <td>
                         <strong>{sku.sku_code}</strong>
                       </td>
                       <td>{sku.sku_name}</td>
                       <td>
-                        <span className={`tablePill sku-type-${sku.sku_type}`}>
-                          {getSkuTypeLabel(sku.sku_type)}
-                        </span>
+                        <StatusBadge status={sku.sku_type === "material" ? "pending" : "accepted"} label={getSkuTypeLabel(sku.sku_type)} />
                       </td>
                       <td>{getProductLabel(sku.product)}</td>
                       <td>
@@ -1232,9 +1234,7 @@ export default function AdminSkusPage() {
                       <td>{getSkuDefaultSupplierLabel(sku)}</td>
                       <td>{sku.unit}</td>
                       <td>
-                        <span className={`tablePill sku-status-${sku.status}`}>
-                          {getSkuStatusLabel(sku.status)}
-                        </span>
+                        <StatusBadge status={sku.status} label={getSkuStatusLabel(sku.status)} />
                       </td>
                       <td className="quantityCell">
                         {formatQuantity(sku.inventory_quantity)}

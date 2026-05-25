@@ -1,15 +1,29 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { Modal } from "@/components/Modal";
 import { getBrandOptions, type BrandRow } from "@/lib/api/brands";
 import { getBrandCodeName } from "@/lib/brand-utils";
 import { getWarehouses, type Warehouse } from "@/lib/api/master-data";
 import {
+  bulkCreateOtherOutbound,
+  createOtherOutbound,
   getFbaOutboundRequests,
+  getInventoryForAdjustment,
+  getInventoryTransactions,
+  getSkuOptionsForInventory,
+  otherOutboundImportFields,
   submitFbaOutbound,
-  type FbaOutboundRequest
+  validateOtherOutboundImportRows,
+  type FbaOutboundRequest,
+  type InventoryAdjustmentRow,
+  type InventorySkuOption,
+  type InventoryTransactionRow,
+  type OtherInventoryMovementValidationRow
 } from "@/lib/api/inventory";
+
+type OutboundTab = "fba" | "other";
 
 const requestStatusLabels: Record<string, string> = {
   accepted: "已接单",
@@ -36,6 +50,16 @@ function formatQuantity(value: number | null | undefined) {
   });
 }
 
+function formatDate(value: string | null | undefined) {
+  if (!value) {
+    return "-";
+  }
+
+  return new Date(value).toLocaleString("zh-CN", {
+    hour12: false
+  });
+}
+
 function parseAmazonSite(notes: string | null | undefined) {
   if (!notes) {
     return "-";
@@ -56,12 +80,28 @@ function getDefaultWarehouseId(warehouses: Warehouse[]) {
 }
 
 export default function FbaOutboundPage() {
+  const [activeTab, setActiveTab] = useState<OutboundTab>("fba");
   const [requests, setRequests] = useState<FbaOutboundRequest[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [brands, setBrands] = useState<BrandRow[]>([]);
+  const [skuOptions, setSkuOptions] = useState<InventorySkuOption[]>([]);
+  const [otherInventoryItems, setOtherInventoryItems] = useState<
+    InventoryAdjustmentRow[]
+  >([]);
+  const [recentOtherOutbound, setRecentOtherOutbound] = useState<
+    InventoryTransactionRow[]
+  >([]);
   const [outboundWarehouseId, setOutboundWarehouseId] = useState("");
   const [brandFilter, setBrandFilter] = useState("all");
   const [selectedRequestId, setSelectedRequestId] = useState("");
+  const [otherOutboundOpen, setOtherOutboundOpen] = useState(false);
+  const [otherImportOpen, setOtherImportOpen] = useState(false);
+  const [otherWarehouseId, setOtherWarehouseId] = useState("");
+  const [otherSkuId, setOtherSkuId] = useState("");
+  const [otherSkuKeyword, setOtherSkuKeyword] = useState("");
+  const [otherQuantity, setOtherQuantity] = useState("");
+  const [otherReason, setOtherReason] = useState("");
+  const [otherNotes, setOtherNotes] = useState("");
   const [outboundQuantity, setOutboundQuantity] = useState("");
   const [logisticsNotes, setLogisticsNotes] = useState("");
   const [operationNotes, setOperationNotes] = useState("");
@@ -98,6 +138,41 @@ export default function FbaOutboundPage() {
 
   const selectedWarehouse =
     warehouses.find((warehouse) => warehouse.id === outboundWarehouseId) ?? null;
+  const activeWarehouses = useMemo(
+    () => warehouses.filter((warehouse) => warehouse.status === "active"),
+    [warehouses]
+  );
+  const filteredSkuOptions = useMemo(() => {
+    const keyword = otherSkuKeyword.trim().toLowerCase();
+
+    if (!keyword) {
+      return skuOptions;
+    }
+
+    return skuOptions.filter((sku) =>
+      [sku.sku_code, sku.sku_name, sku.product?.name]
+        .filter(Boolean)
+        .some((value) => value?.toLowerCase().includes(keyword))
+    );
+  }, [otherSkuKeyword, skuOptions]);
+  const selectedOtherSku = useMemo(
+    () => skuOptions.find((sku) => sku.id === otherSkuId) ?? null,
+    [otherSkuId, skuOptions]
+  );
+  const selectedOtherInventory = useMemo(
+    () =>
+      otherInventoryItems.find(
+        (item) => item.warehouse_id === otherWarehouseId && item.sku_id === otherSkuId
+      ) ?? null,
+    [otherInventoryItems, otherSkuId, otherWarehouseId]
+  );
+  const selectedOtherAvailableQuantity = selectedOtherInventory
+    ? Math.max(
+        0,
+        Number(selectedOtherInventory.quantity_on_hand) -
+          Number(selectedOtherInventory.reserved_quantity)
+      )
+    : 0;
 
   const loadRequests = async (warehouseId: string) => {
     const requestData = await getFbaOutboundRequests({ warehouseId });
@@ -107,27 +182,53 @@ export default function FbaOutboundPage() {
     );
   };
 
+  const loadOtherOutboundData = async (warehouseId: string) => {
+    const [inventoryData, materialOutData, productOutData] = await Promise.all([
+      getInventoryForAdjustment({ warehouseId }),
+      getInventoryTransactions({ transactionType: "material_out", warehouseId }),
+      getInventoryTransactions({ transactionType: "product_out", warehouseId })
+    ]);
+
+    setOtherInventoryItems(inventoryData);
+    setRecentOtherOutbound(
+      [...materialOutData, ...productOutData]
+        .filter((transaction) => transaction.notes?.includes("其他出库"))
+        .sort(
+          (a, b) =>
+            new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime()
+        )
+        .slice(0, 20)
+    );
+  };
+
   const loadPageData = async () => {
     try {
       setLoading(true);
       setErrorMessage("");
 
-      const [warehouseData, brandData] = await Promise.all([
+      const [warehouseData, brandData, skuData] = await Promise.all([
         getWarehouses(),
-        getBrandOptions()
+        getBrandOptions(),
+        getSkuOptionsForInventory()
       ]);
       const defaultWarehouseId =
         outboundWarehouseId || getDefaultWarehouseId(warehouseData);
 
       setWarehouses(warehouseData);
       setBrands(brandData);
+      setSkuOptions(skuData.filter((sku) => sku.status === "active"));
       setOutboundWarehouseId(defaultWarehouseId);
+      setOtherWarehouseId((current) => current || defaultWarehouseId);
       await loadRequests(defaultWarehouseId);
+      await loadOtherOutboundData(defaultWarehouseId);
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setRequests([]);
       setWarehouses([]);
       setBrands([]);
+      setSkuOptions([]);
+      setOtherInventoryItems([]);
+      setRecentOtherOutbound([]);
     } finally {
       setLoading(false);
     }
@@ -140,15 +241,77 @@ export default function FbaOutboundPage() {
   const changeWarehouse = async (warehouseId: string) => {
     try {
       setOutboundWarehouseId(warehouseId);
+      setOtherWarehouseId(warehouseId);
       setLoading(true);
       setErrorMessage("");
       await loadRequests(warehouseId);
+      await loadOtherOutboundData(warehouseId);
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setRequests([]);
     } finally {
       setLoading(false);
     }
+  };
+
+  const openOtherOutbound = () => {
+    setActiveTab("other");
+    setOtherOutboundOpen(true);
+    setOtherWarehouseId(
+      otherWarehouseId || outboundWarehouseId || getDefaultWarehouseId(warehouses)
+    );
+    setOtherSkuId("");
+    setOtherSkuKeyword("");
+    setOtherQuantity("");
+    setOtherReason("");
+    setOtherNotes("");
+    setErrorMessage("");
+    setSuccessMessage("");
+  };
+
+  const submitOtherOutbound = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    try {
+      setSubmitting(true);
+      setErrorMessage("");
+      setSuccessMessage("");
+
+      await createOtherOutbound({
+        warehouseId: otherWarehouseId,
+        skuId: otherSkuId,
+        quantity: Number(otherQuantity),
+        reason: otherReason,
+        notes: otherNotes
+      });
+
+      setSuccessMessage(
+        `${selectedOtherSku?.sku_code ?? "该 SKU"} 其他出库成功，库存已扣减。`
+      );
+      setOtherOutboundOpen(false);
+      await loadOtherOutboundData(otherWarehouseId);
+      await loadRequests(outboundWarehouseId);
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const importOtherOutboundRows = async (
+    rows: OtherInventoryMovementValidationRow[]
+  ) => {
+    const result = await bulkCreateOtherOutbound(
+      rows.flatMap((row) => (row.data ? [row.data] : []))
+    );
+
+    await loadOtherOutboundData(otherWarehouseId || outboundWarehouseId);
+    await loadRequests(outboundWarehouseId);
+    setSuccessMessage(
+      `批量其他出库完成：成功 ${result.successCount} 条，失败 ${result.failedCount} 条。`
+    );
+
+    return result;
   };
 
   const openOutboundForm = (request: FbaOutboundRequest) => {
@@ -206,9 +369,9 @@ export default function FbaOutboundPage() {
       <section className="pageHero">
         <div>
           <p className="eyebrow">仓库管理</p>
-          <h2>FBA 出库</h2>
+          <h2>出库管理</h2>
           <p>
-            成品入库后先留在成品库存，发往 FBA 时再单独扣减库存并生成出库流水。
+            FBA 出库继续关联备货单；其他出库用于样品、损耗、退供应商和借出等非 FBA 场景。
           </p>
         </div>
         <span className="statusPill">Supabase 数据</span>
@@ -229,7 +392,26 @@ export default function FbaOutboundPage() {
       ) : null}
 
       <section className="listPanel">
-        <div className="sectionHeader">
+        <div className="tabBar" role="tablist" aria-label="出库类型">
+          <button
+            className={activeTab === "fba" ? "tabButton active" : "tabButton"}
+            type="button"
+            onClick={() => setActiveTab("fba")}
+          >
+            FBA 出库
+          </button>
+          <button
+            className={activeTab === "other" ? "tabButton active" : "tabButton"}
+            type="button"
+            onClick={() => setActiveTab("other")}
+          >
+            其他出库
+          </button>
+        </div>
+
+        {activeTab === "fba" ? (
+          <>
+            <div className="sectionHeader">
           <div>
             <p className="eyebrow">待发往 FBA</p>
             <h3>可出库备货需求</h3>
@@ -356,6 +538,159 @@ export default function FbaOutboundPage() {
               </tbody>
             </table>
           </div>
+        ) : null}
+          </>
+        ) : null}
+
+        {activeTab === "other" ? (
+          <>
+            <div className="sectionHeader">
+              <div>
+                <p className="eyebrow">非 FBA 出库</p>
+                <h3>其他出库</h3>
+              </div>
+              <div className="rowActions">
+                <button type="button" onClick={openOtherOutbound} disabled={submitting}>
+                  其他出库
+                </button>
+                <button
+                  className="primaryButton"
+                  type="button"
+                  onClick={() => setOtherImportOpen(true)}
+                  disabled={submitting}
+                >
+                  批量导入
+                </button>
+                <button
+                  type="button"
+                  onClick={() => loadOtherOutboundData(otherWarehouseId || outboundWarehouseId)}
+                  disabled={loading}
+                >
+                  刷新
+                </button>
+              </div>
+            </div>
+
+            <div className="dataForm inboundForm">
+              <label>
+                查看仓库
+                <select
+                  value={otherWarehouseId}
+                  onChange={(event) => {
+                    setOtherWarehouseId(event.target.value);
+                    loadOtherOutboundData(event.target.value);
+                  }}
+                  disabled={loading || submitting}
+                >
+                  <option value="">全部仓库</option>
+                  {(activeWarehouses.length > 0 ? activeWarehouses : warehouses).map(
+                    (warehouse) => (
+                      <option key={warehouse.id} value={warehouse.id}>
+                        {warehouse.warehouse_code} / {warehouse.name}
+                      </option>
+                    )
+                  )}
+                </select>
+              </label>
+            </div>
+
+            <div className="detailGrid">
+              <div className="detailItem">
+                <span>适用场景</span>
+                <strong>样品、损耗、退供应商、借出</strong>
+              </div>
+              <div className="detailItem">
+                <span>库存规则</span>
+                <strong>出库前校验可用库存，不能扣成负数</strong>
+              </div>
+              <div className="detailItem">
+                <span>库存流水</span>
+                <strong>自动写入 material_out / product_out</strong>
+              </div>
+            </div>
+
+            {otherInventoryItems.length === 0 ? (
+              <div className="emptyState">当前仓库暂无可出库库存</div>
+            ) : (
+              <div className="tableWrap">
+                <table className="dataTable">
+                  <thead>
+                    <tr>
+                      <th>SKU 编码</th>
+                      <th>SKU 名称</th>
+                      <th>仓库</th>
+                      <th>当前库存</th>
+                      <th>已占用</th>
+                      <th>可用库存</th>
+                      <th>单位</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {otherInventoryItems.map((item) => {
+                      const availableQuantity = Math.max(
+                        0,
+                        Number(item.quantity_on_hand) -
+                          Number(item.reserved_quantity)
+                      );
+
+                      return (
+                        <tr key={item.id}>
+                          <td>{item.sku?.sku_code ?? "-"}</td>
+                          <td>{item.sku?.sku_name ?? "-"}</td>
+                          <td>
+                            <strong>{item.warehouse?.name ?? "-"}</strong>
+                            <span>{item.warehouse?.warehouse_code ?? "-"}</span>
+                          </td>
+                          <td>{formatQuantity(item.quantity_on_hand)}</td>
+                          <td>{formatQuantity(item.reserved_quantity)}</td>
+                          <td>{formatQuantity(availableQuantity)}</td>
+                          <td>{item.sku?.unit ?? item.unit}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div className="sectionHeader">
+              <div>
+                <p className="eyebrow">最近流水</p>
+                <h3>最近其他出库记录</h3>
+              </div>
+            </div>
+
+            {recentOtherOutbound.length === 0 ? (
+              <div className="emptyState">暂无其他出库流水</div>
+            ) : (
+              <div className="tableWrap">
+                <table className="dataTable">
+                  <thead>
+                    <tr>
+                      <th>时间</th>
+                      <th>类型</th>
+                      <th>SKU</th>
+                      <th>仓库</th>
+                      <th>数量</th>
+                      <th>备注</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recentOtherOutbound.map((transaction) => (
+                      <tr key={transaction.id}>
+                        <td>{formatDate(transaction.occurred_at)}</td>
+                        <td>{transaction.transaction_type}</td>
+                        <td>{transaction.sku?.sku_code ?? "-"}</td>
+                        <td>{transaction.warehouse?.name ?? "-"}</td>
+                        <td>{formatQuantity(transaction.quantity)}</td>
+                        <td className="notesCell">{transaction.notes ?? "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
         ) : null}
       </section>
 
@@ -494,6 +829,178 @@ export default function FbaOutboundPage() {
           </form>
         </Modal>
       ) : null}
+
+      {otherOutboundOpen ? (
+        <Modal
+          open={otherOutboundOpen}
+          eyebrow="其他出库"
+          title="新增其他出库"
+          maxWidth="xl"
+          onClose={() => {
+            if (!submitting) {
+              setOtherOutboundOpen(false);
+            }
+          }}
+        >
+          <form className="dataForm inboundForm" onSubmit={submitOtherOutbound}>
+            <label>
+              出库仓库
+              <select
+                value={otherWarehouseId}
+                onChange={(event) => {
+                  setOtherWarehouseId(event.target.value);
+                  loadOtherOutboundData(event.target.value);
+                }}
+                disabled={submitting}
+                required
+              >
+                <option value="">请选择仓库</option>
+                {(activeWarehouses.length > 0 ? activeWarehouses : warehouses).map(
+                  (warehouse) => (
+                    <option key={warehouse.id} value={warehouse.id}>
+                      {warehouse.warehouse_code} / {warehouse.name}
+                    </option>
+                  )
+                )}
+              </select>
+            </label>
+
+            <label>
+              搜索 SKU
+              <input
+                value={otherSkuKeyword}
+                onChange={(event) => setOtherSkuKeyword(event.target.value)}
+                placeholder="输入 SKU 编码 / SKU 名称"
+                disabled={submitting}
+              />
+            </label>
+
+            <label>
+              SKU
+              <select
+                value={otherSkuId}
+                onChange={(event) => setOtherSkuId(event.target.value)}
+                disabled={submitting}
+                required
+              >
+                <option value="">请选择 SKU</option>
+                {filteredSkuOptions.map((sku) => (
+                  <option key={sku.id} value={sku.id}>
+                    {sku.sku_code} / {sku.sku_name} / {sku.unit}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              出库数量
+              <input
+                min="0.0001"
+                max={selectedOtherAvailableQuantity || undefined}
+                step="0.0001"
+                type="number"
+                value={otherQuantity}
+                onChange={(event) => setOtherQuantity(event.target.value)}
+                disabled={submitting}
+                required
+              />
+            </label>
+
+            <label>
+              出库原因
+              <input
+                value={otherReason}
+                onChange={(event) => setOtherReason(event.target.value)}
+                placeholder="例如样品出库、损耗出库、退货给供应商"
+                disabled={submitting}
+                required
+              />
+            </label>
+
+            <label className="fullField">
+              备注
+              <textarea
+                value={otherNotes}
+                onChange={(event) => setOtherNotes(event.target.value)}
+                placeholder="可填写领用人、退货原因或业务说明"
+                disabled={submitting}
+              />
+            </label>
+
+            <div className="fullField adjustmentPreviewBox">
+              <span>可用库存</span>
+              <strong>
+                {formatQuantity(selectedOtherAvailableQuantity)}{" "}
+                {selectedOtherSku?.unit ?? ""}
+              </strong>
+              {!selectedOtherInventory && otherWarehouseId && otherSkuId ? (
+                <p className="dangerText">当前仓库没有该 SKU 库存记录，不能出库。</p>
+              ) : null}
+            </div>
+
+            <div className="modalFooter fullField">
+              <span>提交后会扣减库存，并写入库存流水。</span>
+              <div className="rowActions">
+                <button
+                  type="button"
+                  onClick={() => setOtherOutboundOpen(false)}
+                  disabled={submitting}
+                >
+                  取消
+                </button>
+                <button
+                  className="primaryButton"
+                  type="submit"
+                  disabled={
+                    submitting ||
+                    !otherWarehouseId ||
+                    !otherSkuId ||
+                    Number(otherQuantity) <= 0 ||
+                    Number(otherQuantity) > selectedOtherAvailableQuantity ||
+                    !otherReason.trim()
+                  }
+                >
+                  {submitting ? "正在出库..." : "确认其他出库"}
+                </button>
+              </div>
+            </div>
+          </form>
+        </Modal>
+      ) : null}
+
+      <BulkImportDialog
+        open={otherImportOpen}
+        title="批量导入其他出库"
+        description="上传后先预览和校验库存是否足够。确认导入后逐行扣减库存并写入库存流水。"
+        templateFileName="other-outbound-template.csv"
+        fields={otherOutboundImportFields}
+        sampleRows={[
+          {
+            仓库编码: "WH-FIN-001",
+            "SKU 编码": "SKU-001",
+            出库数量: "10",
+            出库原因: "样品出库",
+            备注: "业务样品"
+          }
+        ]}
+        validateRows={validateOtherOutboundImportRows}
+        onImport={importOtherOutboundRows}
+        onClose={() => setOtherImportOpen(false)}
+        renderPreviewSummary={(rows) => {
+          const validRows = rows.filter((row) => row.errors.length === 0);
+          const totalQuantity = validRows.reduce(
+            (sum, row) => sum + Number(row.data?.quantity ?? 0),
+            0
+          );
+
+          return (
+            <div className="debugNotice">
+              预览通过 {validRows.length} 行，合计出库{" "}
+              {formatQuantity(totalQuantity)} 件。
+            </div>
+          );
+        }}
+      />
     </main>
   );
 }

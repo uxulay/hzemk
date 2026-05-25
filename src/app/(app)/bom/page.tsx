@@ -6,6 +6,18 @@ import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Modal } from "@/components/Modal";
 import { Pagination } from "@/components/Pagination";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { ProductImage } from "@/components/ui/ProductImage";
+import { SearchFilterBar } from "@/components/ui/SearchFilterBar";
+import { StatCard } from "@/components/ui/StatCard";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import {
+  DatabaseIcon,
+  DownloadIcon,
+  FactoryIcon,
+  PlusIcon,
+  UploadIcon
+} from "@/components/ui/icons";
 import {
   bulkImportBomRows,
   deactivateBomHeadersByIds,
@@ -277,6 +289,7 @@ export default function BomPage() {
     useState<BomHeaderFormState>(initialHeaderForm);
   const [itemForm, setItemForm] = useState<BomItemFormState>(initialItemForm);
   const [editingItem, setEditingItem] = useState<EditingBomItem | null>(null);
+  const [searchKeyword, setSearchKeyword] = useState("");
   const [brandFilter, setBrandFilter] = useState("all");
   const [showItemForm, setShowItemForm] = useState(false);
   const [selectedBomIds, setSelectedBomIds] = useState<string[]>([]);
@@ -343,16 +356,24 @@ export default function BomPage() {
     );
   }, [finishedGoodSkus]);
   const filteredBoms = useMemo(() => {
-    if (brandFilter === "all") {
-      return boms;
-    }
+    const keyword = searchKeyword.trim().toLowerCase();
 
     return boms.filter((bom) => {
       const brandId = bom.product_sku?.product?.brand?.id ?? null;
+      const matchesBrand =
+        brandFilter === "all" ||
+        (brandFilter === "none" ? !brandId : brandId === brandFilter);
+      const matchesKeyword =
+        !keyword ||
+        bom.bom_code.toLowerCase().includes(keyword) ||
+        bom.version.toLowerCase().includes(keyword) ||
+        (bom.product_sku?.sku_code ?? "").toLowerCase().includes(keyword) ||
+        (bom.product_sku?.sku_name ?? "").toLowerCase().includes(keyword) ||
+        (bom.product_sku?.product?.name ?? "").toLowerCase().includes(keyword);
 
-      return brandFilter === "none" ? !brandId : brandId === brandFilter;
+      return matchesBrand && matchesKeyword;
     });
-  }, [boms, brandFilter]);
+  }, [boms, brandFilter, searchKeyword]);
   const allBomsSelected =
     filteredBoms.length > 0 &&
     filteredBoms.every((bom) => selectedBomIds.includes(bom.id));
@@ -361,10 +382,13 @@ export default function BomPage() {
     () => paginateItems(filteredBoms, page),
     [filteredBoms, page]
   );
+  const activeBomCount = filteredBoms.filter((bom) => bom.status === "active").length;
+  const inactiveBomCount = filteredBoms.filter((bom) => bom.status === "inactive").length;
+  const totalBomItems = filteredBoms.reduce((sum, bom) => sum + bom.item_count, 0);
 
   useEffect(() => {
     setPage(1);
-  }, [brandFilter]);
+  }, [brandFilter, searchKeyword]);
 
   const loadBomDetail = async (bomHeaderId: string) => {
     try {
@@ -652,16 +676,39 @@ export default function BomPage() {
   };
 
   return (
-    <main className="pageShell">
-      <section className="pageHero">
-        <div>
-          <p className="eyebrow">物料与采购</p>
-          <h2>BOM 管理</h2>
-          <p>
-            管理每个成品 SKU 的 BOM 版本和原材料用量，生产任务会按启用中的 BOM 自动计算物料需求。
-          </p>
-        </div>
-        <span className="statusPill">Supabase 数据</span>
+    <main className="pageShell modernPageShell">
+      <PageHeader
+        eyebrow="生产基础资料"
+        title="BOM 管理"
+        description="管理每个成品 SKU 的 BOM 版本和原材料用量，生产任务会按启用中的 BOM 自动计算物料需求。"
+        actions={
+          <div className="rowActions">
+            <button
+              type="button"
+              onClick={() =>
+                downloadCsvTemplate("bom-import-template.csv", bomImportFields)
+              }
+            >
+              <DownloadIcon size={16} />
+              下载模板
+            </button>
+            <button type="button" onClick={() => setImportOpen(true)}>
+              <UploadIcon size={16} />
+              批量导入
+            </button>
+            <button className="primaryButton" type="button" onClick={() => setCreateOpen(true)}>
+              <PlusIcon size={16} />
+              新增 BOM
+            </button>
+          </div>
+        }
+      />
+
+      <section className="modernStatGrid bomStatGrid">
+        <StatCard title="当前筛选 BOM" value={filteredBoms.length} change="符合当前条件" tone="blue" icon={<FactoryIcon size={20} />} />
+        <StatCard title="启用 BOM" value={activeBomCount} change="可用于生产" tone="green" icon={<FactoryIcon size={20} />} />
+        <StatCard title="停用 BOM" value={inactiveBomCount} change="暂不使用" tone="orange" icon={<FactoryIcon size={20} />} />
+        <StatCard title="原材料明细" value={totalBomItems} change="BOM 用料行" tone="purple" icon={<DatabaseIcon size={20} />} />
       </section>
 
       {successMessage ? (
@@ -769,33 +816,15 @@ export default function BomPage() {
         </form>
       </Modal>
 
-      <section className="listPanel">
-        <div className="sectionHeader">
+      <section className="modernCard">
+        <div className="modernCardHeader">
           <div>
             <p className="eyebrow">BOM 列表</p>
             <h3>所有 BOM</h3>
           </div>
           <div className="rowActions">
-            <button
-              type="button"
-              onClick={() =>
-                downloadCsvTemplate("bom-import-template.csv", bomImportFields)
-              }
-            >
-              下载模板
-            </button>
-            <button type="button" onClick={() => setImportOpen(true)}>
-              批量导入
-            </button>
             <button type="button" onClick={refreshAll}>
               {loading ? "正在刷新..." : "刷新"}
-            </button>
-            <button
-              className="primaryButton"
-              type="button"
-              onClick={() => setCreateOpen(true)}
-            >
-              新增 BOM
             </button>
           </div>
         </div>
@@ -809,7 +838,16 @@ export default function BomPage() {
           onDeleteSelected={batchDeleteBoms}
         />
 
-        <div className="listToolbar">
+        <SearchFilterBar
+          searchLabel="搜索 BOM / SKU / 产品"
+          searchValue={searchKeyword}
+          searchPlaceholder="输入 BOM 编号、SKU 或产品名称"
+          onSearchChange={setSearchKeyword}
+          onReset={() => {
+            setSearchKeyword("");
+            setBrandFilter("all");
+          }}
+        >
           <label>
             品牌
             <select
@@ -826,7 +864,7 @@ export default function BomPage() {
               ))}
             </select>
           </label>
-        </div>
+        </SearchFilterBar>
 
         {loading ? <div className="debugNotice">正在读取 BOM 数据...</div> : null}
 
@@ -848,6 +886,7 @@ export default function BomPage() {
                       onChange={toggleAllBoms}
                     />
                   </th>
+                  <th>产品图片</th>
                   <th>BOM 编号</th>
                   <th>成品 SKU 编码</th>
                   <th>成品 SKU 名称</th>
@@ -875,6 +914,12 @@ export default function BomPage() {
                           onChange={() => toggleBomSelection(bom.id)}
                         />
                       </td>
+                      <td>
+                        <ProductImage
+                          src={bom.product_sku?.product?.product_image_url}
+                          alt={`${bom.product_sku?.sku_code ?? "BOM"} ${bom.product_sku?.sku_name ?? ""}`}
+                        />
+                      </td>
                       <td>{bom.bom_code}</td>
                       <td>{bom.product_sku?.sku_code ?? "-"}</td>
                       <td>{bom.product_sku?.sku_name ?? "-"}</td>
@@ -882,9 +927,7 @@ export default function BomPage() {
                       <td>{getBrandCodeName(bom.product_sku?.product?.brand)}</td>
                       <td>{bom.version}</td>
                       <td>
-                        <span className={`tablePill bom-status-${bom.status}`}>
-                          {bomStatusLabels[bom.status] ?? bom.status}
-                        </span>
+                        <StatusBadge status={bom.status} label={bomStatusLabels[bom.status] ?? bom.status} />
                       </td>
                       <td>{bom.item_count}</td>
                       <td>{formatDateTime(bom.created_at)}</td>

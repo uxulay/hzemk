@@ -3,10 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { Modal } from "@/components/Modal";
 import {
-  adjustInventoryItem,
+  adjustInventoryByWarehouseSku,
   getInventoryForAdjustment,
   getRecentAdjustmentTransactions,
+  getSkuOptionsForInventory,
   getWarehousesForFilter,
+  type InventorySkuOption,
   type InventoryAdjustmentMode,
   type InventoryAdjustmentReason,
   type InventoryAdjustmentRow,
@@ -159,10 +161,14 @@ export default function InventoryAdjustmentsPage() {
   const [warehouses, setWarehouses] = useState<InventoryTransactionWarehouse[]>(
     []
   );
+  const [skuOptions, setSkuOptions] = useState<InventorySkuOption[]>([]);
   const [warehouseId, setWarehouseId] = useState("");
   const [skuKeyword, setSkuKeyword] = useState("");
   const [skuType, setSkuType] =
     useState<InventoryAdjustmentSkuTypeFilter>("all");
+  const [newAdjustmentWarehouseId, setNewAdjustmentWarehouseId] = useState("");
+  const [newAdjustmentSkuId, setNewAdjustmentSkuId] = useState("");
+  const [newAdjustmentSkuKeyword, setNewAdjustmentSkuKeyword] = useState("");
   const [selectedItem, setSelectedItem] =
     useState<InventoryAdjustmentRow | null>(null);
   const [adjustmentMode, setAdjustmentMode] =
@@ -179,6 +185,31 @@ export default function InventoryAdjustmentsPage() {
 
   const currentQuantity = Number(selectedItem?.quantity_on_hand ?? 0);
   const unit = getUnit(selectedItem);
+
+  const filteredSkuOptions = useMemo(() => {
+    const keyword = newAdjustmentSkuKeyword.trim().toLowerCase();
+
+    return skuOptions.filter((sku) => {
+      const typeMatched =
+        skuType === "all" ||
+        (skuType === "material" && sku.sku_type === "material") ||
+        (skuType === "finished_good" &&
+          (sku.sku_type === "finished_good" ||
+            sku.sku_type === "finished_product"));
+
+      if (!typeMatched) {
+        return false;
+      }
+
+      if (!keyword) {
+        return true;
+      }
+
+      return [sku.sku_code, sku.sku_name, sku.product?.name]
+        .filter(Boolean)
+        .some((value) => value?.toLowerCase().includes(keyword));
+    });
+  }, [newAdjustmentSkuKeyword, skuOptions, skuType]);
 
   const adjustmentPreview = useMemo(() => {
     if (!selectedItem) {
@@ -245,19 +276,24 @@ export default function InventoryAdjustmentsPage() {
       setLoading(true);
       setErrorMessage("");
 
-      const [inventoryData, warehouseData, adjustmentData] = await Promise.all([
+      const [inventoryData, warehouseData, adjustmentData, skuData] =
+        await Promise.all([
         getInventoryForAdjustment(filters),
         getWarehousesForFilter(),
-        getRecentAdjustmentTransactions()
+        getRecentAdjustmentTransactions(),
+        getSkuOptionsForInventory()
       ]);
 
       setInventoryItems(inventoryData);
       setWarehouses(warehouseData);
       setRecentAdjustments(adjustmentData);
+      setSkuOptions(skuData.filter((sku) => sku.status === "active"));
+      setNewAdjustmentWarehouseId((current) => current || warehouseData[0]?.id || "");
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setInventoryItems([]);
       setRecentAdjustments([]);
+      setSkuOptions([]);
     } finally {
       setLoading(false);
     }
@@ -296,6 +332,57 @@ export default function InventoryAdjustmentsPage() {
     setSuccessMessage("");
   };
 
+  const openWarehouseSkuAdjustmentForm = () => {
+    const warehouse =
+      warehouses.find((item) => item.id === newAdjustmentWarehouseId) ??
+      warehouses[0] ??
+      null;
+    const sku = skuOptions.find((item) => item.id === newAdjustmentSkuId) ?? null;
+
+    if (!warehouse || !sku) {
+      setErrorMessage("请先选择仓库和 SKU。");
+      return;
+    }
+
+    const existingItem = inventoryItems.find(
+      (item) => item.warehouse_id === warehouse.id && item.sku_id === sku.id
+    );
+
+    if (existingItem) {
+      openAdjustmentForm(existingItem);
+      return;
+    }
+
+    setSelectedItem({
+      id: "",
+      warehouse_id: warehouse.id,
+      sku_id: sku.id,
+      item_type: sku.sku_type === "material" ? "material" : "finished_product",
+      quantity_on_hand: 0,
+      reserved_quantity: 0,
+      safety_stock_quantity: 0,
+      unit: sku.unit,
+      updated_at: new Date().toISOString(),
+      warehouse,
+      sku: {
+        id: sku.id,
+        product_id: sku.product_id,
+        sku_code: sku.sku_code,
+        sku_name: sku.sku_name,
+        sku_type: sku.sku_type,
+        unit: sku.unit,
+        product: sku.product
+      }
+    });
+    setAdjustmentMode("increase");
+    setAdjustmentQuantity("");
+    setTargetQuantity("0");
+    setAdjustmentReason("stocktake_gain");
+    setAdjustmentNotes("");
+    setErrorMessage("");
+    setSuccessMessage("");
+  };
+
   const closeAdjustmentForm = () => {
     if (submitting) {
       return;
@@ -317,8 +404,9 @@ export default function InventoryAdjustmentsPage() {
       setErrorMessage("");
       setSuccessMessage("");
 
-      const result = await adjustInventoryItem({
-        inventoryItemId: selectedItem.id,
+      const result = await adjustInventoryByWarehouseSku({
+        warehouseId: selectedItem.warehouse_id,
+        skuId: selectedItem.sku_id,
         adjustmentMode,
         adjustmentQuantity:
           adjustmentMode === "set_to" || !adjustmentQuantity.trim()
@@ -444,6 +532,68 @@ export default function InventoryAdjustmentsPage() {
             </button>
           </div>
         </form>
+
+        <div className="dataForm adjustmentForm">
+          <label>
+            调整仓库
+            <select
+              value={newAdjustmentWarehouseId}
+              onChange={(event) =>
+                setNewAdjustmentWarehouseId(event.target.value)
+              }
+              disabled={loading}
+            >
+              <option value="">请选择仓库</option>
+              {warehouses.map((warehouse) => (
+                <option key={warehouse.id} value={warehouse.id}>
+                  {warehouse.warehouse_code} / {warehouse.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            搜索 SKU
+            <input
+              value={newAdjustmentSkuKeyword}
+              onChange={(event) =>
+                setNewAdjustmentSkuKeyword(event.target.value)
+              }
+              placeholder="输入 SKU 编码或名称"
+              disabled={loading}
+            />
+          </label>
+
+          <label>
+            调整 SKU
+            <select
+              value={newAdjustmentSkuId}
+              onChange={(event) => setNewAdjustmentSkuId(event.target.value)}
+              disabled={loading}
+            >
+              <option value="">请选择 SKU</option>
+              {filteredSkuOptions.map((sku) => (
+                <option key={sku.id} value={sku.id}>
+                  {sku.sku_code} / {sku.sku_name} / {sku.unit}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="rowActions fullField">
+            <button
+              className="primaryButton"
+              type="button"
+              onClick={openWarehouseSkuAdjustmentForm}
+              disabled={loading || !newAdjustmentWarehouseId || !newAdjustmentSkuId}
+            >
+              按仓库 + SKU 调整
+            </button>
+            <span className="fieldHint">
+              没有库存记录时按当前库存 0 处理，可增加库存或直接修正。
+            </span>
+          </div>
+        </div>
 
         {loading ? (
           <div className="debugNotice">正在读取当前库存，请稍候...</div>

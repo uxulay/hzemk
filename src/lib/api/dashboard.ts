@@ -1458,7 +1458,7 @@ export async function getRoleDashboard(
         { label: "创建 FBA 备货单", href: "/replenishment" },
         { label: "查看 FBA 备货需求", href: "/replenishment" },
         { label: "查看成品库存", href: "/inventory/products" },
-        { label: "FBA 出库", href: "/inventory/fba-outbound" }
+        { label: "出库管理", href: "/inventory/fba-outbound" }
       ],
       listSections: [
         section(
@@ -1633,7 +1633,7 @@ export async function getRoleDashboard(
       summaryCards,
       quickLinks: [
         { label: "入库管理", href: "/inventory/inbound" },
-        { label: "FBA 出库", href: "/inventory/fba-outbound" },
+        { label: "出库管理", href: "/inventory/fba-outbound" },
         { label: "原材料库存", href: "/inventory/materials" },
         { label: "成品库存", href: "/inventory/products" },
         { label: "库存流水", href: "/inventory/transactions" }

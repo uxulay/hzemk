@@ -4,9 +4,14 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { BulkActionBar } from "@/components/BulkActionBar";
 import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { ImageCell } from "@/components/ImageCell";
 import { Modal } from "@/components/Modal";
-import { Pagination } from "@/components/Pagination";
+import { DataTable, type DataTableColumn } from "@/components/ui/DataTable";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { ProductImage } from "@/components/ui/ProductImage";
+import { SearchFilterBar } from "@/components/ui/SearchFilterBar";
+import { StatCard } from "@/components/ui/StatCard";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { BoxIcon, DownloadIcon, PlusIcon, UploadIcon } from "@/components/ui/icons";
 import {
   bulkImportProducts,
   deactivateProductsByIds,
@@ -457,37 +462,184 @@ export default function AdminProductsPage() {
     }
   };
 
-  return (
-    <main className="pageShell">
-      <section className="pageHero">
+  const productColumns: DataTableColumn<ProductListRow>[] = [
+    {
+      key: "select",
+      title: (
+        <input
+          aria-label="全选当前筛选产品"
+          className="tableCheckbox"
+          type="checkbox"
+          checked={allFilteredSelected}
+          onChange={toggleAllFilteredProducts}
+        />
+      ),
+      className: "selectColumn",
+      render: (product) => (
+        <input
+          aria-label={`选择产品 ${product.product_code}`}
+          className="tableCheckbox"
+          type="checkbox"
+          checked={selectedProductIds.includes(product.id)}
+          onChange={() => toggleProductSelection(product.id)}
+        />
+      )
+    },
+    {
+      key: "image",
+      title: "产品图片",
+      render: (product) => (
+        <ProductImage
+          src={product.product_image_url}
+          alt={`${product.product_code} ${product.name}`}
+        />
+      )
+    },
+    {
+      key: "code",
+      title: "SPU",
+      render: (product) => <strong>{product.product_code}</strong>
+    },
+    {
+      key: "name",
+      title: "产品名称",
+      render: (product) => (
         <div>
-          <p className="eyebrow">基础资料</p>
-          <h2>产品管理</h2>
-          <p>
-            管理公司产品基础资料。产品是 SKU 的上级分类，后续 SKU、BOM 和 FBA
-            备货需求都会围绕产品归集。
-          </p>
+          <strong>{product.name}</strong>
+          <span className="tableSubText">{getBrandCodeName(product.brand)}</span>
         </div>
-        <span className="statusPill">Supabase 数据</span>
-      </section>
+      )
+    },
+    {
+      key: "category",
+      title: "类目",
+      render: (product) => product.category ?? "-"
+    },
+    {
+      key: "status",
+      title: "状态",
+      render: (product) => (
+        <StatusBadge status={product.status} label={getStatusLabel(product.status)} />
+      )
+    },
+    {
+      key: "skuCount",
+      title: "SKU 数量",
+      render: (product) => product.sku_count
+    },
+    {
+      key: "createdAt",
+      title: "创建时间",
+      render: (product) => formatDateTime(product.created_at)
+    },
+    {
+      key: "actions",
+      title: "操作",
+      render: (product) => {
+        const statusUpdating = statusUpdatingId === product.id;
 
-      <section className="metricGrid">
-        <div className="metric">
-          <span>产品总数</span>
-          <strong>{stats.totalProducts}</strong>
-        </div>
-        <div className="metric">
-          <span>启用产品数</span>
-          <strong>{stats.activeProducts}</strong>
-        </div>
-        <div className="metric">
-          <span>停用产品数</span>
-          <strong>{stats.inactiveProducts}</strong>
-        </div>
-        <div className="metric">
-          <span>SKU 总数</span>
-          <strong>{stats.totalSkus}</strong>
-        </div>
+        return (
+          <div className="rowActions productRowActions">
+            <button
+              type="button"
+              onClick={() => openProductSkus(product)}
+              disabled={skuLoading}
+            >
+              查看
+            </button>
+            <button
+              type="button"
+              onClick={() => startEditProduct(product)}
+              disabled={updating}
+            >
+              编辑
+            </button>
+            <button
+              type="button"
+              onClick={() => changeProductStatus(product)}
+              disabled={statusUpdating}
+            >
+              {statusUpdating
+                ? "处理中"
+                : product.status === "active"
+                  ? "停用"
+                  : "启用"}
+            </button>
+            <button
+              className="dangerButton"
+              type="button"
+              onClick={() => setProductToDelete(product)}
+              disabled={deletingProductId === product.id}
+            >
+              删除
+            </button>
+          </div>
+        );
+      }
+    }
+  ];
+
+  return (
+    <main className="pageShell modernPageShell">
+      <PageHeader
+        eyebrow="基础资料"
+        title="产品管理"
+        description="管理产品 SPU、图片、类目、状态和关联 SKU。产品是 SKU、BOM 和 FBA 备货需求的上级资料。"
+        actions={
+          <div className="rowActions">
+            <button
+              type="button"
+              onClick={() =>
+                downloadCsvTemplate(
+                  "products-import-template.csv",
+                  productImportFields
+                )
+              }
+            >
+              <DownloadIcon size={16} />
+              下载模板
+            </button>
+            <button type="button" onClick={() => setImportOpen(true)}>
+              <UploadIcon size={16} />
+              批量导入
+            </button>
+            <button className="primaryButton" type="button" onClick={() => setCreateOpen(true)}>
+              <PlusIcon size={16} />
+              新增产品
+            </button>
+          </div>
+        }
+      />
+
+      <section className="modernStatGrid productStatGrid">
+        <StatCard
+          title="产品总数"
+          value={stats.totalProducts}
+          change="全部 SPU"
+          tone="blue"
+          icon={<BoxIcon size={20} />}
+        />
+        <StatCard
+          title="启用产品"
+          value={stats.activeProducts}
+          change="可用于业务"
+          tone="green"
+          icon={<BoxIcon size={20} />}
+        />
+        <StatCard
+          title="停用产品"
+          value={stats.inactiveProducts}
+          change="不再新增业务"
+          tone="orange"
+          icon={<BoxIcon size={20} />}
+        />
+        <StatCard
+          title="SKU 总数"
+          value={stats.totalSkus}
+          change="关联 SKU"
+          tone="purple"
+          icon={<BoxIcon size={20} />}
+        />
       </section>
 
       {successMessage ? (
@@ -779,49 +931,30 @@ export default function AdminProductsPage() {
         </Modal>
       ) : null}
 
-      <section className="listPanel">
-        <div className="sectionHeader">
+      <section className="modernCard">
+        <div className="modernCardHeader">
           <div>
             <p className="eyebrow">产品列表</p>
             <h3>所有产品</h3>
           </div>
           <div className="rowActions">
-            <button
-              type="button"
-              onClick={() =>
-                downloadCsvTemplate(
-                  "products-import-template.csv",
-                  productImportFields
-                )
-              }
-            >
-              下载模板
-            </button>
-            <button type="button" onClick={() => setImportOpen(true)}>
-              批量导入
-            </button>
             <button type="button" onClick={refreshAll}>
               {loading ? "正在刷新..." : "刷新列表"}
-            </button>
-            <button
-              className="primaryButton"
-              type="button"
-              onClick={() => setCreateOpen(true)}
-            >
-              新增产品
             </button>
           </div>
         </div>
 
-        <div className="listToolbar productToolbar">
-          <label>
-            搜索 SPU / 产品名称
-            <input
-              value={searchKeyword}
-              onChange={(event) => setSearchKeyword(event.target.value)}
-              placeholder="输入 SPU 或产品名称"
-            />
-          </label>
+        <SearchFilterBar
+          searchLabel="搜索产品名称 / SPU"
+          searchValue={searchKeyword}
+          searchPlaceholder="输入 SPU、产品名称或品牌"
+          onSearchChange={setSearchKeyword}
+          onReset={() => {
+            setSearchKeyword("");
+            setStatusFilter("all");
+            setBrandFilter("all");
+          }}
+        >
 
           <label>
             产品状态
@@ -850,11 +983,7 @@ export default function AdminProductsPage() {
               ))}
             </select>
           </label>
-
-          <button className="secondaryButton" type="button" onClick={refreshAll}>
-            刷新
-          </button>
-        </div>
+        </SearchFilterBar>
 
         <BulkActionBar
           selectedItems={selectedProducts}
@@ -865,126 +994,19 @@ export default function AdminProductsPage() {
           onDeleteSelected={batchDeleteProducts}
         />
 
-        {loading ? <div className="debugNotice">正在读取产品数据...</div> : null}
-
-        {!loading && filteredProducts.length === 0 ? (
-          <div className="emptyState">暂无产品</div>
-        ) : null}
-
-        {!loading && filteredProducts.length > 0 ? (
-          <div className="tableWrap">
-            <table className="dataTable productTable">
-              <thead>
-                <tr>
-                  <th className="selectColumn">
-                    <input
-                      aria-label="全选当前页产品"
-                      className="tableCheckbox"
-                      type="checkbox"
-                      checked={allFilteredSelected}
-                      onChange={toggleAllFilteredProducts}
-                    />
-                  </th>
-                  <th>产品图片</th>
-                  <th>SPU</th>
-                  <th>产品名称</th>
-                  <th>品牌</th>
-                  <th>分类</th>
-                  <th>产品状态</th>
-                  <th>关联 SKU 数量</th>
-                  <th>创建时间</th>
-                  <th>更新时间</th>
-                  <th>备注</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paginatedProducts.map((product) => {
-                  const statusUpdating = statusUpdatingId === product.id;
-
-                  return (
-                    <tr key={product.id}>
-                      <td>
-                        <input
-                          aria-label={`选择产品 ${product.product_code}`}
-                          className="tableCheckbox"
-                          type="checkbox"
-                          checked={selectedProductIds.includes(product.id)}
-                          onChange={() => toggleProductSelection(product.id)}
-                        />
-                      </td>
-                      <td>
-                        <ImageCell
-                          src={product.product_image_url}
-                          alt={`${product.product_code} ${product.name}`}
-                        />
-                      </td>
-                      <td>{product.product_code}</td>
-                      <td>{product.name}</td>
-                      <td>{getBrandCodeName(product.brand)}</td>
-                      <td>{product.category ?? "-"}</td>
-                      <td>
-                        <span className={`tablePill product-status-${product.status}`}>
-                          {getStatusLabel(product.status)}
-                        </span>
-                      </td>
-                      <td>{product.sku_count}</td>
-                      <td>{formatDateTime(product.created_at)}</td>
-                      <td>{formatDateTime(product.updated_at)}</td>
-                      <td className="notesCell">{product.description ?? "-"}</td>
-                      <td>
-                        <div className="rowActions">
-                          <button
-                            type="button"
-                            onClick={() => startEditProduct(product)}
-                            disabled={updating}
-                          >
-                            编辑
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => changeProductStatus(product)}
-                            disabled={statusUpdating}
-                          >
-                            {statusUpdating
-                              ? "正在处理..."
-                              : product.status === "active"
-                                ? "停用"
-                                : "启用"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openProductSkus(product)}
-                            disabled={skuLoading}
-                          >
-                            查看 SKU
-                          </button>
-                          <button
-                            className="dangerButton"
-                            type="button"
-                            onClick={() => setProductToDelete(product)}
-                            disabled={deletingProductId === product.id}
-                          >
-                            删除
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-
-        {!loading && filteredProducts.length > 0 ? (
-          <Pagination
-            page={page}
-            pageSize={DEFAULT_PAGE_SIZE}
-            total={filteredProducts.length}
-            onPageChange={setPage}
-          />
-        ) : null}
+        <DataTable
+          columns={productColumns}
+          rows={paginatedProducts}
+          getRowKey={(product) => product.id}
+          loading={loading}
+          loadingText="正在读取产品数据..."
+          emptyText="暂无产品"
+          minWidth={1120}
+          page={page}
+          pageSize={DEFAULT_PAGE_SIZE}
+          total={filteredProducts.length}
+          onPageChange={setPage}
+        />
       </section>
 
       {skuLoading ? (
