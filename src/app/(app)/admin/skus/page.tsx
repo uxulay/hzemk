@@ -17,9 +17,9 @@ import {
 } from "@/lib/api/bulk-management";
 import {
   createSku,
+  getSkusPage,
   getProductsForSkuForm,
   getSkuBomUsage,
-  getSkus,
   toggleSkuStatus,
   updateSku,
   type SkuBomUsage,
@@ -31,7 +31,8 @@ import {
 import { getSuppliers, type Supplier } from "@/lib/api/master-data";
 import { getBrandCodeName, getSkuBrandLabel } from "@/lib/brand-utils";
 import { downloadCsvTemplate, type CsvTemplateField } from "@/lib/utils/csv";
-import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
+
+const SKU_PAGE_SIZE = 100;
 
 const skuTypeLabels: Record<string, string> = {
   finished_good: "成品",
@@ -83,14 +84,6 @@ const initialSkuForm: SkuFormState = {
   unit: "pcs",
   specs: "",
   status: "active"
-};
-
-const initialStats: SkuStats = {
-  totalSkus: 0,
-  finishedGoodSkus: 0,
-  materialSkus: 0,
-  inStockSkus: 0,
-  outOfStockSkus: 0
 };
 
 const skuImportFields: CsvTemplateField[] = [
@@ -322,9 +315,11 @@ export default function AdminSkusPage() {
   const [skuTypeFilter, setSkuTypeFilter] = useState("all");
   const [brandFilter, setBrandFilter] = useState("all");
   const [productFilter, setProductFilter] = useState("all");
+  const [supplierFilter, setSupplierFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedSkuIds, setSelectedSkuIds] = useState<string[]>([]);
   const [page, setPage] = useState(1);
+  const [skuTotal, setSkuTotal] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [skuToDelete, setSkuToDelete] = useState<SkuListRow | null>(null);
@@ -338,14 +333,10 @@ export default function AdminSkusPage() {
   const [successMessage, setSuccessMessage] = useState("");
 
   const stats = useMemo<SkuStats>(() => {
-    if (skus.length === 0) {
-      return initialStats;
-    }
-
     const inStockSkus = skus.filter((sku) => sku.inventory_quantity > 0).length;
 
     return {
-      totalSkus: skus.length,
+      totalSkus: skuTotal,
       finishedGoodSkus: skus.filter(
         (sku) => sku.sku_type === "finished_good"
       ).length,
@@ -353,7 +344,7 @@ export default function AdminSkusPage() {
       inStockSkus,
       outOfStockSkus: skus.length - inStockSkus
     };
-  }, [skus]);
+  }, [skus, skuTotal]);
 
   const brandOptions = useMemo(() => {
     const brandById = new Map<string, NonNullable<SkuProductOption["brand"]>>();
@@ -396,82 +387,48 @@ export default function AdminSkusPage() {
     );
   }, [skus, suppliers]);
 
-  const filteredSkus = useMemo(() => {
-    const keyword = searchKeyword.trim().toLowerCase();
-
-    return skus.filter((sku) => {
-      const matchesKeyword =
-        !keyword ||
-        sku.sku_code.toLowerCase().includes(keyword) ||
-        sku.sku_name.toLowerCase().includes(keyword) ||
-        (sku.product?.brand?.name ?? "").toLowerCase().includes(keyword) ||
-        (sku.product?.brand?.brand_code ?? "").toLowerCase().includes(keyword);
-      const matchesSkuType =
-        skuTypeFilter === "all" || sku.sku_type === skuTypeFilter;
-      const matchesBrand =
-        brandFilter === "all" ||
-        (brandFilter === "none"
-          ? !sku.product?.brand?.id
-          : sku.product?.brand?.id === brandFilter);
-      const matchesProduct =
-        productFilter === "all" ||
-        (productFilter === "none"
-          ? !sku.product_id
-          : sku.product_id === productFilter);
-      const matchesStatus =
-        statusFilter === "all" || sku.status === statusFilter;
-
-      return (
-        matchesKeyword &&
-        matchesSkuType &&
-        matchesBrand &&
-        matchesProduct &&
-        matchesStatus
-      );
-    });
-  }, [brandFilter, skus, searchKeyword, skuTypeFilter, productFilter, statusFilter]);
-
   const selectedSkuRows = useMemo(
     () => skus.filter((sku) => selectedSkuIds.includes(sku.id)),
     [skus, selectedSkuIds]
   );
-  const paginatedSkus = useMemo(
-    () => paginateItems(filteredSkus, page),
-    [filteredSkus, page]
-  );
-  const allFilteredSelected =
-    filteredSkus.length > 0 &&
-    filteredSkus.every((sku) => selectedSkuIds.includes(sku.id));
+  const allPageSelected =
+    skus.length > 0 && skus.every((sku) => selectedSkuIds.includes(sku.id));
 
-  const loadPageData = async () => {
+  const loadSkuPage = async (targetPage = page) => {
     try {
       setLoading(true);
       setErrorMessage("");
 
-      const [skuData, productData, supplierData] = await Promise.all([
-        getSkus(),
-        getProductsForSkuForm(),
-        getSuppliers()
-      ]);
+      const skuPage = await getSkusPage({
+        page: targetPage,
+        pageSize: SKU_PAGE_SIZE,
+        keyword: searchKeyword,
+        skuType: skuTypeFilter,
+        status: statusFilter,
+        brandId: brandFilter,
+        productId: productFilter,
+        supplierId: supplierFilter
+      });
 
-      setSkus(skuData);
-      setProducts(productData);
-      setSuppliers(supplierData);
+      setSkus(skuPage.rows);
+      setSkuTotal(skuPage.total);
+      if (skuPage.page > skuPage.totalPages) {
+        setPage(skuPage.totalPages);
+      }
       setSelectedSkuIds((current) =>
-        current.filter((skuId) => skuData.some((sku) => sku.id === skuId))
+        current.filter((skuId) => skuPage.rows.some((sku) => sku.id === skuId))
       );
       setSelectedBomSku((current) => {
         if (!current) {
           return null;
         }
 
-        return skuData.find((sku) => sku.id === current.id) ?? null;
+        return skuPage.rows.find((sku) => sku.id === current.id) ?? current;
       });
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setSkus([]);
-      setProducts([]);
-      setSuppliers([]);
+      setSkuTotal(0);
       setSelectedSkuIds([]);
       setSelectedBomSku(null);
       setBomUsage(null);
@@ -480,21 +437,51 @@ export default function AdminSkusPage() {
     }
   };
 
+  const loadOptions = async () => {
+    try {
+      const [productData, supplierData] = await Promise.all([
+        getProductsForSkuForm(),
+        getSuppliers()
+      ]);
+
+      setProducts(productData);
+      setSuppliers(supplierData);
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+      setProducts([]);
+      setSuppliers([]);
+    }
+  };
+
   useEffect(() => {
-    loadPageData();
+    loadOptions();
   }, []);
 
   useEffect(() => {
-    setPage(1);
-  }, [brandFilter, productFilter, searchKeyword, skuTypeFilter, statusFilter]);
+    loadSkuPage(page);
+  }, [
+    brandFilter,
+    page,
+    productFilter,
+    searchKeyword,
+    skuTypeFilter,
+    statusFilter,
+    supplierFilter
+  ]);
 
   const refreshAll = async () => {
     const skuToRefresh = selectedBomSku;
 
-    await loadPageData();
+    await loadSkuPage(page);
 
     if (skuToRefresh) {
       await openBomUsage(skuToRefresh, false);
+    }
+  };
+
+  const resetToFirstPage = () => {
+    if (page !== 1) {
+      setPage(1);
     }
   };
 
@@ -511,7 +498,8 @@ export default function AdminSkusPage() {
       setSuccessMessage(`SKU ${created.sku_code} 新增成功。`);
       setSkuForm(initialSkuForm);
       setCreateOpen(false);
-      await loadPageData();
+      setPage(1);
+      await loadSkuPage(1);
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
     } finally {
@@ -550,7 +538,7 @@ export default function AdminSkusPage() {
       await updateSku(editForm);
       setSuccessMessage(`SKU ${editForm.skuCode} 编辑成功。`);
       setEditForm(null);
-      await loadPageData();
+      await loadSkuPage(page);
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
     } finally {
@@ -568,7 +556,7 @@ export default function AdminSkusPage() {
       setSuccessMessage(
         `SKU ${sku.sku_code} 已${getSkuStatusLabel(nextStatus)}。`
       );
-      await loadPageData();
+      await loadSkuPage(page);
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
     } finally {
@@ -584,16 +572,16 @@ export default function AdminSkusPage() {
     );
   };
 
-  const toggleAllFilteredSkus = () => {
-    if (allFilteredSelected) {
+  const toggleAllPageSkus = () => {
+    if (allPageSelected) {
       setSelectedSkuIds((current) =>
-        current.filter((skuId) => !filteredSkus.some((sku) => sku.id === skuId))
+        current.filter((skuId) => !skus.some((sku) => sku.id === skuId))
       );
       return;
     }
 
     setSelectedSkuIds((current) =>
-      Array.from(new Set([...current, ...filteredSkus.map((sku) => sku.id)]))
+      Array.from(new Set([...current, ...skus.map((sku) => sku.id)]))
     );
   };
 
@@ -604,7 +592,8 @@ export default function AdminSkusPage() {
         .filter((row): row is SkuImportInput => Boolean(row))
     );
 
-    await loadPageData();
+    setPage(1);
+    await loadSkuPage(1);
     setSuccessMessage(
       `SKU 批量导入完成：成功 ${result.successCount} 条，失败 ${result.failedCount} 条。`
     );
@@ -614,13 +603,13 @@ export default function AdminSkusPage() {
 
   const batchDeactivateSkus = async (items: SkuListRow[]) => {
     const results = await deactivateSkusByIds(items.map((item) => item.id));
-    await loadPageData();
+    await loadSkuPage(page);
     return results;
   };
 
   const batchDeleteSkus = async (items: SkuListRow[]) => {
     const results = await deleteSkusByIds(items.map((item) => item.id));
-    await loadPageData();
+    await loadSkuPage(page);
     return results;
   };
 
@@ -643,7 +632,7 @@ export default function AdminSkusPage() {
       }
 
       setSkuToDelete(null);
-      await loadPageData();
+      await loadSkuPage(page);
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
     } finally {
@@ -691,23 +680,23 @@ export default function AdminSkusPage() {
 
       <section className="transactionSummaryGrid">
         <div className="metric">
-          <span>SKU 总数</span>
+          <span>当前筛选 SKU</span>
           <strong>{stats.totalSkus}</strong>
         </div>
         <div className="metric">
-          <span>成品 SKU</span>
+          <span>本页成品 SKU</span>
           <strong>{stats.finishedGoodSkus}</strong>
         </div>
         <div className="metric">
-          <span>原材料 SKU</span>
+          <span>本页原材料 SKU</span>
           <strong>{stats.materialSkus}</strong>
         </div>
         <div className="metric">
-          <span>有库存 SKU</span>
+          <span>本页有库存 SKU</span>
           <strong>{stats.inStockSkus}</strong>
         </div>
         <div className="metric">
-          <span>无库存 SKU</span>
+          <span>本页无库存 SKU</span>
           <strong>{stats.outOfStockSkus}</strong>
         </div>
       </section>
@@ -1062,11 +1051,14 @@ export default function AdminSkusPage() {
 
         <div className="listToolbar skuToolbar">
           <label>
-            搜索 SKU 编码 / 名称
+            搜索 SKU 编码 / 名称 / 规格
             <input
               value={searchKeyword}
-              onChange={(event) => setSearchKeyword(event.target.value)}
-              placeholder="输入 SKU 编码或名称"
+              onChange={(event) => {
+                resetToFirstPage();
+                setSearchKeyword(event.target.value);
+              }}
+              placeholder="输入 SKU 编码、名称或规格"
             />
           </label>
 
@@ -1074,7 +1066,10 @@ export default function AdminSkusPage() {
             SKU 类型
             <select
               value={skuTypeFilter}
-              onChange={(event) => setSkuTypeFilter(event.target.value)}
+              onChange={(event) => {
+                resetToFirstPage();
+                setSkuTypeFilter(event.target.value);
+              }}
             >
               <option value="all">全部类型</option>
               <option value="finished_good">成品</option>
@@ -1086,7 +1081,10 @@ export default function AdminSkusPage() {
             所属产品
             <select
               value={productFilter}
-              onChange={(event) => setProductFilter(event.target.value)}
+              onChange={(event) => {
+                resetToFirstPage();
+                setProductFilter(event.target.value);
+              }}
             >
               <option value="all">全部产品</option>
               <option value="none">未绑定产品</option>
@@ -1102,7 +1100,10 @@ export default function AdminSkusPage() {
             品牌
             <select
               value={brandFilter}
-              onChange={(event) => setBrandFilter(event.target.value)}
+              onChange={(event) => {
+                resetToFirstPage();
+                setBrandFilter(event.target.value);
+              }}
             >
               <option value="all">全部品牌</option>
               <option value="none">无品牌 / 辅料</option>
@@ -1118,11 +1119,33 @@ export default function AdminSkusPage() {
             状态
             <select
               value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value)}
+              onChange={(event) => {
+                resetToFirstPage();
+                setStatusFilter(event.target.value);
+              }}
             >
               <option value="all">全部状态</option>
               <option value="active">启用</option>
               <option value="inactive">停用</option>
+            </select>
+          </label>
+
+          <label>
+            默认供应商
+            <select
+              value={supplierFilter}
+              onChange={(event) => {
+                resetToFirstPage();
+                setSupplierFilter(event.target.value);
+              }}
+            >
+              <option value="all">全部供应商</option>
+              <option value="none">未设置供应商</option>
+              {supplierOptions.map((supplier) => (
+                <option key={supplier.id} value={supplier.id}>
+                  {supplier.supplier_code} / {supplier.name}
+                </option>
+              ))}
             </select>
           </label>
 
@@ -1142,11 +1165,11 @@ export default function AdminSkusPage() {
 
         {loading ? <div className="debugNotice">正在读取 SKU 数据...</div> : null}
 
-        {!loading && filteredSkus.length === 0 ? (
+        {!loading && skus.length === 0 ? (
           <div className="emptyState">暂无 SKU</div>
         ) : null}
 
-        {!loading && filteredSkus.length > 0 ? (
+        {!loading && skus.length > 0 ? (
           <div className="tableWrap">
             <table className="dataTable skuTable">
               <thead>
@@ -1156,8 +1179,8 @@ export default function AdminSkusPage() {
                       aria-label="全选当前页 SKU"
                       className="tableCheckbox"
                       type="checkbox"
-                      checked={allFilteredSelected}
-                      onChange={toggleAllFilteredSkus}
+                      checked={allPageSelected}
+                      onChange={toggleAllPageSkus}
                     />
                   </th>
                   <th>SKU 编码</th>
@@ -1176,7 +1199,7 @@ export default function AdminSkusPage() {
                 </tr>
               </thead>
               <tbody>
-                {paginatedSkus.map((sku) => {
+                {skus.map((sku) => {
                   const statusUpdating = statusUpdatingId === sku.id;
 
                   return (
@@ -1275,11 +1298,11 @@ export default function AdminSkusPage() {
           </div>
         ) : null}
 
-        {!loading && filteredSkus.length > 0 ? (
+        {!loading && skuTotal > 0 ? (
           <Pagination
             page={page}
-            pageSize={DEFAULT_PAGE_SIZE}
-            total={filteredSkus.length}
+            pageSize={SKU_PAGE_SIZE}
+            total={skuTotal}
             onPageChange={setPage}
           />
         ) : null}

@@ -785,6 +785,151 @@ button:disabled {
   margin-top: 10px;
 }
 
+.dashboardMetricGrid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.todoMetric {
+  border-radius: 8px;
+  min-height: 132px;
+  transition:
+    border-color 0.2s ease,
+    transform 0.2s ease;
+}
+
+.todoMetric:hover {
+  border-color: var(--primary);
+  transform: translateY(-1px);
+}
+
+.todoMetric small {
+  color: var(--muted);
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  margin-top: 14px;
+}
+
+.todoMetric-info {
+  border-color: #bfdbfe;
+}
+
+.todoMetric-warning {
+  border-color: #fed7aa;
+}
+
+.todoMetric-danger {
+  border-color: #fecaca;
+}
+
+.todoMetric-success {
+  border-color: #bbf7d0;
+}
+
+.quickLinkBar {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  margin-top: 18px;
+  padding: 14px 16px;
+}
+
+.quickLinkBar span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.quickLinkBar div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.quickLinkBar a,
+.textLink,
+.linkPill {
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.quickLinkBar a {
+  background: var(--primary-soft);
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.dashboardListGrid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 18px;
+}
+
+.dashboardTodoTable {
+  min-width: 900px;
+}
+
+.dashboardTodoTable td strong {
+  display: block;
+}
+
+.dashboardTodoTable td span:not(.tablePill) {
+  color: var(--muted);
+  display: block;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.exceptionGrid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.exceptionCard {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+}
+
+.exceptionCard span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.exceptionCard strong {
+  font-size: 24px;
+}
+
+.exceptionCard-warning {
+  border-color: #fed7aa;
+}
+
+.exceptionCard-danger {
+  border-color: #fecaca;
+}
+
+.exceptionCard-info {
+  border-color: #bfdbfe;
+}
+
+.exceptionCard-success {
+  border-color: #bbf7d0;
+}
+
 .transactionSummaryGrid {
   display: grid;
   gap: 16px;
@@ -2485,7 +2630,9 @@ button:disabled {
   .listToolbar,
   .detailGrid,
   .createMetaGrid,
-  .skuPickerLayout {
+  .skuPickerLayout,
+  .dashboardListGrid,
+  .exceptionGrid {
     grid-template-columns: 1fr;
   }
 
@@ -2542,6 +2689,16 @@ button:disabled {
   .debugPage,
   .loginPage {
     padding: 18px;
+  }
+
+  .quickLinkBar,
+  .dashboardHeroActions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .quickLinkBar div {
+    justify-content: flex-start;
   }
 }
 

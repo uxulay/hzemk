@@ -1,4 +1,5 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
+import { fetchAllSupabaseRows } from "@/lib/supabase/pagination";
 
 export type WarehouseStatus = "active" | "inactive";
 
@@ -173,35 +174,27 @@ function normalizeWarehouseInventoryRow(
 
 export async function getWarehouses(): Promise<WarehouseListRow[]> {
   const supabase = getSupabaseClient();
-  const [warehouseResult, inventoryResult] = await Promise.all([
-    withTimeout(
-      supabase
+  const [warehouseRows, inventoryRows] = await Promise.all([
+    fetchAllSupabaseRows<WarehouseRow>(
+      () =>
+        supabase
         .from("warehouses")
         .select("*")
         .order("warehouse_code", { ascending: true }),
       "读取仓库列表"
     ),
-    withTimeout(
-      supabase
+    fetchAllSupabaseRows<InventoryItemSummary>(
+      () =>
+        supabase
         .from("inventory_items")
         .select("id, warehouse_id, sku_id, quantity_on_hand"),
       "统计仓库当前库存"
     )
   ]);
 
-  if (warehouseResult.error) {
-    throw formatSupabaseError("读取仓库列表", warehouseResult.error);
-  }
+  const inventoryByWarehouse = countInventoryByWarehouse(inventoryRows);
 
-  if (inventoryResult.error) {
-    throw formatSupabaseError("统计仓库当前库存", inventoryResult.error);
-  }
-
-  const inventoryByWarehouse = countInventoryByWarehouse(
-    (inventoryResult.data ?? []) as InventoryItemSummary[]
-  );
-
-  return ((warehouseResult.data ?? []) as WarehouseRow[]).map((warehouse) => {
+  return warehouseRows.map((warehouse) => {
     const inventorySummary = inventoryByWarehouse.get(warehouse.id);
 
     return {
@@ -214,42 +207,28 @@ export async function getWarehouses(): Promise<WarehouseListRow[]> {
 
 export async function getWarehouseStats(): Promise<WarehouseStats> {
   const supabase = getSupabaseClient();
-  const [warehouseResult, inventoryResult] = await Promise.all([
-    withTimeout(
-      supabase.from("warehouses").select("id, warehouse_type"),
+  const [warehouseRows, inventoryRows] = await Promise.all([
+    fetchAllSupabaseRows<{ id: string; warehouse_type: string }>(
+      () => supabase.from("warehouses").select("id, warehouse_type"),
       "统计仓库数量"
     ),
-    withTimeout(
-      supabase.from("inventory_items").select("id, warehouse_id, sku_id, quantity_on_hand"),
+    fetchAllSupabaseRows<InventoryItemSummary>(
+      () => supabase.from("inventory_items").select("id, warehouse_id, sku_id, quantity_on_hand"),
       "统计有库存的仓库数量"
     )
   ]);
 
-  if (warehouseResult.error) {
-    throw formatSupabaseError("统计仓库数量", warehouseResult.error);
-  }
-
-  if (inventoryResult.error) {
-    throw formatSupabaseError("统计有库存的仓库数量", inventoryResult.error);
-  }
-
-  const warehouses = (warehouseResult.data ?? []) as Array<{
-    id: string;
-    warehouse_type: string;
-  }>;
-  const inventoryByWarehouse = countInventoryByWarehouse(
-    (inventoryResult.data ?? []) as InventoryItemSummary[]
-  );
+  const inventoryByWarehouse = countInventoryByWarehouse(inventoryRows);
 
   return {
-    totalWarehouses: warehouses.length,
-    materialWarehouses: warehouses.filter(
+    totalWarehouses: warehouseRows.length,
+    materialWarehouses: warehouseRows.filter(
       (warehouse) => warehouse.warehouse_type === "material"
     ).length,
-    finishedGoodWarehouses: warehouses.filter((warehouse) =>
+    finishedGoodWarehouses: warehouseRows.filter((warehouse) =>
       ["finished_good", "finished_product"].includes(warehouse.warehouse_type)
     ).length,
-    fbaStagingWarehouses: warehouses.filter((warehouse) =>
+    fbaStagingWarehouses: warehouseRows.filter((warehouse) =>
       ["fba", "fba_staging"].includes(warehouse.warehouse_type)
     ).length,
     warehousesWithInventory: [...inventoryByWarehouse.values()].filter(
@@ -376,8 +355,9 @@ export async function getWarehouseInventory(
   }
 
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase
+  const data = await fetchAllSupabaseRows<RawWarehouseInventoryRow>(
+    () =>
+      supabase
       .from("inventory_items")
       .select(
         `
@@ -402,11 +382,7 @@ export async function getWarehouseInventory(
     "读取仓库库存"
   );
 
-  if (error) {
-    throw formatSupabaseError("读取仓库库存", error);
-  }
-
-  return ((data ?? []) as unknown as RawWarehouseInventoryRow[])
+  return data
     .map(normalizeWarehouseInventoryRow)
     .sort((a, b) =>
       (a.sku?.sku_code ?? "").localeCompare(b.sku?.sku_code ?? "", "zh-CN")

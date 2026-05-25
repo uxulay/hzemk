@@ -1,4 +1,5 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
+import { fetchAllSupabaseRows } from "@/lib/supabase/pagination";
 import type { BrandSummary } from "@/lib/brand-utils";
 
 export type SkuStatus = "active" | "inactive";
@@ -45,6 +46,25 @@ export type SkuListRow = SkuRow & {
   inventory_quantity: number;
   reserved_quantity: number;
   inventory_row_count: number;
+};
+
+export type GetSkusPageParams = {
+  page: number;
+  pageSize: number;
+  keyword?: string;
+  skuType?: string;
+  status?: string;
+  brandId?: string;
+  productId?: string;
+  supplierId?: string;
+};
+
+export type SkusPageResult = {
+  rows: SkuListRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
 };
 
 export type SkuInventorySummary = {
@@ -217,6 +237,16 @@ function normalizeOptionalId(value?: string) {
   return normalized ? normalized : null;
 }
 
+function normalizeFilterValue(value?: string) {
+  const normalized = value?.trim();
+
+  return normalized && normalized !== "all" ? normalized : undefined;
+}
+
+function escapeFilterKeyword(value: string) {
+  return value.replace(/[%_,]/g, " ").trim();
+}
+
 function assertSkuStatus(status: string): asserts status is SkuStatus {
   if (!["active", "inactive"].includes(status)) {
     throw new Error("SKU 状态只能是 active 或 inactive。");
@@ -376,15 +406,51 @@ function validateSkuBasics(input: {
 
 export async function getSkuInventorySummary(): Promise<SkuInventorySummary[]> {
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase
+  const data = await fetchAllSupabaseRows<RawInventorySummaryRow>(
+    () =>
+      supabase
       .from("inventory_items")
       .select("sku_id, quantity_on_hand, reserved_quantity"),
     "读取 SKU 库存汇总"
   );
 
+  const summaryBySku = new Map<string, SkuInventorySummary>();
+
+  for (const row of data) {
+    const current = summaryBySku.get(row.sku_id) ?? {
+      sku_id: row.sku_id,
+      quantity_on_hand: 0,
+      reserved_quantity: 0,
+      inventory_row_count: 0
+    };
+
+    current.quantity_on_hand += Number(row.quantity_on_hand);
+    current.reserved_quantity += Number(row.reserved_quantity);
+    current.inventory_row_count += 1;
+    summaryBySku.set(row.sku_id, current);
+  }
+
+  return Array.from(summaryBySku.values());
+}
+
+async function getSkuInventorySummaryBySkuIds(
+  skuIds: string[]
+): Promise<SkuInventorySummary[]> {
+  if (skuIds.length === 0) {
+    return [];
+  }
+
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase
+      .from("inventory_items")
+      .select("sku_id, quantity_on_hand, reserved_quantity")
+      .in("sku_id", skuIds),
+    "读取当前页 SKU 库存汇总"
+  );
+
   if (error) {
-    throw formatSupabaseError("读取 SKU 库存汇总", error);
+    throw formatSupabaseError("读取当前页 SKU 库存汇总", error);
   }
 
   const summaryBySku = new Map<string, SkuInventorySummary>();
@@ -406,11 +472,163 @@ export async function getSkuInventorySummary(): Promise<SkuInventorySummary[]> {
   return Array.from(summaryBySku.values());
 }
 
+async function getProductIdsByBrand(brandId: string | null): Promise<string[]> {
+  const supabase = getSupabaseClient();
+  const pageSize = 1000;
+  const productIds: string[] = [];
+  let page = 0;
+
+  while (true) {
+    const from = page * pageSize;
+    const to = from + pageSize - 1;
+    const query = supabase
+      .from("products")
+      .select("id")
+      .order("product_code", { ascending: true })
+      .range(from, to);
+
+    const { data, error } = await withTimeout(
+      brandId ? query.eq("brand_id", brandId) : query.is("brand_id", null),
+      "按品牌读取产品 ID"
+    );
+
+    if (error) {
+      throw formatSupabaseError("按品牌读取产品 ID", error);
+    }
+
+    const rows = (data ?? []) as Array<{ id: string }>;
+    productIds.push(...rows.map((row) => row.id));
+
+    if (rows.length < pageSize) {
+      break;
+    }
+
+    page += 1;
+  }
+
+  return productIds;
+}
+
+export async function getSkusPage(
+  params: GetSkusPageParams
+): Promise<SkusPageResult> {
+  const supabase = getSupabaseClient();
+  const pageSize = Math.min(Math.max(params.pageSize || 100, 1), 100);
+  const safePage = Math.max(params.page || 1, 1);
+  const from = (safePage - 1) * pageSize;
+  const to = from + pageSize - 1;
+  const keyword = escapeFilterKeyword(params.keyword ?? "");
+  const skuType = normalizeFilterValue(params.skuType);
+  const status = normalizeFilterValue(params.status);
+  const brandId = normalizeFilterValue(params.brandId);
+  const productId = normalizeFilterValue(params.productId);
+  const supplierId = normalizeFilterValue(params.supplierId);
+
+  let productIdsByBrand: string[] | undefined;
+
+  if (brandId && brandId !== "none") {
+    productIdsByBrand = await getProductIdsByBrand(brandId);
+
+    if (productIdsByBrand.length === 0) {
+      return {
+        rows: [],
+        total: 0,
+        page: safePage,
+        pageSize,
+        totalPages: 1
+      };
+    }
+  }
+
+  if (brandId === "none") {
+    productIdsByBrand = await getProductIdsByBrand(null);
+  }
+
+  if (supplierId && skuType && skuType !== "material") {
+    return {
+      rows: [],
+      total: 0,
+      page: safePage,
+      pageSize,
+      totalPages: 1
+    };
+  }
+
+  let query = supabase
+    .from("skus")
+    .select(getSkuSelect(), { count: "exact" })
+    .order("sku_code", { ascending: true })
+    .range(from, to);
+
+  if (keyword) {
+    query = query.or(
+      `sku_code.ilike.%${keyword}%,sku_name.ilike.%${keyword}%,specs.ilike.%${keyword}%`
+    );
+  }
+
+  if (skuType) {
+    query = query.eq("sku_type", skuType);
+  }
+
+  if (status) {
+    query = query.eq("status", status);
+  }
+
+  if (productId) {
+    query =
+      productId === "none"
+        ? query.is("product_id", null)
+        : query.eq("product_id", productId);
+  } else if (brandId === "none") {
+    query =
+      productIdsByBrand && productIdsByBrand.length > 0
+        ? query.or(`product_id.is.null,product_id.in.(${productIdsByBrand.join(",")})`)
+        : query.is("product_id", null);
+  } else if (productIdsByBrand) {
+    query = query.in("product_id", productIdsByBrand);
+  }
+
+  if (supplierId) {
+    if (!skuType) {
+      query = query.eq("sku_type", "material");
+    }
+
+    query =
+      supplierId === "none"
+        ? query.is("default_supplier_id", null)
+        : query.eq("default_supplier_id", supplierId);
+  }
+
+  const skuResult = await withTimeout(query, "分页读取 SKU 列表");
+
+  if (skuResult.error) {
+    throw formatSupabaseError("分页读取 SKU 列表", skuResult.error);
+  }
+
+  const rows = (skuResult.data ?? []) as unknown as RawSkuRow[];
+  const inventorySummary = await getSkuInventorySummaryBySkuIds(
+    rows.map((row) => row.id)
+  );
+  const inventoryBySku = new Map(
+    inventorySummary.map((summary) => [summary.sku_id, summary])
+  );
+  const total = skuResult.count ?? 0;
+
+  return {
+    rows: rows.map((row) => normalizeSkuRow(row, inventoryBySku.get(row.id))),
+    total,
+    page: safePage,
+    pageSize,
+    totalPages: Math.max(1, Math.ceil(total / pageSize))
+  };
+}
+
 export async function getSkus(): Promise<SkuListRow[]> {
   const supabase = getSupabaseClient();
-  const [skuResult, inventorySummary] = await Promise.all([
-    withTimeout(
-      supabase
+  const [skuRows, inventorySummary] = await Promise.all([
+    fetchAllSupabaseRows<RawSkuRow>(
+      () =>
+        supabase
         .from("skus")
         .select(getSkuSelect())
         .order("sku_code", { ascending: true }),
@@ -419,23 +637,20 @@ export async function getSkus(): Promise<SkuListRow[]> {
     getSkuInventorySummary()
   ]);
 
-  if (skuResult.error) {
-    throw formatSupabaseError("读取 SKU 列表", skuResult.error);
-  }
-
   const inventoryBySku = new Map(
     inventorySummary.map((summary) => [summary.sku_id, summary])
   );
 
-  return ((skuResult.data ?? []) as unknown as RawSkuRow[]).map((row) =>
+  return skuRows.map((row) =>
     normalizeSkuRow(row, inventoryBySku.get(row.id))
   );
 }
 
 export async function getProductsForSkuForm(): Promise<SkuProductOption[]> {
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase
+  const data = await fetchAllSupabaseRows<RawSkuProductOption>(
+    () =>
+      supabase
       .from("products")
       .select(
         `
@@ -458,13 +673,7 @@ export async function getProductsForSkuForm(): Promise<SkuProductOption[]> {
     "读取产品下拉列表"
   );
 
-  if (error) {
-    throw formatSupabaseError("读取产品下拉列表", error);
-  }
-
-  return ((data ?? []) as unknown as RawSkuProductOption[]).map(
-    normalizeProductOption
-  );
+  return data.map(normalizeProductOption);
 }
 
 export async function createSku(input: CreateSkuInput): Promise<SkuRow> {
@@ -582,8 +791,9 @@ async function getFinishedSkuBomHeaders(
   skuId: string
 ): Promise<SkuBomHeaderUsage[]> {
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase
+  const data = await fetchAllSupabaseRows<RawSkuBomHeaderUsage>(
+    () =>
+      supabase
       .from("bom_headers")
       .select(
         `
@@ -606,21 +816,16 @@ async function getFinishedSkuBomHeaders(
     "读取成品 SKU 的 BOM 关联"
   );
 
-  if (error) {
-    throw formatSupabaseError("读取成品 SKU 的 BOM 关联", error);
-  }
-
-  return ((data ?? []) as unknown as RawSkuBomHeaderUsage[]).map(
-    normalizeBomHeaderUsage
-  );
+  return data.map(normalizeBomHeaderUsage);
 }
 
 async function getMaterialSkuBomItems(
   skuId: string
 ): Promise<SkuBomItemUsage[]> {
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase
+  const data = await fetchAllSupabaseRows<RawSkuBomItemUsage>(
+    () =>
+      supabase
       .from("bom_items")
       .select(
         `
@@ -671,13 +876,7 @@ async function getMaterialSkuBomItems(
     "读取原材料 SKU 的 BOM 关联"
   );
 
-  if (error) {
-    throw formatSupabaseError("读取原材料 SKU 的 BOM 关联", error);
-  }
-
-  return ((data ?? []) as unknown as RawSkuBomItemUsage[]).map(
-    normalizeBomItemUsage
-  );
+  return data.map(normalizeBomItemUsage);
 }
 
 export async function getSkuBomUsage(input: {

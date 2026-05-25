@@ -1,4 +1,5 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
+import { fetchAllSupabaseRows } from "@/lib/supabase/pagination";
 import { createInventoryTransaction } from "@/lib/api/inventory";
 import type { BrandSummary } from "@/lib/brand-utils";
 
@@ -978,8 +979,9 @@ async function getAvailableInventoryForMaterials(
     return inventoryBySku;
   }
 
-  const { data, error } = await withTimeout(
-    supabase
+  const data = await fetchAllSupabaseRows<RawProductionMaterialInventoryOption>(
+    () =>
+      supabase
       .from("inventory_items")
       .select(
         `
@@ -1004,11 +1006,7 @@ async function getAvailableInventoryForMaterials(
     "读取原材料当前库存"
   );
 
-  if (error) {
-    throw formatSupabaseError("读取原材料当前库存", error);
-  }
-
-  for (const row of (data ?? []) as unknown as RawProductionMaterialInventoryOption[]) {
+  for (const row of data) {
     const option = normalizeMaterialInventoryOption(row);
     const current = inventoryBySku.get(option.sku_id) ?? [];
 
@@ -1340,19 +1338,16 @@ async function getAvailableInventoryBySku(
     return availability;
   }
 
-  const { data, error } = await withTimeout(
-    supabase
+  const data = await fetchAllSupabaseRows<InventoryItem>(
+    () =>
+      supabase
       .from("inventory_items")
       .select("sku_id, quantity_on_hand, reserved_quantity")
       .in("sku_id", skuIds),
     "读取原材料库存"
   );
 
-  if (error) {
-    throw formatSupabaseError("读取原材料库存", error);
-  }
-
-  for (const item of (data ?? []) as InventoryItem[]) {
+  for (const item of data) {
     const current = availability.get(item.sku_id) ?? 0;
     const itemAvailable =
       Number(item.quantity_on_hand) - Number(item.reserved_quantity);
@@ -1531,11 +1526,12 @@ export async function getProductionPlanningRequests(): Promise<
   PlanningFbaReplenishmentRequest[]
 > {
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase
-      .from("fba_replenishment_requests")
-      .select(
-        `
+  const rows = await fetchAllSupabaseRows<RawPlanningFbaReplenishmentRequest>(
+    () =>
+      supabase
+        .from("fba_replenishment_requests")
+        .select(
+          `
           id,
           request_no,
           requested_by,
@@ -1642,17 +1638,11 @@ export async function getProductionPlanningRequests(): Promise<
             )
           )
         `
-      )
-      .in("status", ["submitted", "accepted"])
-      .order("created_at", { ascending: false }),
+        )
+        .in("status", ["submitted", "accepted"])
+        .order("created_at", { ascending: false }),
     "读取待排产 FBA 备货需求"
   );
-
-  if (error) {
-    throw formatSupabaseError("读取待排产 FBA 备货需求", error);
-  }
-
-  const rows = (data ?? []) as unknown as RawPlanningFbaReplenishmentRequest[];
 
   return rows.map(normalizePlanningRequest);
 }
@@ -1676,19 +1666,16 @@ export async function getProductionAssignees(): Promise<ProductionProfile[]> {
 
 export async function getProductionOrders(): Promise<ProductionOrderTrackingRow[]> {
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase
+  const data = await fetchAllSupabaseRows<RawProductionOrderTrackingRow>(
+    () =>
+      supabase
       .from("production_orders")
       .select(getProductionOrderSelect())
       .order("created_at", { ascending: false }),
     "读取生产任务列表"
   );
 
-  if (error) {
-    throw formatSupabaseError("读取生产任务列表", error);
-  }
-
-  const rows = ((data ?? []) as unknown as RawProductionOrderTrackingRow[]).map(
+  const rows = data.map(
     normalizeProductionOrderTrackingRow
   );
 

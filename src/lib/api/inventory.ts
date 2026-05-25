@@ -1,4 +1,5 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
+import { fetchAllSupabaseRows } from "@/lib/supabase/pagination";
 import type { BrandSummary } from "@/lib/brand-utils";
 
 export type InventoryTransactionType =
@@ -908,25 +909,26 @@ async function getCurrentInventoryRows(
   action: string
 ): Promise<CurrentInventoryRow[]> {
   const supabase = getSupabaseClient();
-  let query = supabase
-    .from("inventory_items")
-    .select(getCurrentInventorySelect())
-    .order("updated_at", { ascending: false });
+  const data = await fetchAllSupabaseRows<RawCurrentInventoryRow>(
+    () => {
+      let query = supabase
+        .from("inventory_items")
+        .select(getCurrentInventorySelect())
+        .order("updated_at", { ascending: false });
 
-  if (filters.warehouseId) {
-    query = query.eq("warehouse_id", filters.warehouseId);
-  }
+      if (filters.warehouseId) {
+        query = query.eq("warehouse_id", filters.warehouseId);
+      }
 
-  const { data, error } = await withTimeout(query, action);
-
-  if (error) {
-    throw formatSupabaseError(action, error);
-  }
+      return query;
+    },
+    action
+  );
 
   const keyword = filters.skuKeyword ?? "";
 
   return sortCurrentInventoryRows(
-    ((data ?? []) as unknown as RawCurrentInventoryRow[])
+    data
       .map(normalizeCurrentInventory)
       .filter((row) => row.sku?.sku_type === skuType)
       .filter((row) => matchesBrand(row, filters.brandId))
@@ -985,23 +987,24 @@ export async function getInventoryForAdjustment(
   filters: InventoryAdjustmentFilters = {}
 ): Promise<InventoryAdjustmentRow[]> {
   const supabase = getSupabaseClient();
-  let query = supabase
-    .from("inventory_items")
-    .select(getCurrentInventorySelect())
-    .order("updated_at", { ascending: false });
+  const data = await fetchAllSupabaseRows<RawCurrentInventoryRow>(
+    () => {
+      let query = supabase
+        .from("inventory_items")
+        .select(getCurrentInventorySelect())
+        .order("updated_at", { ascending: false });
 
-  if (filters.warehouseId) {
-    query = query.eq("warehouse_id", filters.warehouseId);
-  }
+      if (filters.warehouseId) {
+        query = query.eq("warehouse_id", filters.warehouseId);
+      }
 
-  const { data, error } = await withTimeout(query, "读取可调整库存");
-
-  if (error) {
-    throw formatSupabaseError("读取可调整库存", error);
-  }
+      return query;
+    },
+    "读取可调整库存"
+  );
 
   return sortCurrentInventoryRows(
-    ((data ?? []) as unknown as RawCurrentInventoryRow[])
+    data
       .map(normalizeCurrentInventory)
       .filter((row) => matchesAdjustmentSkuType(row, filters.skuType ?? "all"))
       .filter((row) => matchesSkuKeyword(row, filters.skuKeyword ?? ""))
@@ -1019,19 +1022,16 @@ async function getSkuIdsByKeyword(keyword: string): Promise<string[]> {
   const escapedKeyword = trimmedKeyword
     .replaceAll("%", "\\%")
     .replaceAll("_", "\\_");
-  const { data, error } = await withTimeout(
-    supabase
+  const data = await fetchAllSupabaseRows<{ id: string }>(
+    () =>
+      supabase
       .from("skus")
       .select("id")
       .or(`sku_code.ilike.%${escapedKeyword}%,sku_name.ilike.%${escapedKeyword}%`),
     "按 SKU 搜索库存流水"
   );
 
-  if (error) {
-    throw formatSupabaseError("按 SKU 搜索库存流水", error);
-  }
-
-  return ((data ?? []) as Array<{ id: string }>).map((item) => item.id);
+  return data.map((item) => item.id);
 }
 
 export async function getWarehousesForFilter(): Promise<
@@ -1064,41 +1064,45 @@ export async function getInventoryTransactions(
     return [];
   }
 
-  let query = supabase
-    .from("inventory_transactions")
-    .select(getInventoryTransactionSelect())
-    .order("occurred_at", { ascending: false });
+  const data = await fetchAllSupabaseRows<RawInventoryTransactionRow>(
+    () => {
+      let query = supabase
+        .from("inventory_transactions")
+        .select(getInventoryTransactionSelect())
+        .order("occurred_at", { ascending: false });
 
-  if (filters.transactionType && filters.transactionType !== "all") {
-    query = query.eq("transaction_type", filters.transactionType);
-  }
+      if (filters.transactionType && filters.transactionType !== "all") {
+        query = query.eq("transaction_type", filters.transactionType);
+      }
 
-  if (filters.warehouseId) {
-    query = query.eq("warehouse_id", filters.warehouseId);
-  }
+      if (filters.warehouseId) {
+        query = query.eq("warehouse_id", filters.warehouseId);
+      }
 
-  if (skuIds.length > 0) {
-    query = query.in("sku_id", skuIds);
-  }
+      if (skuIds.length > 0) {
+        query = query.in("sku_id", skuIds);
+      }
 
-  if (filters.startDate) {
-    query = query.gte(
-      "occurred_at",
-      getDateBoundaryIso(filters.startDate, "start")
-    );
-  }
+      if (filters.startDate) {
+        query = query.gte(
+          "occurred_at",
+          getDateBoundaryIso(filters.startDate, "start")
+        );
+      }
 
-  if (filters.endDate) {
-    query = query.lte("occurred_at", getDateBoundaryIso(filters.endDate, "end"));
-  }
+      if (filters.endDate) {
+        query = query.lte(
+          "occurred_at",
+          getDateBoundaryIso(filters.endDate, "end")
+        );
+      }
 
-  const { data, error } = await withTimeout(query, "读取库存流水");
+      return query;
+    },
+    "读取库存流水"
+  );
 
-  if (error) {
-    throw formatSupabaseError("读取库存流水", error);
-  }
-
-  return ((data ?? []) as unknown as RawInventoryTransactionRow[])
+  return data
     .map(normalizeInventoryTransaction)
     .filter((transaction) => {
       const brandId = filters.brandId ?? "all";
@@ -1460,8 +1464,9 @@ export async function getReceivablePurchaseOrders(): Promise<
   ReceivablePurchaseOrder[]
 > {
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase
+  const data = await fetchAllSupabaseRows<RawReceivablePurchaseOrder>(
+    () =>
+      supabase
       .from("purchase_orders")
       .select(getPurchaseOrderSelect())
       .in("status", ["ordered", "partially_received"])
@@ -1469,13 +1474,7 @@ export async function getReceivablePurchaseOrders(): Promise<
     "读取可入库采购单"
   );
 
-  if (error) {
-    throw formatSupabaseError("读取可入库采购单", error);
-  }
-
-  return ((data ?? []) as unknown as RawReceivablePurchaseOrder[]).map(
-    normalizePurchaseOrder
-  );
+  return data.map(normalizePurchaseOrder);
 }
 
 export async function receivePurchaseOrderItems(
@@ -1604,8 +1603,9 @@ export async function getReceivableProductionOrders(): Promise<
   ReceivableProductionOrder[]
 > {
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase
+  const data = await fetchAllSupabaseRows<RawReceivableProductionOrder>(
+    () =>
+      supabase
       .from("production_orders")
       .select(
         `
@@ -1652,13 +1652,7 @@ export async function getReceivableProductionOrders(): Promise<
     "读取可入库生产任务"
   );
 
-  if (error) {
-    throw formatSupabaseError("读取可入库生产任务", error);
-  }
-
-  return ((data ?? []) as unknown as RawReceivableProductionOrder[]).map(
-    normalizeProductionOrder
-  );
+  return data.map(normalizeProductionOrder);
 }
 
 export async function receiveProductionOrder(input: ReceiveProductionOrderInput) {
@@ -1725,30 +1719,31 @@ export async function getFinishedGoodsInventory(
   warehouseId?: string
 ): Promise<Map<string, number>> {
   const supabase = getSupabaseClient();
-  let query = supabase
-    .from("inventory_items")
-    .select("sku_id, quantity_on_hand, reserved_quantity, item_type, warehouse_id")
-    .eq("item_type", "finished_product");
+  const data = await fetchAllSupabaseRows<
+    Pick<InventoryItem, "sku_id" | "quantity_on_hand" | "reserved_quantity">
+  >(
+    () => {
+      let query = supabase
+        .from("inventory_items")
+        .select("sku_id, quantity_on_hand, reserved_quantity, item_type, warehouse_id")
+        .eq("item_type", "finished_product");
 
-  if (skuIds && skuIds.length > 0) {
-    query = query.in("sku_id", skuIds);
-  }
+      if (skuIds && skuIds.length > 0) {
+        query = query.in("sku_id", skuIds);
+      }
 
-  if (warehouseId) {
-    query = query.eq("warehouse_id", warehouseId);
-  }
+      if (warehouseId) {
+        query = query.eq("warehouse_id", warehouseId);
+      }
 
-  const { data, error } = await withTimeout(query, "读取成品库存");
-
-  if (error) {
-    throw formatSupabaseError("读取成品库存", error);
-  }
+      return query;
+    },
+    "读取成品库存"
+  );
 
   const inventoryBySku = new Map<string, number>();
 
-  for (const item of (data ?? []) as Array<
-    Pick<InventoryItem, "sku_id" | "quantity_on_hand" | "reserved_quantity">
-  >) {
+  for (const item of data) {
     const current = inventoryBySku.get(item.sku_id) ?? 0;
     const availableQuantity = Math.max(
       0,
@@ -1765,25 +1760,26 @@ export async function getFbaOutboundQuantity(
   requestIds?: string[]
 ): Promise<Map<string, number>> {
   const supabase = getSupabaseClient();
-  let query = supabase
-    .from("inventory_transactions")
-    .select("replenishment_request_id, sku_id, quantity")
-    .eq("transaction_type", "product_out")
-    .not("replenishment_request_id", "is", null);
+  const data = await fetchAllSupabaseRows<InventoryTransactionQuantity>(
+    () => {
+      let query = supabase
+        .from("inventory_transactions")
+        .select("replenishment_request_id, sku_id, quantity")
+        .eq("transaction_type", "product_out")
+        .not("replenishment_request_id", "is", null);
 
-  if (requestIds && requestIds.length > 0) {
-    query = query.in("replenishment_request_id", requestIds);
-  }
+      if (requestIds && requestIds.length > 0) {
+        query = query.in("replenishment_request_id", requestIds);
+      }
 
-  const { data, error } = await withTimeout(query, "统计 FBA 已出库数量");
-
-  if (error) {
-    throw formatSupabaseError("统计 FBA 已出库数量", error);
-  }
+      return query;
+    },
+    "统计 FBA 已出库数量"
+  );
 
   const outboundByRequest = new Map<string, number>();
 
-  for (const transaction of (data ?? []) as InventoryTransactionQuantity[]) {
+  for (const transaction of data) {
     if (!transaction.replenishment_request_id) {
       continue;
     }
@@ -1816,8 +1812,9 @@ export async function getFbaOutboundRequests(options: {
   warehouseId?: string;
 } = {}): Promise<FbaOutboundRequest[]> {
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase
+  const rows = await fetchAllSupabaseRows<RawFbaOutboundRequest>(
+    () =>
+      supabase
       .from("fba_replenishment_requests")
       .select(
         `
@@ -1874,11 +1871,6 @@ export async function getFbaOutboundRequests(options: {
     "读取可 FBA 出库需求"
   );
 
-  if (error) {
-    throw formatSupabaseError("读取可 FBA 出库需求", error);
-  }
-
-  const rows = (data ?? []) as unknown as RawFbaOutboundRequest[];
   const skuIds = [...new Set(rows.map((row) => row.sku_id))];
   const requestIds = rows.map((row) => row.id);
   const [inventoryBySku, outboundByRequest] = await Promise.all([

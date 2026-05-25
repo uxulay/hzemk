@@ -1,4 +1,5 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
+import { fetchAllSupabaseRows } from "@/lib/supabase/pagination";
 import type { BrandSummary } from "@/lib/brand-utils";
 
 export type ProductStatus = "active" | "inactive";
@@ -190,33 +191,24 @@ function normalizeProduct(row: RawProductRow): ProductRow {
 
 export async function getProducts(): Promise<ProductListRow[]> {
   const supabase = getSupabaseClient();
-  const [productResult, skuResult] = await Promise.all([
-    withTimeout(
-      supabase
+  const [productRows, skuRows] = await Promise.all([
+    fetchAllSupabaseRows<RawProductRow>(
+      () =>
+        supabase
         .from("products")
         .select(getProductSelect())
         .order("product_code", { ascending: true }),
       "读取产品列表"
     ),
-    withTimeout(
-      supabase.from("skus").select("id, product_id"),
+    fetchAllSupabaseRows<SkuProductLink>(
+      () => supabase.from("skus").select("id, product_id"),
       "统计产品关联 SKU 数量"
     )
   ]);
 
-  if (productResult.error) {
-    throw formatSupabaseError("读取产品列表", productResult.error);
-  }
+  const skuCountByProduct = countSkusByProduct(skuRows);
 
-  if (skuResult.error) {
-    throw formatSupabaseError("统计产品关联 SKU 数量", skuResult.error);
-  }
-
-  const skuCountByProduct = countSkusByProduct(
-    (skuResult.data ?? []) as SkuProductLink[]
-  );
-
-  return ((productResult.data ?? []) as unknown as RawProductRow[])
+  return productRows
     .map(normalizeProduct)
     .map((product) => ({
       ...product,
@@ -226,9 +218,29 @@ export async function getProducts(): Promise<ProductListRow[]> {
 
 export async function getProductStats(): Promise<ProductStats> {
   const supabase = getSupabaseClient();
-  const [productResult, skuResult] = await Promise.all([
-    withTimeout(supabase.from("products").select("id, status"), "统计产品数量"),
-    withTimeout(supabase.from("skus").select("id"), "统计 SKU 数量")
+  const [productResult, activeResult, inactiveResult, skuResult] = await Promise.all([
+    withTimeout(
+      supabase.from("products").select("id", { count: "exact", head: true }),
+      "统计产品数量"
+    ),
+    withTimeout(
+      supabase
+        .from("products")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "active"),
+      "统计启用产品数量"
+    ),
+    withTimeout(
+      supabase
+        .from("products")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "inactive"),
+      "统计停用产品数量"
+    ),
+    withTimeout(
+      supabase.from("skus").select("id", { count: "exact", head: true }),
+      "统计 SKU 数量"
+    )
   ]);
 
   if (productResult.error) {
@@ -238,19 +250,18 @@ export async function getProductStats(): Promise<ProductStats> {
   if (skuResult.error) {
     throw formatSupabaseError("统计 SKU 数量", skuResult.error);
   }
-
-  const products = (productResult.data ?? []) as Array<{
-    id: string;
-    status: string;
-  }>;
+  if (activeResult.error) {
+    throw formatSupabaseError("统计启用产品数量", activeResult.error);
+  }
+  if (inactiveResult.error) {
+    throw formatSupabaseError("统计停用产品数量", inactiveResult.error);
+  }
 
   return {
-    totalProducts: products.length,
-    activeProducts: products.filter((product) => product.status === "active")
-      .length,
-    inactiveProducts: products.filter((product) => product.status === "inactive")
-      .length,
-    totalSkus: (skuResult.data ?? []).length
+    totalProducts: productResult.count ?? 0,
+    activeProducts: activeResult.count ?? 0,
+    inactiveProducts: inactiveResult.count ?? 0,
+    totalSkus: skuResult.count ?? 0
   };
 }
 
@@ -361,8 +372,9 @@ export async function getProductSkus(
   }
 
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase
+  return fetchAllSupabaseRows<ProductSkuRow>(
+    () =>
+      supabase
       .from("skus")
       .select(
         "id, product_id, sku_code, sku_name, sku_type, unit, status, created_at, updated_at"
@@ -371,10 +383,4 @@ export async function getProductSkus(
       .order("sku_code", { ascending: true }),
     "读取产品关联 SKU"
   );
-
-  if (error) {
-    throw formatSupabaseError("读取产品关联 SKU", error);
-  }
-
-  return (data ?? []) as ProductSkuRow[];
 }

@@ -5,6 +5,7 @@ import type {
   CsvDataRow
 } from "@/lib/bulk-types";
 import { getSupabaseClient } from "@/lib/supabase/client";
+import { fetchAllSupabaseRows } from "@/lib/supabase/pagination";
 import { normalizeCsvValue } from "@/lib/utils/csv";
 
 export type MaterialStatus = "active" | "inactive";
@@ -360,37 +361,26 @@ function getDuplicateSet(values: string[]) {
 
 async function getExistingSkuCodeSet() {
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase.from("skus").select("id, sku_code"),
+  const data = await fetchAllSupabaseRows<{ sku_code: string }>(
+    () => supabase.from("skus").select("id, sku_code"),
     "读取 SKU 编码"
   );
 
-  if (error) {
-    throw formatSupabaseError("读取 SKU 编码", error);
-  }
-
   return new Set(
-    ((data ?? []) as Array<{ sku_code: string }>).map((row) =>
-      row.sku_code.toLowerCase()
-    )
+    data.map((row) => row.sku_code.toLowerCase())
   );
 }
 
 async function getMaterialSuppliersForLookup() {
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase
+  return fetchAllSupabaseRows<MaterialSupplier>(
+    () =>
+      supabase
       .from("suppliers")
       .select("id, supplier_code, name, contact_name, phone, status")
       .order("supplier_code", { ascending: true }),
     "读取供应商资料"
   );
-
-  if (error) {
-    throw formatSupabaseError("读取供应商资料", error);
-  }
-
-  return (data ?? []) as MaterialSupplier[];
 }
 
 export async function getMaterialSupplierOptions(): Promise<MaterialSupplier[]> {
@@ -561,16 +551,12 @@ async function getRowsByIds<TRow>(
   }
 
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase.from(table).select(columns).in("id", ids),
+  const data = await fetchAllSupabaseRows<TRow>(
+    () => supabase.from(table).select(columns).in("id", ids),
     `读取 ${table} 数据`
   );
 
-  if (error) {
-    throw formatSupabaseError(`读取 ${table} 数据`, error);
-  }
-
-  return (data ?? []) as TRow[];
+  return data;
 }
 
 async function hasReference(
@@ -671,8 +657,9 @@ async function getInventorySummaryBySkuIds(ids: string[]) {
   }
 
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase
+  const data = await fetchAllSupabaseRows<RawInventorySummaryRow>(
+    () =>
+      supabase
       .from("inventory_items")
       .select(
         "sku_id, quantity_on_hand, reserved_quantity, safety_stock_quantity"
@@ -681,11 +668,7 @@ async function getInventorySummaryBySkuIds(ids: string[]) {
     "读取辅料库存汇总"
   );
 
-  if (error) {
-    throw formatSupabaseError("读取辅料库存汇总", error);
-  }
-
-  for (const row of (data ?? []) as RawInventorySummaryRow[]) {
+  for (const row of data) {
     const current = summaryBySku.get(row.sku_id) ?? {
       sku_id: row.sku_id,
       quantity_on_hand: 0,
@@ -717,16 +700,12 @@ async function getReferenceCounts(
   }
 
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase.from(table).select(`id, ${column}`).in(column, ids),
+  const data = await fetchAllSupabaseRows<RawReferenceRow>(
+    () => supabase.from(table).select(`id, ${column}`).in(column, ids),
     action
   );
 
-  if (error) {
-    throw formatSupabaseError(action, error);
-  }
-
-  for (const row of (data ?? []) as unknown as RawReferenceRow[]) {
+  for (const row of data) {
     const key = row[column];
 
     counts.set(key, (counts.get(key) ?? 0) + 1);
@@ -737,8 +716,9 @@ async function getReferenceCounts(
 
 export async function getMaterials(): Promise<MaterialListRow[]> {
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase
+  const materialRows = await fetchAllSupabaseRows<RawMaterialRow>(
+    () =>
+      supabase
       .from("skus")
       .select(getMaterialSelect())
       .eq("sku_type", "material")
@@ -746,11 +726,6 @@ export async function getMaterials(): Promise<MaterialListRow[]> {
     "读取辅料列表"
   );
 
-  if (error) {
-    throw formatSupabaseError("读取辅料列表", error);
-  }
-
-  const materialRows = (data ?? []) as unknown as RawMaterialRow[];
   const materialIds = materialRows.map((material) => material.id);
   const [inventoryBySku, bomCounts, purchaseCounts] = await Promise.all([
     getInventorySummaryBySkuIds(materialIds),
@@ -920,8 +895,9 @@ export async function getMaterialDetail(
 
   const [inventoryResult, bomResult, purchaseResult, transactionResult] =
     await Promise.all([
-      withTimeout(
-        supabase
+      fetchAllSupabaseRows<RawMaterialInventoryLocation>(
+        () =>
+          supabase
           .from("inventory_items")
           .select(
             `
@@ -947,8 +923,9 @@ export async function getMaterialDetail(
           .order("updated_at", { ascending: false }),
         "读取辅料库存明细"
       ),
-      withTimeout(
-        supabase
+      fetchAllSupabaseRows<RawMaterialBomUsage>(
+        () =>
+          supabase
           .from("bom_items")
           .select(
             `
@@ -1037,14 +1014,6 @@ export async function getMaterialDetail(
       )
     ]);
 
-  if (inventoryResult.error) {
-    throw formatSupabaseError("读取辅料库存明细", inventoryResult.error);
-  }
-
-  if (bomResult.error) {
-    throw formatSupabaseError("读取辅料 BOM 引用", bomResult.error);
-  }
-
   if (purchaseResult.error) {
     throw formatSupabaseError("读取最近采购记录", purchaseResult.error);
   }
@@ -1055,12 +1024,8 @@ export async function getMaterialDetail(
 
   return {
     material,
-    inventoryItems: (
-      (inventoryResult.data ?? []) as unknown as RawMaterialInventoryLocation[]
-    ).map(normalizeInventoryLocation),
-    bomUsages: ((bomResult.data ?? []) as unknown as RawMaterialBomUsage[]).map(
-      normalizeBomUsage
-    ),
+    inventoryItems: inventoryResult.map(normalizeInventoryLocation),
+    bomUsages: bomResult.map(normalizeBomUsage),
     purchaseRecords: (
       (purchaseResult.data ?? []) as unknown as RawMaterialPurchaseRecord[]
     ).map(normalizePurchaseRecord),

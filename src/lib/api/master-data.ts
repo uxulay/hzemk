@@ -1,4 +1,5 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
+import { fetchAllSupabaseRows } from "@/lib/supabase/pagination";
 import type { BrandSummary } from "@/lib/brand-utils";
 
 export type Role = {
@@ -123,8 +124,9 @@ export async function getRoles(): Promise<Role[]> {
 
 export async function getProducts(): Promise<Product[]> {
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase
+  const data = await fetchAllSupabaseRows<RawProduct>(
+    () =>
+      supabase
       .from("products")
       .select(
         `
@@ -143,17 +145,14 @@ export async function getProducts(): Promise<Product[]> {
     "读取产品列表"
   );
 
-  if (error) {
-    throw formatSupabaseError("读取产品列表", error);
-  }
-
-  return ((data ?? []) as unknown as RawProduct[]).map(normalizeProduct);
+  return data.map(normalizeProduct);
 }
 
 export async function getSkus(): Promise<Sku[]> {
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase
+  const data = await fetchAllSupabaseRows<Sku>(
+    () =>
+      supabase
       .from("skus")
       .select("*")
       .eq("sku_type", "finished_good")
@@ -161,17 +160,14 @@ export async function getSkus(): Promise<Sku[]> {
     "读取成品 SKU 列表"
   );
 
-  if (error) {
-    throw formatSupabaseError("读取成品 SKU 列表", error);
-  }
-
-  return (data ?? []) as Sku[];
+  return data;
 }
 
 export async function getProductSkus(productId: string): Promise<Sku[]> {
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase
+  const data = await fetchAllSupabaseRows<Sku>(
+    () =>
+      supabase
       .from("skus")
       .select("*")
       .eq("product_id", productId)
@@ -180,17 +176,14 @@ export async function getProductSkus(productId: string): Promise<Sku[]> {
     "读取产品 SKU 列表"
   );
 
-  if (error) {
-    throw formatSupabaseError("读取产品 SKU 列表", error);
-  }
-
-  return (data ?? []) as Sku[];
+  return data;
 }
 
 export async function getMaterialSkus(): Promise<Sku[]> {
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase
+  const data = await fetchAllSupabaseRows<Sku>(
+    () =>
+      supabase
       .from("skus")
       .select("*")
       .eq("sku_type", "material")
@@ -198,43 +191,29 @@ export async function getMaterialSkus(): Promise<Sku[]> {
     "读取原材料 SKU 列表"
   );
 
-  if (error) {
-    throw formatSupabaseError("读取原材料 SKU 列表", error);
-  }
-
-  return (data ?? []) as Sku[];
+  return data;
 }
 
 export async function getSuppliers(): Promise<Supplier[]> {
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase
+  return fetchAllSupabaseRows<Supplier>(
+    () =>
+      supabase
       .from("suppliers")
       .select("*")
       .order("supplier_code", { ascending: true }),
     "读取供应商列表"
   );
-
-  if (error) {
-    throw formatSupabaseError("读取供应商列表", error);
-  }
-
-  return (data ?? []) as Supplier[];
 }
 
 export async function getWarehouses(): Promise<Warehouse[]> {
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase
+  return fetchAllSupabaseRows<Warehouse>(
+    () =>
+      supabase
       .from("warehouses")
       .select("*")
       .order("warehouse_code", { ascending: true }),
     "读取仓库列表"
   );
-
-  if (error) {
-    throw formatSupabaseError("读取仓库列表", error);
-  }
-
-  return (data ?? []) as Warehouse[];
 }

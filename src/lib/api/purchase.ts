@@ -1,4 +1,5 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
+import { fetchAllSupabaseRows } from "@/lib/supabase/pagination";
 
 export type PurchaseOrderStatus =
   | "draft"
@@ -489,19 +490,16 @@ export async function getShortageMaterialRequirements(): Promise<
 
 export async function getPurchaseOrders(): Promise<PurchaseOrder[]> {
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase
+  const data = await fetchAllSupabaseRows<RawPurchaseOrder>(
+    () =>
+      supabase
       .from("purchase_orders")
       .select(getPurchaseOrderSelect())
       .order("created_at", { ascending: false }),
     "读取采购单列表"
   );
 
-  if (error) {
-    throw formatSupabaseError("读取采购单列表", error);
-  }
-
-  return ((data ?? []) as unknown as RawPurchaseOrder[]).map(normalizePurchaseOrder);
+  return data.map(normalizePurchaseOrder);
 }
 
 export async function getPurchaseOrderDetail(
@@ -526,8 +524,9 @@ export async function getPurchaseOrderDetail(
 
 export async function getMaterialSkuOptions(): Promise<MaterialSkuOption[]> {
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase
+  const data = await fetchAllSupabaseRows<RawMaterialSkuOption>(
+    () =>
+      supabase
       .from("skus")
       .select(
         `
@@ -552,13 +551,7 @@ export async function getMaterialSkuOptions(): Promise<MaterialSkuOption[]> {
     "读取原材料 SKU 列表"
   );
 
-  if (error) {
-    throw formatSupabaseError("读取原材料 SKU 列表", error);
-  }
-
-  return ((data ?? []) as unknown as RawMaterialSkuOption[]).map(
-    normalizeMaterialSkuOption
-  );
+  return data.map(normalizeMaterialSkuOption);
 }
 
 export async function getPurchaseProfileOptions(): Promise<PurchaseProfileOption[]> {

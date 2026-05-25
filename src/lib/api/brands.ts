@@ -1,4 +1,5 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
+import { fetchAllSupabaseRows } from "@/lib/supabase/pagination";
 
 export type BrandStatus = "active" | "inactive";
 
@@ -119,30 +120,20 @@ function countProductsByBrand(products: ProductBrandLink[]) {
 
 export async function getBrands(): Promise<BrandListRow[]> {
   const supabase = getSupabaseClient();
-  const [brandResult, productResult] = await Promise.all([
-    withTimeout(
-      supabase.from("brands").select("*").order("brand_code", { ascending: true }),
+  const [brandRows, productRows] = await Promise.all([
+    fetchAllSupabaseRows<BrandRow>(
+      () => supabase.from("brands").select("*").order("brand_code", { ascending: true }),
       "读取品牌列表"
     ),
-    withTimeout(
-      supabase.from("products").select("id, brand_id"),
+    fetchAllSupabaseRows<ProductBrandLink>(
+      () => supabase.from("products").select("id, brand_id"),
       "统计品牌关联产品数量"
     )
   ]);
 
-  if (brandResult.error) {
-    throw formatSupabaseError("读取品牌列表", brandResult.error);
-  }
+  const productCountByBrand = countProductsByBrand(productRows);
 
-  if (productResult.error) {
-    throw formatSupabaseError("统计品牌关联产品数量", productResult.error);
-  }
-
-  const productCountByBrand = countProductsByBrand(
-    (productResult.data ?? []) as ProductBrandLink[]
-  );
-
-  return ((brandResult.data ?? []) as BrandRow[]).map((brand) => ({
+  return brandRows.map((brand) => ({
     ...brand,
     product_count: productCountByBrand.get(brand.id) ?? 0
   }));
@@ -164,32 +155,22 @@ export async function getBrandOptions(): Promise<BrandRow[]> {
 
 export async function getBrandStats(): Promise<BrandStats> {
   const supabase = getSupabaseClient();
-  const [brandResult, productResult] = await Promise.all([
-    withTimeout(supabase.from("brands").select("id, status"), "统计品牌数量"),
-    withTimeout(
-      supabase.from("products").select("id, brand_id").not("brand_id", "is", null),
+  const [brandRows, productRows] = await Promise.all([
+    fetchAllSupabaseRows<{ id: string; status: string }>(
+      () => supabase.from("brands").select("id, status"),
+      "统计品牌数量"
+    ),
+    fetchAllSupabaseRows<ProductBrandLink>(
+      () => supabase.from("products").select("id, brand_id").not("brand_id", "is", null),
       "统计已绑定品牌产品数量"
     )
   ]);
 
-  if (brandResult.error) {
-    throw formatSupabaseError("统计品牌数量", brandResult.error);
-  }
-
-  if (productResult.error) {
-    throw formatSupabaseError("统计已绑定品牌产品数量", productResult.error);
-  }
-
-  const brands = (brandResult.data ?? []) as Array<{
-    id: string;
-    status: string;
-  }>;
-
   return {
-    totalBrands: brands.length,
-    activeBrands: brands.filter((brand) => brand.status === "active").length,
-    inactiveBrands: brands.filter((brand) => brand.status === "inactive").length,
-    totalLinkedProducts: (productResult.data ?? []).length
+    totalBrands: brandRows.length,
+    activeBrands: brandRows.filter((brand) => brand.status === "active").length,
+    inactiveBrands: brandRows.filter((brand) => brand.status === "inactive").length,
+    totalLinkedProducts: productRows.length
   };
 }
 

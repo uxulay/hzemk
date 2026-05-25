@@ -1,4 +1,5 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
+import { fetchAllSupabaseRows } from "@/lib/supabase/pagination";
 import type { BrandSummary } from "@/lib/brand-utils";
 
 export type BomStatus = "active" | "inactive";
@@ -531,8 +532,9 @@ export async function toggleBomStatus(
 
 export async function getFinishedGoodSkus(): Promise<BomSkuOption[]> {
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase
+  const data = await fetchAllSupabaseRows<RawBomSkuOption>(
+    () =>
+      supabase
       .from("skus")
       .select(getSkuSelect())
       .eq("sku_type", "finished_good")
@@ -540,17 +542,14 @@ export async function getFinishedGoodSkus(): Promise<BomSkuOption[]> {
     "读取成品 SKU 列表"
   );
 
-  if (error) {
-    throw formatSupabaseError("读取成品 SKU 列表", error);
-  }
-
-  return ((data ?? []) as unknown as RawBomSkuOption[]).map(normalizeSkuOption);
+  return data.map(normalizeSkuOption);
 }
 
 export async function getMaterialSkus(): Promise<BomSkuOption[]> {
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase
+  const data = await fetchAllSupabaseRows<RawBomSkuOption>(
+    () =>
+      supabase
       .from("skus")
       .select(getSkuSelect())
       .eq("sku_type", "material")
@@ -558,9 +557,5 @@ export async function getMaterialSkus(): Promise<BomSkuOption[]> {
     "读取原材料 SKU 列表"
   );
 
-  if (error) {
-    throw formatSupabaseError("读取原材料 SKU 列表", error);
-  }
-
-  return ((data ?? []) as unknown as RawBomSkuOption[]).map(normalizeSkuOption);
+  return data.map(normalizeSkuOption);
 }

@@ -4,6 +4,7 @@ import type {
   CsvDataRow
 } from "@/lib/bulk-types";
 import { getSupabaseClient } from "@/lib/supabase/client";
+import { fetchAllSupabaseRows } from "@/lib/supabase/pagination";
 import { normalizeCsvValue } from "@/lib/utils/csv";
 import type { BrandSummary } from "@/lib/brand-utils";
 
@@ -677,9 +678,10 @@ export async function getFbaReplenishmentSkuOptions(): Promise<
   FbaReplenishmentSkuOption[]
 > {
   const supabase = getSupabaseClient();
-  const [skuResult, stockResult, bomResult] = await Promise.all([
-    withTimeout(
-      supabase
+  const [skuRows, stockRows, bomRows] = await Promise.all([
+    fetchAllSupabaseRows<RawFbaReplenishmentSkuOption>(
+      () =>
+        supabase
         .from("skus")
         .select(
           `
@@ -714,14 +716,16 @@ export async function getFbaReplenishmentSkuOptions(): Promise<
         .order("sku_code", { ascending: true }),
       "读取可备货 SKU"
     ),
-    withTimeout(
-      supabase
+    fetchAllSupabaseRows<InventoryStockRow>(
+      () =>
+        supabase
         .from("inventory_items")
         .select("sku_id, item_type, quantity_on_hand"),
       "读取成品库存"
     ),
-    withTimeout(
-      supabase
+    fetchAllSupabaseRows<ActiveBomRow>(
+      () =>
+        supabase
         .from("bom_headers")
         .select("product_sku_id")
         .eq("status", "active"),
@@ -729,21 +733,9 @@ export async function getFbaReplenishmentSkuOptions(): Promise<
     )
   ]);
 
-  if (skuResult.error) {
-    throw formatSupabaseError("读取可备货 SKU", skuResult.error);
-  }
-
-  if (stockResult.error) {
-    throw formatSupabaseError("读取成品库存", stockResult.error);
-  }
-
-  if (bomResult.error) {
-    throw formatSupabaseError("读取启用 BOM", bomResult.error);
-  }
-
   const stockBySkuId = new Map<string, number>();
 
-  ((stockResult.data ?? []) as InventoryStockRow[])
+  stockRows
     .filter((row) => isFinishedSkuType(row.item_type))
     .forEach((row) => {
       stockBySkuId.set(
@@ -753,10 +745,10 @@ export async function getFbaReplenishmentSkuOptions(): Promise<
     });
 
   const activeBomSkuIds = new Set(
-    ((bomResult.data ?? []) as ActiveBomRow[]).map((row) => row.product_sku_id)
+    bomRows.map((row) => row.product_sku_id)
   );
 
-  return ((skuResult.data ?? []) as unknown as RawFbaReplenishmentSkuOption[])
+  return skuRows
     .filter((sku) => isFinishedSkuType(sku.sku_type))
     .map((sku) => normalizeFbaSkuOption(sku, stockBySkuId, activeBomSkuIds));
 }
@@ -765,33 +757,25 @@ export async function validateFbaReplenishmentImportRows(
   rows: CsvDataRow[]
 ): Promise<BulkImportValidationRow<FbaReplenishmentImportInput>[]> {
   const supabase = getSupabaseClient();
-  const [skuResult, warehouseResult] = await Promise.all([
-    withTimeout(
-      supabase.from("skus").select("id, sku_code, sku_name, sku_type, status"),
+  const [skuRows, warehouseRows] = await Promise.all([
+    fetchAllSupabaseRows<ImportSkuRow>(
+      () => supabase.from("skus").select("id, sku_code, sku_name, sku_type, status"),
       "读取 SKU 数据"
     ),
-    withTimeout(
-      supabase.from("warehouses").select("id, warehouse_code, name, status"),
+    fetchAllSupabaseRows<ImportWarehouseRow>(
+      () => supabase.from("warehouses").select("id, warehouse_code, name, status"),
       "读取仓库数据"
     )
   ]);
 
-  if (skuResult.error) {
-    throw formatSupabaseError("读取 SKU 数据", skuResult.error);
-  }
-
-  if (warehouseResult.error) {
-    throw formatSupabaseError("读取仓库数据", warehouseResult.error);
-  }
-
   const skuByCode = new Map(
-    ((skuResult.data ?? []) as ImportSkuRow[]).map((sku) => [
+    skuRows.map((sku) => [
       normalizeCsvValue(sku.sku_code).toLowerCase(),
       sku
     ])
   );
   const warehouseByCode = new Map(
-    ((warehouseResult.data ?? []) as ImportWarehouseRow[]).map((warehouse) => [
+    warehouseRows.map((warehouse) => [
       normalizeCsvValue(warehouse.warehouse_code).toLowerCase(),
       warehouse
     ])
@@ -920,10 +904,12 @@ export async function getFbaReplenishmentRequests(
   options: GetFbaReplenishmentRequestsOptions = {}
 ): Promise<FbaReplenishmentRequest[]> {
   const supabase = getSupabaseClient();
-  let query = supabase
-    .from("fba_replenishment_requests")
-    .select(
-      `
+  const rows = await fetchAllSupabaseRows<RawFbaReplenishmentRequest>(
+    () => {
+      let query = supabase
+        .from("fba_replenishment_requests")
+        .select(
+          `
         id,
         request_no,
         requested_by,
@@ -1027,20 +1013,17 @@ export async function getFbaReplenishmentRequests(
           )
         )
       `
-    )
-    .order("created_at", { ascending: false });
+        )
+        .order("created_at", { ascending: false });
 
-  if (options.status && options.status !== "all") {
-    query = query.eq("status", options.status);
-  }
+      if (options.status && options.status !== "all") {
+        query = query.eq("status", options.status);
+      }
 
-  const { data, error } = await withTimeout(query, "读取 FBA 备货需求列表");
-
-  if (error) {
-    throw formatSupabaseError("读取 FBA 备货需求列表", error);
-  }
-
-  const rows = (data ?? []) as unknown as RawFbaReplenishmentRequest[];
+      return query;
+    },
+    "读取 FBA 备货需求列表"
+  );
 
   return rows.map(normalizeFbaReplenishmentRequest);
 }

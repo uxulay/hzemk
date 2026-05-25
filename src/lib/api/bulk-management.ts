@@ -6,6 +6,7 @@ import type {
 } from "@/lib/bulk-types";
 import { normalizeCsvValue } from "@/lib/utils/csv";
 import { getSupabaseClient } from "@/lib/supabase/client";
+import { fetchAllSupabaseRows } from "@/lib/supabase/pagination";
 
 type Status = "active" | "inactive";
 
@@ -218,17 +219,13 @@ function getDuplicateSet(values: string[]) {
 
 async function getExistingCodeSet(table: string, codeColumn: string) {
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase.from(table).select(`id, ${codeColumn}`),
+  const data = await fetchAllSupabaseRows<CodeRow>(
+    () => supabase.from(table).select(`id, ${codeColumn}`),
     `读取 ${table} 编码`
   );
 
-  if (error) {
-    throw formatSupabaseError(`读取 ${table} 编码`, error);
-  }
-
   return new Set(
-    ((data ?? []) as unknown as CodeRow[]).map((row) =>
+    data.map((row) =>
       normalizeCsvValue(row[codeColumn]).toLowerCase()
     )
   );
@@ -240,16 +237,12 @@ async function getRowsByIds<TRow>(table: string, columns: string, ids: string[])
   }
 
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase.from(table).select(columns).in("id", ids),
+  const data = await fetchAllSupabaseRows<TRow>(
+    () => supabase.from(table).select(columns).in("id", ids),
     `读取 ${table} 数据`
   );
 
-  if (error) {
-    throw formatSupabaseError(`读取 ${table} 数据`, error);
-  }
-
-  return (data ?? []) as TRow[];
+  return data;
 }
 
 async function getBrandsForImport() {
@@ -625,20 +618,16 @@ export async function validateSkuImportRows(
   rows: CsvDataRow[]
 ): Promise<BulkImportValidationRow<SkuImportInput>[]> {
   const supabase = getSupabaseClient();
-  const [existingSkuCodes, productResult] = await Promise.all([
+  const [existingSkuCodes, productRows] = await Promise.all([
     getExistingCodeSet("skus", "sku_code"),
-    withTimeout(
-      supabase.from("products").select("id, product_code, name, status"),
+    fetchAllSupabaseRows<ProductMinimal>(
+      () => supabase.from("products").select("id, product_code, name, status"),
       "读取产品编码"
     )
   ]);
 
-  if (productResult.error) {
-    throw formatSupabaseError("读取产品编码", productResult.error);
-  }
-
   const productByCode = new Map(
-    ((productResult.data ?? []) as ProductMinimal[]).map((product) => [
+    productRows.map((product) => [
       product.product_code.toLowerCase(),
       product
     ])
@@ -1065,43 +1054,30 @@ export async function validateBomImportRows(
   rows: CsvDataRow[]
 ): Promise<BulkImportValidationRow<BomImportInput>[]> {
   const supabase = getSupabaseClient();
-  const [skuResult, bomHeaderResult, bomItemResult] = await Promise.all([
-    withTimeout(
-      supabase.from("skus").select("id, sku_code, sku_name, sku_type, unit, status"),
+  const [skuRows, bomHeaders, bomItems] = await Promise.all([
+    fetchAllSupabaseRows<SkuMinimal>(
+      () => supabase.from("skus").select("id, sku_code, sku_name, sku_type, unit, status"),
       "读取 BOM 导入用 SKU"
     ),
-    withTimeout(
-      supabase
+    fetchAllSupabaseRows<BomHeaderMinimal>(
+      () =>
+        supabase
         .from("bom_headers")
         .select("id, product_sku_id, bom_code, version, status"),
       "读取 BOM 主表"
     ),
-    withTimeout(
-      supabase.from("bom_items").select("id, bom_header_id, component_sku_id"),
+    fetchAllSupabaseRows<BomItemMinimal>(
+      () => supabase.from("bom_items").select("id, bom_header_id, component_sku_id"),
       "读取 BOM 明细"
     )
   ]);
 
-  if (skuResult.error) {
-    throw formatSupabaseError("读取 BOM 导入用 SKU", skuResult.error);
-  }
-
-  if (bomHeaderResult.error) {
-    throw formatSupabaseError("读取 BOM 主表", bomHeaderResult.error);
-  }
-
-  if (bomItemResult.error) {
-    throw formatSupabaseError("读取 BOM 明细", bomItemResult.error);
-  }
-
   const skuByCode = new Map(
-    ((skuResult.data ?? []) as SkuMinimal[]).map((sku) => [
+    skuRows.map((sku) => [
       sku.sku_code.toLowerCase(),
       sku
     ])
   );
-  const bomHeaders = (bomHeaderResult.data ?? []) as BomHeaderMinimal[];
-  const bomItems = (bomItemResult.data ?? []) as BomItemMinimal[];
   const headerBySkuVersion = new Map(
     bomHeaders.map((header) => [
       `${header.product_sku_id}||${header.version.toLowerCase()}`,
