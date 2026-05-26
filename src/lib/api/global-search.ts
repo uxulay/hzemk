@@ -2,7 +2,7 @@ import { getNavigationForRole, type NavigationGroup } from "@/lib/navigation";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import type { UserRole } from "@/types/roles";
 
-export type GlobalSearchType = "功能" | "单据" | "产品/SKU" | "原材料";
+export type GlobalSearchType = "功能" | "单据" | "产品/SKU" | "辅料";
 
 export type GlobalSearchResult = {
   id: string;
@@ -24,6 +24,14 @@ type SkuSearchRow = {
   sku_code: string;
   sku_name: string;
   sku_type: string;
+  specs: string | null;
+};
+
+type MaterialSearchRow = {
+  id: string;
+  material_code: string;
+  material_name: string;
+  category: string | null;
   specs: string | null;
 };
 
@@ -125,6 +133,7 @@ export async function searchGlobal(
   const [
     productResult,
     skuResult,
+    materialResult,
     fbaResult,
     productionResult,
     purchaseResult
@@ -141,7 +150,16 @@ export async function searchGlobal(
       .or(
         `sku_code.ilike.${pattern},sku_name.ilike.${pattern},amazon_sku.ilike.${pattern},fnsku.ilike.${pattern},specs.ilike.${pattern}`
       )
+      .in("sku_type", ["finished_good", "finished_product", "semi_finished"])
       .order("sku_code", { ascending: true })
+      .limit(8),
+    supabase
+      .from("materials")
+      .select("id, material_code, material_name, category, specs")
+      .or(
+        `material_code.ilike.${pattern},material_name.ilike.${pattern},category.ilike.${pattern},specs.ilike.${pattern}`
+      )
+      .order("material_code", { ascending: true })
       .limit(8),
     supabase
       .from("fba_replenishment_requests")
@@ -165,6 +183,7 @@ export async function searchGlobal(
 
   const productRows = (productResult.data ?? []) as ProductSearchRow[];
   const skuRows = (skuResult.data ?? []) as SkuSearchRow[];
+  const materialRows = (materialResult.data ?? []) as MaterialSearchRow[];
   const fbaRows = (fbaResult.data ?? []) as FbaSearchRow[];
   const productionRows = (productionResult.data ?? []) as ProductionSearchRow[];
   const purchaseRows = (purchaseResult.data ?? []) as PurchaseSearchRow[];
@@ -177,17 +196,21 @@ export async function searchGlobal(
     href: withKeyword("/admin/products", normalizedKeyword)
   }));
 
-  const skuResults: GlobalSearchResult[] = skuRows.map((sku) => {
-    const isMaterial = sku.sku_type === "material";
-
-    return {
+  const skuResults: GlobalSearchResult[] = skuRows.map((sku) => ({
       id: `sku-${sku.id}`,
-      type: isMaterial ? "原材料" : "产品/SKU",
+      type: "产品/SKU",
       title: `${sku.sku_code} / ${sku.sku_name}`,
-      description: isMaterial ? "原材料 SKU" : "SKU",
-      href: withKeyword(isMaterial ? "/admin/materials" : "/admin/skus", normalizedKeyword)
-    };
-  });
+      description: "SKU",
+      href: withKeyword("/admin/skus", normalizedKeyword)
+    }));
+
+  const materialResults: GlobalSearchResult[] = materialRows.map((material) => ({
+    id: `material-${material.id}`,
+    type: "辅料",
+    title: `${material.material_code} / ${material.material_name}`,
+    description: material.category ? `辅料 · ${material.category}` : "辅料",
+    href: withKeyword("/admin/materials", normalizedKeyword)
+  }));
 
   const documentResults: GlobalSearchResult[] = [
     ...fbaRows.map((row) => ({
@@ -217,6 +240,7 @@ export async function searchGlobal(
     ...menuResults.slice(0, 8),
     ...documentResults,
     ...productResults,
+    ...materialResults,
     ...skuResults
   ];
 }

@@ -20,7 +20,8 @@ export type MaterialRequirementRow = {
   id: string;
   production_order_id: string;
   replenishment_request_id: string | null;
-  material_sku_id: string;
+  material_sku_id: string | null;
+  material_id: string | null;
   required_quantity: number;
   available_quantity: number;
   shortage_quantity: number;
@@ -46,6 +47,14 @@ export type MaterialRequirementRow = {
     id: string;
     sku_code: string;
     sku_name: string;
+    specs: string | null;
+    unit: string;
+  } | null;
+  material: {
+    id: string;
+    material_code: string;
+    material_name: string;
+    specs: string | null;
     unit: string;
   } | null;
   bom_item: {
@@ -59,7 +68,7 @@ type MaybeRelation<T> = T | T[] | null;
 
 type RawMaterialRequirementRow = Omit<
   MaterialRequirementRow,
-  "production_order" | "material_sku" | "bom_item"
+  "production_order" | "material_sku" | "material" | "bom_item"
 > & {
   production_order: MaybeRelation<
     Omit<NonNullable<MaterialRequirementRow["production_order"]>, "finished_sku"> & {
@@ -71,11 +80,13 @@ type RawMaterialRequirementRow = Omit<
     }
   >;
   material_sku: MaybeRelation<NonNullable<MaterialRequirementRow["material_sku"]>>;
+  material: MaybeRelation<NonNullable<MaterialRequirementRow["material"]>>;
 };
 
 type BomItemLookupRow = {
   bom_header_id: string;
-  component_sku_id: string;
+  component_sku_id: string | null;
+  material_id: string | null;
   quantity_per: number;
   loss_rate: number;
   unit: string;
@@ -123,8 +134,14 @@ function normalizeMaterialRequirement(
 ): MaterialRequirementRow {
   const productionOrder = singleRelation(row.production_order);
   const materialSku = singleRelation(row.material_sku);
+  const material = singleRelation(row.material);
   const bomHeaderId = productionOrder?.bom_header_id ?? "";
-  const bomItemKey = `${bomHeaderId}:${row.material_sku_id}`;
+  const materialBomItemKey = row.material_id
+    ? `${bomHeaderId}:material:${row.material_id}`
+    : "";
+  const legacyBomItemKey = row.material_sku_id
+    ? `${bomHeaderId}:sku:${row.material_sku_id}`
+    : "";
 
   return {
     ...row,
@@ -135,7 +152,11 @@ function normalizeMaterialRequirement(
         }
       : null,
     material_sku: materialSku,
-    bom_item: bomItemMap.get(bomItemKey) ?? null
+    material,
+    bom_item:
+      bomItemMap.get(materialBomItemKey) ??
+      bomItemMap.get(legacyBomItemKey) ??
+      null
   };
 }
 
@@ -145,18 +166,20 @@ async function getBomItemMap(rows: RawMaterialRequirementRow[]) {
     rows.map((row) => singleRelation(row.production_order)?.bom_header_id)
   );
   const materialSkuIds = uniqueValues(rows.map((row) => row.material_sku_id));
+  const materialIds = uniqueValues(rows.map((row) => row.material_id));
   const bomItemMap = new Map<string, MaterialRequirementRow["bom_item"]>();
 
-  if (bomHeaderIds.length === 0 || materialSkuIds.length === 0) {
+  if (bomHeaderIds.length === 0) {
     return bomItemMap;
   }
 
   const { data, error } = await withTimeout(
     supabase
       .from("bom_items")
-      .select("bom_header_id, component_sku_id, quantity_per, loss_rate, unit")
-      .in("bom_header_id", bomHeaderIds)
-      .in("component_sku_id", materialSkuIds),
+      .select(
+        "bom_header_id, component_sku_id, material_id, quantity_per, loss_rate, unit"
+      )
+      .in("bom_header_id", bomHeaderIds),
     "读取物料需求对应的 BOM 明细"
   );
 
@@ -165,11 +188,22 @@ async function getBomItemMap(rows: RawMaterialRequirementRow[]) {
   }
 
   for (const item of (data ?? []) as BomItemLookupRow[]) {
-    bomItemMap.set(`${item.bom_header_id}:${item.component_sku_id}`, {
+    const bomItem = {
       quantity_per: item.quantity_per,
       loss_rate: item.loss_rate,
       unit: item.unit
-    });
+    };
+
+    if (item.material_id && materialIds.includes(item.material_id)) {
+      bomItemMap.set(`${item.bom_header_id}:material:${item.material_id}`, bomItem);
+    }
+
+    if (item.component_sku_id && materialSkuIds.includes(item.component_sku_id)) {
+      bomItemMap.set(
+        `${item.bom_header_id}:sku:${item.component_sku_id}`,
+        bomItem
+      );
+    }
   }
 
   return bomItemMap;
@@ -196,6 +230,7 @@ export async function getMaterialRequirements(options: {
         notes,
         created_at,
         updated_at,
+        material_id,
         production_order:production_orders!material_requirements_production_order_id_fkey (
           id,
           production_order_no,
@@ -212,6 +247,14 @@ export async function getMaterialRequirements(options: {
           id,
           sku_code,
           sku_name,
+          specs,
+          unit
+        ),
+        material:materials!material_requirements_material_id_fkey (
+          id,
+          material_code,
+          material_name,
+          specs,
           unit
         )
       `

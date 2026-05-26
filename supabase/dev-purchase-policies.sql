@@ -11,6 +11,7 @@ grant usage on schema public to anon, authenticated;
 grant select on public.material_requirements to anon, authenticated;
 grant select on public.purchase_orders to anon, authenticated;
 grant select on public.purchase_order_items to anon, authenticated;
+grant select on public.materials to anon, authenticated;
 grant select on public.suppliers to anon, authenticated;
 grant select on public.skus to anon, authenticated;
 grant select on public.production_orders to anon, authenticated;
@@ -28,6 +29,7 @@ grant update on public.material_requirements to anon, authenticated;
 alter table public.material_requirements enable row level security;
 alter table public.purchase_orders enable row level security;
 alter table public.purchase_order_items enable row level security;
+alter table public.materials enable row level security;
 alter table public.suppliers enable row level security;
 alter table public.skus enable row level security;
 alter table public.production_orders enable row level security;
@@ -41,6 +43,7 @@ drop policy if exists "dev purchase update purchase_orders" on public.purchase_o
 drop policy if exists "dev purchase read purchase_order_items" on public.purchase_order_items;
 drop policy if exists "dev purchase create purchase_order_items" on public.purchase_order_items;
 drop policy if exists "dev purchase update purchase_order_items" on public.purchase_order_items;
+drop policy if exists "dev purchase read materials" on public.materials;
 drop policy if exists "dev purchase read suppliers" on public.suppliers;
 drop policy if exists "dev purchase read skus" on public.skus;
 drop policy if exists "dev purchase read production_orders" on public.production_orders;
@@ -96,6 +99,12 @@ for update
 to anon, authenticated
 using (true)
 with check (true);
+
+create policy "dev purchase read materials"
+on public.materials
+for select
+to anon, authenticated
+using (true);
 
 create policy "dev purchase read suppliers"
 on public.suppliers

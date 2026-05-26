@@ -40,6 +40,18 @@ export type Sku = {
   updated_at: string;
 };
 
+export type Material = {
+  id: string;
+  material_code: string;
+  material_name: string;
+  category: string | null;
+  unit: string;
+  specs: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type Supplier = {
   id: string;
   supplier_code: string;
@@ -179,16 +191,15 @@ export async function getProductSkus(productId: string): Promise<Sku[]> {
   return data;
 }
 
-export async function getMaterialSkus(): Promise<Sku[]> {
+export async function getMaterials(): Promise<Material[]> {
   const supabase = getSupabaseClient();
-  const data = await fetchAllSupabaseRows<Sku>(
+  const data = await fetchAllSupabaseRows<Material>(
     () =>
       supabase
-      .from("skus")
+      .from("materials")
       .select("*")
-      .eq("sku_type", "material")
-      .order("sku_code", { ascending: true }),
-    "读取原材料 SKU 列表"
+      .order("material_code", { ascending: true }),
+    "读取辅料列表"
   );
 
   return data;

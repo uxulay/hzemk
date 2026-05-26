@@ -1,6 +1,6 @@
 # 项目进度说明
 
-最后整理日期：2026-05-25
+最后整理日期：2026-05-26
 
 本文档根据当前项目代码、页面路由、`src/lib/api`、`supabase` 目录、`schema.sql`、`seed.sql` 和已实现页面整理。后续 Codex 开发前请先阅读本文件。
 
@@ -41,9 +41,9 @@
 | `/replenishment/new` | 过渡提示页 | 当前引导到 `/replenishment` 创建整张 FBA 备货单，避免保留两套创建入口。 |
 | `/production/planning` | 已完成排产第一版 | 厂长查看已提交/已接单的 FBA 备货需求，可以按品牌筛选，可以接单、拒绝、创建生产任务。创建生产任务时会按 BOM 自动生成物料需求，并把 FBA 备货需求状态更新为 `in_production`。 |
 | `/production/orders` | 已完成跟踪和领料第一版 | 生产任务列表。显示品牌、FBA 备货需求数量、计划生产数量、超量生产数量、已入库数量、待入库数量、物料状态、领料状态、生产状态。支持按品牌筛选、查看详情、确认领料弹窗、自动扣原材料库存、写 `material_out` 库存流水，并把生产任务更新为 `in_progress`。 |
-| `/bom` | 已完成管理和批量维护第一版 | BOM 管理页面。读取 `bom_headers` 和 `bom_items`，显示成品 SKU 所属品牌，支持按品牌筛选、新增 BOM、查看明细、添加原材料、编辑 BOM 明细的单位用量/损耗率/备注、启用/停用 BOM、CSV 批量导入、删除明细、删除/批量删除或停用 BOM，并在删除前检查生产任务引用。 |
+| `/bom` | 已完成辅料拆表第二阶段 | BOM 管理页面。读取 `bom_headers` 和 `bom_items`，显示成品 SKU 所属品牌，支持按品牌筛选、新增 BOM、查看明细、添加辅料、编辑 BOM 明细的单位用量/损耗率/备注、启用/停用 BOM、CSV 批量导入、删除明细、删除/批量删除或停用 BOM，并在删除前检查生产任务引用。阶段二起 BOM 明细优先引用 `bom_items.material_id -> materials.id`，旧 `component_sku_id` 暂时保留用于兼容旧数据和生产算料过渡。 |
 | `/materials/requirements` | 已完成查询第一版 | 物料需求列表。读取 `material_requirements`，并回查 `bom_items` 显示 BOM 单位用量和损耗率。支持按状态筛选。当前是查询页，不直接新增、编辑、删除。 |
-| `/purchase/orders` | 已完成采购升级版 | 采购单页面。支持从缺料物料生成采购单、采购人员手动创建采购单、CSV 批量导入、CSV 导出、采购单 PNG 图片导出、列表分页、按供应商筛选、详情弹窗和状态按钮。手动选择辅料或从缺料生成采购单时，会根据 `skus.default_supplier_id` 自动带出默认供应商；不同默认供应商的缺料可按供应商拆分生成采购单。缺料生成仍会写入 `purchase_order_items.material_requirement_id` 并把对应物料需求状态更新为 `purchased`。实际库存入库建议走 `/inventory/inbound`。 |
+| `/purchase/orders` | 已完成辅料拆表第四阶段 | 采购单页面。支持从缺料物料生成采购单、采购人员手动创建采购单、CSV 批量导入、CSV 导出、采购单 PNG 图片导出、列表分页、按供应商筛选、详情弹窗和状态按钮。阶段四起采购明细优先写入 `purchase_order_items.material_id -> materials.id`，旧 `sku_id` 继续保留兼容历史数据和未迁移库存链路。手动选择辅料、批量导入和从缺料生成采购单都优先读取 `materials.default_supplier_id` 自动带出供应商；旧物料需求没有 `material_id` 时继续 fallback 到 `material_sku_id`。实际库存入库建议走 `/inventory/inbound`，库存结构第五阶段再迁移。 |
 | `/inventory/overview` | 已完成库存总览第一版 | 库存总览页面。复用当前库存查询组件，可按“全部 / 原材料 / 成品”切换查看当前库存，并从每行快速进入库存流水、库存调整、其他入库和其他出库。 |
 | `/inventory/inbound` | 已完成入库升级版 | 入库管理。分为采购入库、生产入库和其他入库。采购入库会写 `material_in` 库存流水、更新 `inventory_items`、采购明细到货数量、采购单状态和物料需求状态。生产入库会写 `product_in` 库存流水、更新成品库存、更新生产任务 `completed_quantity` 和状态。其他入库改为“新建其他入库单”弹窗，弹窗内可选择仓库和 SKU 单条录入，也可进入批量上传；支持通过 URL 参数 `tab=other`、`skuKeyword`、`warehouseId` 预填入口。 |
 | `/inventory/fba-outbound` | 已完成出库管理升级版 | 出库管理。路径暂时仍为 `/inventory/fba-outbound`，页面和导航名称改为“出库管理”。页面分为 FBA 出库和其他出库：FBA 出库继续关联 FBA 备货需求并在完成后更新备货状态；其他出库改为“新建其他出库单”弹窗，弹窗内可选择仓库和 SKU 单条录入，也可进入批量上传；支持通过 URL 参数 `tab=other`、`skuKeyword`、`warehouseId` 预填入口。 |
@@ -54,8 +54,8 @@
 | `/admin/brands` | 已完成管理和批量维护第一版 | 品牌基础资料管理页面。读取 `brands` 和 `products`，支持品牌列表、搜索、状态筛选、汇总卡片、新增品牌、编辑品牌、查看品牌详情、启用/停用、CSV 批量导入、删除/批量删除或停用，并在删除前检查产品引用。 |
 | `/admin/products` | 已完成管理和批量维护第一版 | 产品基础资料管理页面。读取 `products`、`brands` 和 `skus`，支持产品列表显示品牌、搜索、品牌筛选、状态筛选、汇总卡片、新增产品选择品牌、编辑产品修改品牌、启用/停用产品、查看产品关联 SKU、CSV 批量导入品牌字段、删除/批量删除或停用，并在删除前检查 SKU 引用。 |
 | `/admin/skus` | 已完成管理和批量维护第一版 | SKU 基础资料管理页面。读取 `skus`、`products`、`brands`、`suppliers`、`inventory_items`、`bom_headers`、`bom_items`，品牌通过 SKU 所属产品继承，不在 SKU 表重复保存。material 类型 SKU 可显示和编辑默认供应商，成品和半成品可保持为空。页面支持 SKU 列表显示品牌、默认供应商、按品牌筛选、搜索筛选、汇总卡片、新增 SKU、编辑 SKU、启用/停用 SKU、查看库存入口、查看 BOM/详情关联、CSV 批量导入、删除/批量删除或停用，并在删除前检查 BOM、FBA、生产、采购、库存和库存流水引用。 |
-| `/admin/materials` | 已完成管理和批量维护第一版 | 辅料管理页面。直接读取 `skus.sku_type = material` 的辅料资料，支持维护默认供应商、按供应商筛选、搜索筛选、汇总卡片、新增辅料、编辑辅料、启用/停用、查看库存/BOM/采购/流水详情、CSV 批量导入、删除/批量删除或停用，并在删除前检查 BOM、物料需求、采购、库存和库存流水引用。 |
-| `/admin/suppliers` | 已完成管理和批量维护第一版 | 供应商基础资料管理页面。读取 `suppliers`、`skus.default_supplier_id` 和 `purchase_orders`，支持供应商列表、搜索、状态筛选、汇总卡片、新增供应商、编辑供应商、启用/停用供应商、查看关联辅料和关联采购单、CSV 批量导入、删除/批量删除或停用，并在删除前检查采购单引用和辅料默认供应商引用。 |
+| `/admin/materials` | 已完成独立辅料表和采购引用统计 | 辅料管理页面。阶段一改为直接读取新的 `materials` 表，支持维护辅料编码、名称、分类、单位、规格、默认供应商、状态、备注，支持按供应商筛选、搜索筛选、汇总卡片、新增辅料、编辑辅料、启用/停用和 CSV 批量导入。BOM、物料需求、采购统计优先读取对应表里的 `material_id`，旧 SKU 字段只作为历史 fallback。库存统计暂时仍按同编码旧 SKU 兼容，库存结构第五阶段再迁移。 |
+| `/admin/suppliers` | 已完成管理和批量维护第一版 | 供应商基础资料管理页面。读取 `suppliers`、`materials.default_supplier_id` 和 `purchase_orders`，支持供应商列表、搜索、状态筛选、汇总卡片、新增供应商、编辑供应商、启用/停用供应商、查看关联辅料和关联采购单、CSV 批量导入、删除/批量删除或停用，并在删除前检查采购单引用和辅料默认供应商引用。 |
 | `/admin/warehouses` | 已完成管理和批量维护第一版 | 仓库基础资料管理页面。读取 `warehouses`、`inventory_items`、`inventory_transactions` 和 `skus`，支持仓库列表、搜索筛选、汇总卡片、新增仓库、编辑仓库、启用/停用仓库、查看仓库库存、跳转查看流水、CSV 批量导入、删除/批量删除或停用，并在删除前检查库存、流水、FBA 备货和采购单引用。 |
 | `/admin/users` | 已完成管理第一版 | 用户管理页面。读取 `profiles` 和 `roles`，支持用户资料列表、搜索筛选、汇总卡片、新增/编辑 profiles、启用/停用用户、分配角色，并只读展示角色列表。当前不创建 Supabase Auth 登录账号。 |
 
@@ -443,7 +443,184 @@
 - 已运行 `npm run build`，通过。
 - 用户要求不要自动打开浏览器检查，所以本次不做浏览器自动检查。
 
-### 3.4.2 首页角色待办中心（2026-05-25）
+### 3.4.2 辅料数据模型阶段一拆表（2026-05-26）
+
+本次按阶段一把辅料基础资料从 `skus` 拆到独立 `materials` 表。旧 `skus` 里的原辅料数据不删除，BOM、采购、生产、库存仍然先走旧 SKU 引用，避免一次性牵动业务流程。
+
+当前逻辑：
+
+- 新增 `materials` 表，字段为 `material_code`、`material_name`、`category`、`unit`、`specs`、`default_supplier_id`、`status`、`notes`、`created_at`、`updated_at`。
+- 新增 `trg_materials_updated_at`，更新辅料时自动刷新 `updated_at`。
+- 新增脚本 `scripts/add-materials-table.sql`，会创建 `materials` 表，并把现有 `skus.sku_type = material` 的资料复制过去：`sku_code -> material_code`、`sku_name -> material_name`、`unit -> unit`、`specs -> specs`、`default_supplier_id -> default_supplier_id`、`status -> status`。
+- `/admin/materials` 和 `src/lib/api/materials.ts` 已改为读取、创建、编辑、启用/停用、批量导入 `materials` 表。
+- `/admin/materials` 批量导入模板新增 `分类`、`备注`，也兼容 `material_code`、`material_name`、`category`、`notes` 等英文表头。
+- 阶段一暂不迁移 BOM、采购、生产、库存引用；页面里的库存数量、BOM 引用、采购引用和详情记录先按 0 或空记录展示。
+- 阶段一暂不做辅料物理删除，页面删除入口会提示先停用，等业务引用迁移完成后再统一定删除规则。
+
+本次修改文件：
+
+- `scripts/add-materials-table.sql`
+- `supabase/schema.sql`
+- `src/lib/api/materials.ts`
+- `src/app/(app)/admin/materials/page.tsx`
+- `PROJECT_NOTES.md`
+
+本次验证：
+
+- 已运行 `npm run typecheck`，通过。
+- 已运行 `npm run build`，通过。
+
+第二阶段建议：
+
+- 把 BOM 明细从 `bom_items.component_sku_id -> skus.id` 迁到可引用 `materials.id` 的新关系，或新增过渡映射字段。
+- 把 `material_requirements.material_sku_id` 的来源从旧 `skus` 逐步切到 `materials`。
+- 把 `purchase_order_items.sku_id` 和采购单辅料选择改成读取 `materials`。
+- 把 `inventory_items`、`inventory_transactions`、入库、出库、库存调整里的原材料维度从旧 SKU 迁到 `materials`。
+- 同步调整 `/admin/skus`、`/admin/suppliers`、`/dashboard`、全局搜索等仍读取旧辅料信息的页面。
+
+### 3.4.3 辅料数据模型第二阶段：BOM 明细接 materials（2026-05-26）
+
+本次继续辅料拆表重构，只处理 BOM 明细和生产算料兼容，不改采购、库存、出入库主流程，也不删除旧 `skus.sku_type = material` 数据。
+
+当前逻辑：
+
+- `bom_items` 新增 `material_id uuid references materials(id) on delete restrict`，并新增索引 `idx_bom_items_material_id`。
+- 旧字段 `bom_items.component_sku_id` 保留，注释改为兼容旧数据字段；阶段二后 BOM 辅料优先使用 `material_id`。
+- 新增脚本 `scripts/migrate-bom-items-to-materials.sql`，会按 `skus.sku_code = materials.material_code` 把旧 BOM 明细回填到 `bom_items.material_id`，最后查询仍未匹配到 `material_id` 的 BOM 明细，方便人工检查。
+- `/bom` 页面添加 BOM 明细时，选择器改为读取 `materials` 表；页面文案从“原材料 SKU”调整为“辅料”。
+- BOM 明细列表优先显示 `materials.material_code`、`material_name`、`specs`、`unit`；旧数据如果还没有 `material_id`，继续 fallback 显示旧 `component_sku_id -> skus`。
+- BOM 批量导入改为按 `materials.material_code` 校验和写入 `material_id`；旧表头 `material_sku_code` 仍兼容。
+- 生产自动算料已做过渡兼容：BOM 明细有 `material_id` 时优先按新辅料取单位和说明；因为 `material_requirements` 还没迁移，写入时仍会用同编码旧 SKU 作为过渡。找不到同编码旧 SKU 时会明确报错，避免写错库存链路。
+- 开发阶段 RLS 文件 `supabase/dev-bom-policies.sql` 和基础读取策略 `supabase/dev-policies.sql` 已补充 `materials` 的读取权限。
+
+本次修改文件：
+
+- `scripts/migrate-bom-items-to-materials.sql`
+- `supabase/schema.sql`
+- `supabase/dev-bom-policies.sql`
+- `supabase/dev-policies.sql`
+- `src/lib/api/bom.ts`
+- `src/app/(app)/bom/page.tsx`
+- `src/lib/api/bulk-management.ts`
+- `src/lib/api/production.ts`
+- `PROJECT_NOTES.md`
+
+本次验证：
+
+- 已运行 `npm run typecheck`，通过。
+- 已运行 `npm run build`，通过。
+
+第三阶段已完成：见下一节“辅料数据模型第三阶段：物料需求接 materials”。
+
+### 3.4.4 辅料数据模型第三阶段：物料需求接 materials（2026-05-26）
+
+本次继续辅料拆表重构，只处理物料需求链路，不改采购单结构，不改库存结构，不删除旧 `material_sku_id`，也不删除旧 `skus.sku_type = material` 数据。
+
+当前逻辑：
+
+- `material_requirements` 新增 `material_id uuid references public.materials(id) on delete restrict`，并新增索引 `idx_material_requirements_material_id`。
+- 旧字段 `material_requirements.material_sku_id` 保留，注释改为兼容旧数据字段；阶段三起辅料需求优先使用 `material_id`。
+- 新增脚本 `scripts/migrate-material-requirements-to-materials.sql`，会按 `material_requirements.material_sku_id -> skus.sku_code -> materials.material_code` 回填 `material_requirements.material_id`，最后查询仍未匹配到 `material_id` 的物料需求，方便人工检查。
+- 生产任务创建时，读取 BOM 明细优先使用 `bom_items.material_id`，生成物料需求时写入 `material_requirements.material_id`。
+- 如果旧 BOM 明细只有 `component_sku_id`，仍会 fallback 到旧 SKU 逻辑；如果能按旧 SKU 编码匹配到 `materials.material_code`，也会顺手写入 `material_id`。
+- 物料需求数量算法保持不变：计划数量 × BOM 单位用量 × (1 + 损耗率)。
+- 当前库存结构还没迁移，所以可用库存仍按旧 `inventory_items.sku_id` 计算。新辅料如果没有同编码旧 SKU，物料需求会显示缺料，领料会提示等待库存链路迁移或补齐同编码旧 SKU。
+- `/materials/requirements` 列表和详情优先显示 `materials.material_code`、`material_name`、`specs`、`unit`，旧历史数据继续 fallback 显示旧 `material_sku_id -> skus`。
+- `/production/orders` 生产任务详情里的物料需求摘要和领料预览优先显示新辅料信息；领料状态、缺料状态继续沿用现有判断。
+- `/dashboard` 和通知来源的缺料待办优先显示新辅料信息；未设置默认供应商、停用供应商引用等辅料异常统计改为基于 `materials` 表。
+- `/admin/materials` 的引用统计补充“物料需求引用次数”，统计时优先看 `material_requirements.material_id`，旧 `material_sku_id` 只作为历史 fallback。
+
+本次修改文件：
+
+- `scripts/migrate-material-requirements-to-materials.sql`
+- `supabase/schema.sql`
+- `supabase/dev-material-requirements-policies.sql`
+- `supabase/dev-production-orders-policies.sql`
+- `src/lib/api/production.ts`
+- `src/lib/api/material-requirements.ts`
+- `src/lib/api/materials.ts`
+- `src/lib/api/dashboard.ts`
+- `src/app/(app)/materials/requirements/page.tsx`
+- `src/app/(app)/production/orders/page.tsx`
+- `src/app/(app)/admin/materials/page.tsx`
+- `PROJECT_NOTES.md`
+
+本次验证：
+
+- 已运行 `npm run typecheck`，通过。
+- 已运行 `npm run build`，通过。
+- 按用户要求，本阶段不自动打开浏览器检查。
+
+第四阶段采购重构清单（已完成）：
+
+- 已给 `purchase_order_items` 增加 `material_id`，并新增索引 `idx_purchase_order_items_material_id`；旧 `sku_id` 保留为兼容字段。
+- 已新增 `scripts/migrate-purchase-items-to-materials.sql`，先按 `material_requirement_id -> material_requirements.material_id` 回填，再按旧 `sku_id -> skus.sku_code -> materials.material_code` 回填，最后输出仍未匹配的采购明细。
+- `/purchase/orders` 的缺料生成采购单优先读取 `material_requirements.material_id` 和 `materials.default_supplier_id`，旧 `material_sku_id` 只作为 fallback。
+- 手动创建采购单和批量导入采购单的辅料选择已改为读取 `materials` 表；导入模板主字段为 `material_code`，兼容旧 `material_sku_code` / `sku_code` 表头。
+- 采购单详情、CSV/PNG 导出、供应商拆单和到货状态更新继续保留 `purchase_order_items.material_requirement_id` 的追溯关系。
+- 本阶段不改库存结构；新采购明细会尽量保留同编码旧 `sku_id`，方便第五阶段前的旧库存入库链路继续过渡。
+
+### 3.4.5 辅料数据模型第四阶段：采购链路接 materials（2026-05-26）
+
+本次继续辅料拆表重构，只处理采购链路，不改库存结构，不改出入库结构，不删除 `purchase_order_items.sku_id`，也不删除旧 `skus.sku_type = material` 数据。
+
+当前逻辑：
+
+- `purchase_order_items` 新增 `material_id uuid references public.materials(id) on delete restrict`，并新增索引 `idx_purchase_order_items_material_id`。
+- 旧字段 `purchase_order_items.sku_id` 保留，注释改为兼容旧数据字段；阶段四起采购明细优先使用 `material_id`。
+- 新增脚本 `scripts/migrate-purchase-items-to-materials.sql`，会优先从已关联的 `material_requirements.material_id` 回填采购明细；如果没有，再按旧 SKU 编码匹配 `materials.material_code`。
+- `/purchase/orders` 手动创建采购单的辅料选择器改为读取 `materials` 表；保存采购明细时写入 `material_id`，如果存在同编码旧 SKU，也同步写入旧 `sku_id` 作为库存阶段前的兼容。
+- `/purchase/orders` 从缺料生成采购单时，基于 `material_requirements.material_id` 写采购明细，并按 `materials.default_supplier_id` 自动带出或拆分供应商；旧物料需求没有 `material_id` 时继续 fallback 到 `material_sku_id`。
+- 采购单详情、CSV 导出和 PNG 采购单图片优先显示 `material_code`、`material_name`、`specs`、`unit`；旧数据没有 `material_id` 时继续 fallback 显示旧 SKU 信息。
+- 批量导入采购单模板主字段改为 `material_code` / 辅料编码，仍兼容旧 `material_sku_code` 和 `sku_code` 表头；导入时优先匹配 `materials.material_code`。
+- `/admin/suppliers` 关联辅料数量和详情改为读取 `materials.default_supplier_id`；删除保护仍兼容旧 `skus.default_supplier_id`，避免旧引用被误删。
+- `/admin/materials` 的采购引用统计和详情采购记录优先读取 `purchase_order_items.material_id`，旧 `sku_id` 只作为历史 fallback。
+
+本次修改文件：
+
+- `scripts/migrate-purchase-items-to-materials.sql`
+- `supabase/schema.sql`
+- `supabase/dev-purchase-policies.sql`
+- `supabase/dev-suppliers-policies.sql`
+- `src/lib/api/purchase.ts`
+- `src/app/(app)/purchase/orders/page.tsx`
+- `src/lib/api/materials.ts`
+- `src/lib/api/suppliers.ts`
+- `src/lib/api/bulk-management.ts`
+- `PROJECT_NOTES.md`
+
+本次验证：
+
+- 已运行 `npm run typecheck`，通过。
+- 已运行 `npm run build`，通过。
+- 按用户要求，本阶段不自动打开浏览器检查。
+
+第五阶段库存重构清单：
+
+- 已完成数据库结构规划和代码接入：`inventory_items`、`inventory_transactions` 新增 `product_sku_id`、`material_id`，旧 `sku_id` 保留兼容。
+- 已新增 `scripts/migrate-inventory-to-materials.sql`，按旧 `sku_id -> skus.sku_code -> materials.material_code` 回填辅料 `material_id`，成品回填 `product_sku_id = sku_id`，并输出仍未匹配的库存余额和库存流水。
+- `/inventory/materials` 现在优先读取 `materials + inventory_items.material_id`，显示辅料编码、名称、规格、默认供应商和库存数量；旧库存未迁移时继续 fallback 到旧 SKU。
+- `/inventory/products` 现在优先读取 `skus + inventory_items.product_sku_id`，旧数据没有新字段时继续 fallback 到 `sku_id`。
+- 采购入库优先按 `purchase_order_items.material_id` 写辅料库存和 `material_in` 流水；生产入库、FBA 出库继续按成品 SKU 写 `product_sku_id`。
+- 其他入库、其他出库、库存调整、库存流水筛选已经支持成品 SKU 和辅料两种库存对象；写入时尽量同步旧 `sku_id`，但业务判断优先使用新字段。
+- 生产领料已改为优先按 `material_requirements.material_id` 找 `inventory_items.material_id` 扣库存，旧需求没有 `material_id` 时继续 fallback 到旧 `material_sku_id`。
+- `/dashboard` 的低库存辅料提醒改为优先显示 `materials` 信息；global search 搜索辅料改为读取 `materials` 表，成品 SKU 仍读取 `skus` 表。
+- 第五阶段仍不要删除旧 SKU 辅料；因为 `inventory_items.sku_id` 和 `inventory_transactions.sku_id` 目前仍是非空字段，后续清理前要先评估是否把旧字段改为可空，并确认所有历史数据都已迁移。
+
+本阶段验证：
+
+- 已运行 `npm run typecheck`，通过。
+- 已运行 `npm run build`，通过。
+- 尚未自动打开浏览器逐页手动操作。上线前建议按顺序人工检查：辅料库存列表、成品库存列表、采购入库、生产入库、生产领料、FBA 出库、其他入库、其他出库、库存调整、库存流水。
+
+剩余旧字段清理计划：
+
+- 第一步：在测试库执行 `scripts/migrate-inventory-to-materials.sql`，先处理脚本输出的未匹配余额和流水。
+- 第二步：观察一段时间，确认新增库存写入都稳定写入 `material_id` 或 `product_sku_id`。
+- 第三步：把批量库存 RPC 也升级到新字段，避免批量导入还只依赖旧 `sku_id`。
+- 第四步：确认没有页面再依赖旧辅料 SKU 后，再单独讨论是否把 `inventory_items.sku_id`、`inventory_transactions.sku_id` 改为可空或只做历史字段；此阶段不删除旧字段、不删旧数据。
+
+### 3.4.6 首页角色待办中心（2026-05-25）
 
 本次把 `/dashboard` 从“统计数字看板”升级为“员工每天进系统先看的待办中心”，没有修改数据库 schema，没有修改 RLS，没有改真实登录，也没有大改导航。
 
@@ -652,18 +829,18 @@
 
 ### 4.4 BOM 自动计算物料需求
 
-已完成第一版。
+已完成辅料拆表第三阶段。
 
 入口：创建生产任务时自动触发。
 
 当前逻辑：
 
 - 根据生产任务的成品 SKU 查找启用中的 `bom_headers`。
-- 读取对应 `bom_items`。
+- 读取对应 `bom_items`，优先使用 `bom_items.material_id`。
 - 按 `production_orders.planned_quantity` 计算物料需求，而不是按 FBA 备货需求数量计算。
 - 计算公式：计划生产数量 × BOM 单位用量 × (1 + 损耗率)。
-- 读取 `inventory_items`，按 `quantity_on_hand - reserved_quantity` 计算可用库存。
-- 写入 `material_requirements`。
+- 读取 `inventory_items`，按 `quantity_on_hand - reserved_quantity` 计算可用库存；库存结构尚未迁移，所以这里仍通过旧 `material_sku_id` 查库存。
+- 写入 `material_requirements`，优先写入 `material_id`，旧 `material_sku_id` 继续保留做采购和库存过渡兼容。
 - 缺料时状态为 `shortage`，库存足够时当前代码会写 `enough`。
 - 如果没有启用 BOM 或 BOM 明细为空，会直接报错，不会静默跳过。
 - 如果该生产任务已经有物料需求，会停止生成，避免重复写入。
@@ -768,14 +945,14 @@
 - 厂长在生产任务页面点击“确认领料”，不需要手动输入领料数量。
 - 系统读取该生产任务已经生成的 `material_requirements`，按 `required_quantity` 作为应领数量。
 - 领料状态优先通过 `inventory_transactions` 判断：同一生产任务只要已经存在 `transaction_type = material_out` 且 `production_order_id = production_orders.id` 的流水，就视为已领料。
-- 确认前会弹出领料清单，显示生产任务单号、成品 SKU、计划生产数量、原材料 SKU、原材料名称、应领数量、当前库存、领料后库存、扣减仓库和足够/不足状态。
+- 确认前会弹出领料清单，显示生产任务单号、成品 SKU、计划生产数量、辅料编码、辅料名称、应领数量、当前库存、领料后库存、扣减仓库和足够/不足状态。
 - 库存足够判断使用 `inventory_items.quantity_on_hand - inventory_items.reserved_quantity` 作为可用库存。
 - 扣库存时按真实字段使用 `inventory_items.warehouse_id + sku_id` 的库存记录。优先选择 `warehouse_type = material` 的原材料仓；如果没有明确原材料仓，则选择第一条单仓可用库存足够的库存记录。
 - 第一版不跨仓扣料。如果所有仓库合计够，但没有单个仓库够扣，会提示先手动调整仓库库存。
 - 确认领料时会再次检查是否已经有 `material_out` 流水，防止重复扣料。
 - 确认领料时会再次读取库存，防止页面打开后库存发生变化。
-- 每一种原材料都会扣减对应 `inventory_items.quantity_on_hand`。
-- 每一种原材料都会写一条 `inventory_transactions`，`transaction_type = material_out`，`quantity` 按现有出库逻辑继续记录正数，并通过 `production_order_id` 关联生产任务。
+- 每一种辅料都会扣减对应旧 SKU 的 `inventory_items.quantity_on_hand`。如果新辅料还没有同编码旧 SKU，当前阶段不会强行扣库存。
+- 每一种辅料都会写一条 `inventory_transactions`，`transaction_type = material_out`，`quantity` 按现有出库逻辑继续记录正数，并通过 `production_order_id` 关联生产任务。
 - 领料成功后，`production_orders.status` 更新为 `in_progress`。
 - 领料成功后，`material_requirements.status` 更新为 `issued`。真实 schema 中 `status` 是 `text`，没有额外枚举限制，所以当前可以写入 `issued`。
 
@@ -999,15 +1176,14 @@ FBA 出库：
 
 - 页面读取真实 `bom_headers` 和 `bom_items`，不再使用占位页或 mock 数据。
 - BOM 主表通过 `bom_headers.product_sku_id` 关联成品 SKU。
-- BOM 明细通过 `bom_items.bom_header_id` 关联 BOM 主表，通过 `bom_items.component_sku_id` 关联原材料 SKU。
+- BOM 明细通过 `bom_items.bom_header_id` 关联 BOM 主表；阶段二起辅料优先通过 `bom_items.material_id -> materials.id` 关联，旧 `component_sku_id` 暂时保留兼容历史数据。
 - 新增 BOM 时，成品 SKU 下拉框只读取 `skus.sku_type = finished_good` 的 SKU。
 - 新增 BOM 会自动生成 `bom_code`，写入 `bom_headers.product_sku_id`、`version`、`status`、`notes`。
 - 如果同一个成品 SKU 已有启用 BOM，页面会在新增启用 BOM 前显示提示。
-- 添加 BOM 原材料时，原材料下拉框只读取 `skus.sku_type = material` 的 SKU。
-- 添加 BOM 原材料会写入 `bom_items.component_sku_id`、`quantity_per`、`unit`、`loss_rate`、`notes`。
+- 添加 BOM 辅料时，辅料选择器读取 `materials` 表。
+- 添加 BOM 辅料会写入 `bom_items.material_id`、`quantity_per`、`unit`、`loss_rate`、`notes`；如果能按 `materials.material_code = skus.sku_code` 找到旧辅料 SKU，也会同步写入 `component_sku_id` 作为过渡兼容。
 - 页面会校验单位用量必须大于 0，损耗率不能小于 0。
-- 页面和 API 都会阻止把非 `material` SKU 加入 BOM，避免把成品 SKU 当成原材料。
-- 页面和 API 都会检查同一个 BOM 下不能重复添加同一个原材料 SKU。
+- 页面和 API 都会检查同一个 BOM 下不能重复添加同一个辅料。
 - BOM 明细支持编辑 `quantity_per`、`loss_rate` 和 `notes`，保存后刷新当前 BOM 明细。
 - BOM 启用/停用使用 `bom_headers.status`，启用为 `active`，停用为 `inactive`。
 - BOM 主表编辑按钮当前只是预留，暂不做删除。
@@ -1016,8 +1192,12 @@ FBA 出库：
 
 - `src/lib/api/bom.ts`
 - `src/app/(app)/bom/page.tsx`
-- `src/app/globals.css`
+- `src/lib/api/bulk-management.ts`
+- `src/lib/api/production.ts`
+- `supabase/schema.sql`
 - `supabase/dev-bom-policies.sql`
+- `supabase/dev-policies.sql`
+- `scripts/migrate-bom-items-to-materials.sql`
 - `PROJECT_NOTES.md`
 
 测试方式：
@@ -1026,7 +1206,7 @@ FBA 出库：
 - 运行 `npm run build`。
 - 打开 `/bom`，确认 BOM 列表能读取真实数据。
 - 新增一个 BOM，确认写入 `bom_headers`。
-- 查看 BOM 明细，添加一个原材料，确认写入 `bom_items`。
+- 查看 BOM 明细，添加一个辅料，确认写入 `bom_items.material_id`。
 - 编辑 BOM 明细的单位用量、损耗率、备注，确认保存后页面刷新。
 - 点击启用/停用，确认 `bom_headers.status` 变化。
 
@@ -1036,7 +1216,9 @@ FBA 出库：
 - Supabase 里是否已经执行基础 `dev-policies.sql`。
 - 如果写入 BOM 报 RLS 权限问题，请在 Supabase SQL Editor 执行 `supabase/dev-bom-policies.sql`。
 - `skus` 表里是否真的有 `sku_type = finished_good` 的成品 SKU 和 `sku_type = material` 的原材料 SKU。
-- `bom_headers.product_sku_id` 和 `bom_items.component_sku_id` 是否关联真实存在的 `skus.id`。
+- 是否已经执行 `scripts/add-materials-table.sql` 和 `scripts/migrate-bom-items-to-materials.sql`。
+- `bom_headers.product_sku_id` 是否关联真实存在的成品 `skus.id`。
+- `bom_items.material_id` 是否关联真实存在的 `materials.id`；旧数据没有迁移时再检查 `component_sku_id` 是否关联旧 `skus.id`。
 
 后续待优化：
 
@@ -1553,17 +1735,17 @@ RLS 策略：
 | `schema.sql` | 数据库建表文件。定义角色、用户资料、品牌、产品、SKU、供应商、仓库、BOM、FBA 备货需求、生产任务、物料需求、采购单、库存当前表、库存流水表等。 |
 | `seed.sql` | 测试数据文件。插入开发阶段测试角色、仓库、供应商、产品、SKU、BOM、库存、FBA 备货需求、生产任务、物料需求、采购单和库存流水。 |
 | `README.md` | Supabase 数据库结构说明，解释为什么本系统不是传统销售订单系统，以及主要表关系。 |
-| `dev-policies.sql` | 开发阶段基础读取策略。主要给 `anon` 和 `authenticated` 开放 select，方便调试基础资料和页面读取。 |
+| `dev-policies.sql` | 开发阶段基础读取策略。主要给 `anon` 和 `authenticated` 开放 select，方便调试基础资料和页面读取，已包含 `materials` 读取。 |
 | `dev-fba-replenishment-insert-policy.sql` | 开发阶段允许前端创建 FBA 备货需求，用于 `/replenishment/new`。 |
 | `dev-production-planning-policies.sql` | 开发阶段允许厂长排产页面更新 FBA 备货需求状态、创建生产任务。 |
 | `dev-material-requirements-policies.sql` | 开发阶段允许读取、创建、更新物料需求，支持创建生产任务后自动生成物料需求和物料需求列表页。 |
-| `dev-bom-policies.sql` | 开发阶段允许 BOM 管理页面读取产品/SKU/BOM，并新增或更新 BOM 主表和 BOM 明细。不开放 delete。 |
+| `dev-bom-policies.sql` | 开发阶段允许 BOM 管理页面读取产品、SKU、辅料、BOM 主表和 BOM 明细，并新增或更新 BOM。不开放 delete。 |
 | `dev-products-policies.sql` | 开发阶段允许产品管理页面读取产品和 SKU，并新增、编辑、启用/停用产品。不开放 delete。 |
 | `dev-skus-policies.sql` | 开发阶段允许 SKU 管理页面读取产品、SKU、库存、BOM 关联，并新增、编辑、启用/停用 SKU。不开放 delete。 |
-| `dev-suppliers-policies.sql` | 开发阶段允许供应商管理页面读取供应商和采购单，并新增、编辑、启用/停用供应商。不开放 delete。 |
+| `dev-suppliers-policies.sql` | 开发阶段允许供应商管理页面读取供应商、采购单和默认供应辅料，并新增、编辑、启用/停用供应商。不开放 delete。 |
 | `dev-warehouses-policies.sql` | 开发阶段允许仓库管理页面读取仓库、库存、流水和 SKU，并新增、编辑、启用/停用仓库。不开放 delete。 |
 | `dev-users-policies.sql` | 开发阶段允许用户管理页面读取 roles、profiles，并新增、编辑、启用/停用 profiles。不开放 delete，也不创建 Supabase Auth 账号。 |
-| `dev-purchase-policies.sql` | 开发阶段允许采购页面读取缺料、创建采购单、写采购明细、更新采购单和物料需求状态。 |
+| `dev-purchase-policies.sql` | 开发阶段允许采购页面读取缺料、辅料、创建采购单、写采购明细、更新采购单和物料需求状态。 |
 | `dev-inventory-inbound-policies.sql` | 开发阶段允许入库页面写库存流水、更新当前库存、更新采购单/采购明细/物料需求/生产任务。 |
 | `dev-fba-outbound-policies.sql` | 开发阶段允许 FBA 出库页面读取待出库需求、写出库流水、扣减成品库存、标记已发往 FBA。 |
 | `dev-production-orders-policies.sql` | 开发阶段允许生产任务页面读取生产任务、物料需求、入库流水，并更新生产任务状态。 |
@@ -1571,6 +1753,11 @@ RLS 策略：
 | `dev-inventory-adjustment-policies.sql` | 开发阶段允许库存调整页面读取当前库存和调整流水、更新当前库存、写入 adjustment 流水。不开放删除，也不开放直接修改库存流水。 |
 | `dev-bulk-import-delete-policies.sql` | 开发阶段允许产品、SKU、供应商、仓库、BOM 做批量导入、停用和受保护删除；业务流水和库存流水只开放读取用于删除保护检查，不开放 delete。 |
 | `scripts/add-brands.sql` | 品牌功能迁移脚本。创建 `brands` 表，给 `products` 增加可空 `brand_id`，并附带开发阶段 RLS 策略。 |
+| `scripts/add-materials-table.sql` | 辅料拆表阶段一脚本。创建 `materials` 表，把旧 `skus.sku_type = material` 的辅料资料复制到新表，并附带开发阶段 RLS 策略。 |
+| `scripts/migrate-bom-items-to-materials.sql` | 辅料拆表阶段二脚本。给 `bom_items` 增加 `material_id`，按旧 SKU 编码回填新辅料 ID，并输出仍未匹配的 BOM 明细。 |
+| `scripts/migrate-material-requirements-to-materials.sql` | 辅料拆表阶段三脚本。给 `material_requirements` 增加 `material_id`，按旧 SKU 编码回填新辅料 ID，并输出仍未匹配的物料需求。 |
+| `scripts/migrate-purchase-items-to-materials.sql` | 辅料拆表阶段四脚本。给 `purchase_order_items` 增加 `material_id`，优先从物料需求回填，再按旧 SKU 编码匹配新辅料，并输出仍未匹配的采购明细。 |
+| `scripts/migrate-inventory-to-materials.sql` | 辅料拆表阶段五脚本。给库存余额和库存流水补充 `product_sku_id`、`material_id`，按旧 SKU 编码回填新辅料引用，并输出未匹配的库存余额和流水。 |
 
 重要提醒：
 
@@ -1591,17 +1778,18 @@ RLS 策略：
 | `brands` | 品牌基础资料表。品牌属于产品 SPU，不直接挂在 SKU 或业务单据上。 |
 | `products` | 产品基础资料表，是 SKU、BOM、库存的上层产品归类。通过可空字段 `brand_id` 关联品牌。 |
 | `skus` | SKU 表，保存成品 SKU、原材料 SKU、半成品 SKU。通过 `sku_type` 区分类型。当前代码里成品 SKU 主要按 `finished_good` 使用；SKU 不单独存品牌。 |
+| `materials` | 辅料基础资料表。阶段一给 `/admin/materials` 使用；阶段二起 BOM 明细优先通过 `bom_items.material_id` 引用它；阶段三起物料需求优先通过 `material_requirements.material_id` 引用它；阶段四起采购明细优先通过 `purchase_order_items.material_id` 引用它。旧 `skus.sku_type = material` 数据仍保留，库存引用后续阶段再迁移。 |
 | `suppliers` | 供应商表，给采购单使用。 |
 | `warehouses` | 仓库表，保存原材料仓、成品仓、FBA 备发仓等。通过 `warehouse_type` 区分类型。 |
 | `bom_headers` | BOM 主表，表示某个成品 SKU 的某个 BOM 版本。 |
-| `bom_items` | BOM 明细表，表示生产 1 个成品需要哪些原材料或半成品，以及单位用量和损耗率。 |
+| `bom_items` | BOM 明细表，表示生产 1 个成品需要哪些辅料或半成品，以及单位用量和损耗率。阶段二新增 `material_id` 引用 `materials`，旧 `component_sku_id` 保留兼容旧数据。 |
 | `fba_replenishment_requests` | FBA 备货需求表。运营发起的内部备货生产需求，不是销售订单。 |
 | `production_orders` | 生产任务表。厂长根据 FBA 备货需求创建和安排生产。 |
-| `material_requirements` | 物料需求表。根据生产任务和 BOM 计算需要多少物料、库存够不够、缺多少。 |
+| `material_requirements` | 物料需求表。根据生产任务和 BOM 计算需要多少物料、库存够不够、缺多少。阶段三新增 `material_id` 引用 `materials`，旧 `material_sku_id` 保留兼容历史数据和未迁移的采购/库存链路。 |
 | `purchase_orders` | 采购单主表。采购根据缺料情况创建采购单。 |
-| `purchase_order_items` | 采购单明细表。记录每个采购 SKU、采购数量、到货数量、单价，并可关联物料需求。 |
-| `inventory_items` | 当前库存表。保存每个仓库、每个 SKU 当前账面库存、已占用数量、安全库存。 |
-| `inventory_transactions` | 库存流水表。记录每一次原材料入库、原材料出库、成品入库、成品出库、库存调整。 |
+| `purchase_order_items` | 采购单明细表。阶段四新增 `material_id` 引用 `materials`，记录每个采购辅料、采购数量、到货数量、单价，并可关联物料需求；旧 `sku_id` 保留兼容历史采购和库存过渡。 |
+| `inventory_items` | 当前库存表。阶段五起成品优先用 `product_sku_id`，辅料优先用 `material_id`；旧 `sku_id` 保留兼容历史数据。 |
+| `inventory_transactions` | 库存流水表。阶段五起成品流水优先写 `product_sku_id`，辅料流水优先写 `material_id`；旧 `sku_id` 保留兼容历史数据。 |
 
 ## 7. 关键字段和数量关系
 
@@ -1920,6 +2108,32 @@ FBA 出库是单独动作，不能把成品入库自动等同于发往 FBA。
    - 区分开发、测试、生产环境。
    - 检查 build。
    - 部署到正式 Web 环境。
+
+### 3.8.6 辅料拆表第六阶段：清理旧 material SKU 依赖（2026-05-26）
+
+本次只清理代码依赖，没有删除数据库旧字段，也没有删除 `skus` 里的旧 `sku_type = material` 数据。
+
+已完成：
+
+- `/admin/skus` 改为只管理成品和半成品 SKU，不再展示、新增、编辑或导入旧辅料 SKU；页面提供“辅料管理”入口跳转 `/admin/materials`。
+- SKU 批量导入只允许 `finished_good` 和 `semi_finished`；辅料导入继续走 `/admin/materials`。
+- 全局搜索里 SKU 搜索只查成品和半成品 SKU；辅料搜索直接读取 `materials` 表，结果分组显示为“辅料”。
+- `/debug/master-data` 的辅料区改为读取 `materials` 表。
+- BOM 新增和 BOM 批量导入只写 `bom_items.material_id`，不再为新明细写 `component_sku_id`。
+- 生产算料生成新物料需求时，优先按 `material_id` 汇总和读取库存；新 BOM 明细生成的新需求不再额外写旧 `material_sku_id`。
+- 采购新明细优先写 `purchase_order_items.material_id`；手动采购、批量导入和缺料生成采购单不再为新辅料明细写旧 `sku_id`。
+- 新增 `scripts/check-legacy-material-sku-usage.sql`，只输出旧字段仍引用旧辅料 SKU 的清单，不自动删除。
+- 新增 `docs/materials-refactor-cleanup-report.md` 作为本阶段清理报告。
+
+保留兼容：
+
+- `bom_items.component_sku_id`、`material_requirements.material_sku_id`、`purchase_order_items.sku_id`、`inventory_items.sku_id`、`inventory_transactions.sku_id` 仍保留历史读取。
+- 当前真实 schema 里 `inventory_items.sku_id` 和 `inventory_transactions.sku_id` 仍是必填；在不改 schema 的前提下，辅料库存写入还不能完全停止写旧 `sku_id`。后续要彻底清理库存旧字段，需要单独把库存余额和流水的约束迁到 `material_id`。
+
+验证：
+
+- 已运行 `npm run typecheck`，通过。
+- 已运行 `npm run build`，通过。
 
 ## 10. 给后续 Codex 的开发提醒
 

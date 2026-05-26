@@ -182,6 +182,21 @@ function getProductionOrderBrandSummary(order: ProductionOrderTrackingRow) {
   return `${labels[0]} 等 ${labels.length} 个品牌`;
 }
 
+function getRequirementMaterialLabel(
+  requirement: ProductionOrderTrackingRow["material_requirements"][number]
+) {
+  const code =
+    requirement.material?.material_code ??
+    requirement.material_sku?.sku_code ??
+    "-";
+  const name =
+    requirement.material?.material_name ??
+    requirement.material_sku?.sku_name ??
+    "-";
+
+  return `${code} / ${name}`;
+}
+
 export default function ProductionOrdersPage() {
   const [orders, setOrders] = useState<ProductionOrderTrackingRow[]>([]);
   const [statusFilter, setStatusFilter] =
@@ -709,10 +724,7 @@ export default function ProductionOrdersPage() {
                 <ul className="debugList">
                   {selectedDetail.material_requirements.map((requirement) => (
                     <li key={requirement.id}>
-                      <strong>
-                        {requirement.material_sku?.sku_code ?? "-"} /{" "}
-                        {requirement.material_sku?.sku_name ?? "-"}
-                      </strong>
+                      <strong>{getRequirementMaterialLabel(requirement)}</strong>
                       <span>
                         需求 {formatQuantity(requirement.required_quantity)}
                         {requirement.unit}，库存{" "}
@@ -751,7 +763,7 @@ export default function ProductionOrdersPage() {
             <section className="panel">
               <h3>领料记录摘要</h3>
               {selectedDetail.material_issue_transactions.length === 0 ? (
-                <p>暂无原材料领料流水</p>
+                <p>暂无辅料领料流水</p>
               ) : (
                 <ul className="debugList">
                   {selectedDetail.material_issue_transactions.map((transaction) => (
@@ -814,14 +826,14 @@ export default function ProductionOrdersPage() {
             ) : null}
 
             {issuePreview.materials.length === 0 ? (
-              <div className="emptyState">没有可领料的原材料清单</div>
+                <div className="emptyState">没有可领料的辅料清单</div>
             ) : (
               <div className="tableWrap">
                 <table className="dataTable">
                   <thead>
                     <tr>
-                      <th>原材料 SKU 编码</th>
-                      <th>原材料名称</th>
+                      <th>辅料编码</th>
+                      <th>辅料名称</th>
                       <th>应领数量</th>
                       <th>当前库存</th>
                       <th>领料后库存</th>

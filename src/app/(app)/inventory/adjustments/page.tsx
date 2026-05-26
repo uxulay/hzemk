@@ -27,7 +27,7 @@ const skuTypeOptions: Array<{
   label: string;
 }> = [
   { value: "all", label: "全部 SKU 类型" },
-  { value: "material", label: "原材料" },
+  { value: "material", label: "辅料" },
   { value: "finished_good", label: "成品" }
 ];
 
@@ -54,7 +54,7 @@ const adjustmentReasonOptions: Array<{
 ];
 
 const skuTypeLabels: Record<string, string> = {
-  material: "原材料",
+  material: "辅料",
   finished_good: "成品",
   finished_product: "成品"
 };
@@ -426,7 +426,9 @@ export default function InventoryAdjustmentsPage() {
     setSelectedItem({
       id: "",
       warehouse_id: warehouse.id,
-      sku_id: sku.id,
+      sku_id: sku.legacy_sku_id ?? sku.id,
+      product_sku_id: sku.product_sku_id,
+      material_id: sku.material_id,
       item_type: sku.sku_type === "material" ? "material" : "finished_product",
       quantity_on_hand: 0,
       reserved_quantity: 0,
@@ -435,14 +437,27 @@ export default function InventoryAdjustmentsPage() {
       updated_at: new Date().toISOString(),
       warehouse,
       sku: {
-        id: sku.id,
+        id: sku.legacy_sku_id ?? sku.id,
         product_id: sku.product_id,
         sku_code: sku.sku_code,
         sku_name: sku.sku_name,
         sku_type: sku.sku_type,
         unit: sku.unit,
         product: sku.product
-      }
+      },
+      product_sku:
+        sku.product_sku_id && sku.sku_type !== "material"
+          ? {
+              id: sku.product_sku_id,
+              product_id: sku.product_id,
+              sku_code: sku.sku_code,
+              sku_name: sku.sku_name,
+              sku_type: sku.sku_type,
+              unit: sku.unit,
+              product: sku.product
+            }
+          : null,
+      material: sku.material
     });
     setAdjustmentMode(adjustmentMode);
     setAdjustmentQuantity("");
@@ -477,7 +492,7 @@ export default function InventoryAdjustmentsPage() {
 
       const result = await adjustInventoryByWarehouseSku({
         warehouseId: selectedItem.warehouse_id,
-        skuId: selectedItem.sku_id,
+        skuId: selectedItem.material_id ?? selectedItem.product_sku_id ?? selectedItem.sku_id,
         adjustmentMode,
         adjustmentQuantity:
           adjustmentMode === "set_to" || !adjustmentQuantity.trim()
@@ -492,7 +507,12 @@ export default function InventoryAdjustmentsPage() {
       });
 
       setSuccessMessage(
-        `${selectedItem.sku?.sku_code ?? "该 SKU"} 库存调整成功：${formatQuantity(
+        `${
+          selectedItem.material?.material_code ??
+          selectedItem.product_sku?.sku_code ??
+          selectedItem.sku?.sku_code ??
+          "该物品"
+        } 库存调整成功：${formatQuantity(
           result.beforeQuantity
         )} ${unit} -> ${formatQuantity(result.afterQuantity)} ${unit}。`
       );

@@ -135,6 +135,7 @@ type ProductionOrderRow = {
 
 type MaterialRequirementRow = {
   id: string;
+  material_id: string | null;
   required_quantity: number;
   available_quantity: number;
   shortage_quantity: number;
@@ -142,6 +143,13 @@ type MaterialRequirementRow = {
   unit: string;
   status: string;
   created_at: string;
+  material: MaybeRelation<{
+    id: string;
+    material_code: string;
+    material_name: string;
+    unit: string;
+    default_supplier_id: string | null;
+  }>;
   material_sku: MaybeRelation<DashboardSku>;
   production_order: MaybeRelation<{
     id: string;
@@ -174,6 +182,8 @@ type PurchaseOrderRow = {
 type InventoryItemRow = {
   id: string;
   sku_id: string;
+  product_sku_id: string | null;
+  material_id: string | null;
   item_type: string;
   quantity_on_hand: number;
   reserved_quantity: number;
@@ -181,6 +191,14 @@ type InventoryItemRow = {
   unit: string;
   updated_at: string;
   sku: MaybeRelation<DashboardSku>;
+  product_sku: MaybeRelation<DashboardSku>;
+  material: MaybeRelation<{
+    id: string;
+    material_code: string;
+    material_name: string;
+    unit: string;
+    specs: string | null;
+  }>;
   warehouse: MaybeRelation<{
     id: string;
     warehouse_code: string;
@@ -239,8 +257,8 @@ const purchaseStatusLabels: Record<string, string> = {
 };
 
 const transactionTypeLabels: Record<string, string> = {
-  material_in: "原材料入库",
-  material_out: "原材料领料",
+  material_in: "辅料入库",
+  material_out: "辅料领料",
   product_in: "成品入库",
   product_out: "FBA 出库",
   adjustment: "库存调整"
@@ -444,18 +462,21 @@ function toProductionTodo(row: ProductionOrderRow): DashboardTodoItem {
 }
 
 function toMaterialTodo(row: MaterialRequirementRow): DashboardTodoItem {
+  const material = singleRelation(row.material);
   const sku = singleRelation(row.material_sku);
 
   return {
     id: row.id,
     no: singleRelation(row.production_order)?.production_order_no ?? "-",
     brand: "辅料",
-    title: getSkuTitle(sku),
+    title: material
+      ? `${material.material_code} / ${material.material_name}`
+      : getSkuTitle(sku),
     quantity:
       numberValue(row.shortage_quantity) > 0
         ? numberValue(row.shortage_quantity)
         : numberValue(row.required_quantity),
-    unit: row.unit,
+    unit: material?.unit ?? row.unit,
     status: row.status,
     statusLabel: getStatusLabel(materialStatusLabels, row.status),
     dateLabel: "生成时间",
@@ -486,6 +507,8 @@ function toPurchaseTodo(row: PurchaseOrderRow): DashboardTodoItem {
 
 function toInventoryTodo(row: InventoryItemRow): DashboardTodoItem {
   const sku = singleRelation(row.sku);
+  const productSku = singleRelation(row.product_sku);
+  const material = singleRelation(row.material);
   const warehouse = singleRelation(row.warehouse);
   const availableQuantity =
     numberValue(row.quantity_on_hand) - numberValue(row.reserved_quantity);
@@ -500,10 +523,12 @@ function toInventoryTodo(row: InventoryItemRow): DashboardTodoItem {
   return {
     id: row.id,
     no: warehouse?.name ?? "-",
-    brand: getSkuBrand(sku),
-    title: getSkuTitle(sku),
+    brand: material ? "辅料" : getSkuBrand(productSku ?? sku),
+    title: material
+      ? `${material.material_code} / ${material.material_name}`
+      : getSkuTitle(productSku ?? sku),
     quantity: availableQuantity,
-    unit: row.unit,
+    unit: material?.unit ?? productSku?.unit ?? sku?.unit ?? row.unit,
     status,
     statusLabel:
       status === "out_of_stock"
@@ -514,7 +539,9 @@ function toInventoryTodo(row: InventoryItemRow): DashboardTodoItem {
     dateLabel: "更新时间",
     dateValue: row.updated_at,
     href:
-      row.item_type === "finished_product" || row.item_type === "finished_good"
+      row.product_sku_id ||
+      row.item_type === "finished_product" ||
+      row.item_type === "finished_good"
         ? "/inventory/products"
         : "/inventory/materials",
     actionLabel: "查看"
@@ -655,6 +682,7 @@ const productionSelect = `
 
 const materialRequirementSelect = `
   id,
+  material_id,
   required_quantity,
   available_quantity,
   shortage_quantity,
@@ -662,6 +690,13 @@ const materialRequirementSelect = `
   unit,
   status,
   created_at,
+  material:materials!material_requirements_material_id_fkey (
+    id,
+    material_code,
+    material_name,
+    unit,
+    default_supplier_id
+  ),
   material_sku:skus!material_requirements_material_sku_id_fkey (
     id,
     sku_code,
@@ -727,6 +762,8 @@ const purchaseSelect = `
 const inventorySelect = `
   id,
   sku_id,
+  product_sku_id,
+  material_id,
   item_type,
   quantity_on_hand,
   reserved_quantity,
@@ -749,6 +786,30 @@ const inventorySelect = `
         name
       )
     )
+  ),
+  product_sku:skus!inventory_items_product_sku_id_fkey (
+    id,
+    sku_code,
+    sku_name,
+    sku_type,
+    unit,
+    product:products!skus_product_id_fkey (
+      id,
+      product_code,
+      name,
+      brand:brands!products_brand_id_fkey (
+        id,
+        brand_code,
+        name
+      )
+    )
+  ),
+  material:materials!inventory_items_material_id_fkey (
+    id,
+    material_code,
+    material_name,
+    unit,
+    specs
   ),
   warehouse:warehouses!inventory_items_warehouse_id_fkey (
     id,
@@ -948,7 +1009,7 @@ async function getInventoryItems(
 }
 
 async function getLowStockMaterials(limit = 5) {
-  const rows = await getInventoryItems(["material"], "读取原材料低库存", 50);
+  const rows = await getInventoryItems(["material"], "读取辅料低库存", 50);
 
   return rows
     .filter((row) => {
@@ -1145,9 +1206,8 @@ async function countMaterialsWithoutSupplier() {
 
   return getExactCount(
     supabase
-      .from("skus")
+      .from("materials")
       .select("id", { count: "exact", head: true })
-      .eq("sku_type", "material")
       .is("default_supplier_id", null),
     "统计未设置默认供应商辅料"
   );
@@ -1168,9 +1228,8 @@ async function countInactiveSupplierReferences() {
 
   return getExactCount(
     supabase
-      .from("skus")
+      .from("materials")
       .select("id", { count: "exact", head: true })
-      .eq("sku_type", "material")
       .in("default_supplier_id", supplierIds),
     "统计停用供应商仍被辅料引用"
   );
@@ -1623,7 +1682,7 @@ export async function getRoleDashboard(
       card("purchase-inbound", "待采购入库", counts.purchaseOrdered, "/inventory/inbound", "info"),
       card("production-inbound", "待生产入库", counts.pendingProductionInbound, "/inventory/inbound", "warning"),
       card("fba-outbound", "待 FBA 出库", counts.fbaCompleted, "/inventory/fba-outbound", "success"),
-      card("low-stock-material", "原材料低库存", counts.lowStockMaterials, "/inventory/materials", "warning"),
+      card("low-stock-material", "辅料低库存", counts.lowStockMaterials, "/inventory/materials", "warning"),
       card("stock-abnormal", "成品库存异常", counts.abnormalFinishedStock, "/inventory/products", "danger")
     ];
 
@@ -1634,7 +1693,7 @@ export async function getRoleDashboard(
       quickLinks: [
         { label: "入库管理", href: "/inventory/inbound" },
         { label: "出库管理", href: "/inventory/fba-outbound" },
-        { label: "原材料库存", href: "/inventory/materials" },
+        { label: "辅料库存", href: "/inventory/materials" },
         { label: "成品库存", href: "/inventory/products" },
         { label: "库存流水", href: "/inventory/transactions" }
       ],
@@ -1645,7 +1704,7 @@ export async function getRoleDashboard(
         section("recent-adjustments", "库存调整", "最近库存调整记录", "/inventory/adjustments", "暂无最近库存调整记录", recentAdjustments.map(toTransactionTodo))
       ],
       exceptions: [
-        exception("low-stock-material", "原材料低库存", counts.lowStockMaterials, "/inventory/materials", "warning"),
+        exception("low-stock-material", "辅料低库存", counts.lowStockMaterials, "/inventory/materials", "warning"),
         exception("stock-abnormal", "成品库存异常", counts.abnormalFinishedStock, "/inventory/products", "danger")
       ]
     };

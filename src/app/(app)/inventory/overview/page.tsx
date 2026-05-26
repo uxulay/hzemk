@@ -10,7 +10,7 @@ const tabs: Array<{
   label: string;
 }> = [
   { value: "all", label: "全部" },
-  { value: "materials", label: "原材料" },
+  { value: "materials", label: "辅料" },
   { value: "products", label: "成品" }
 ];
 
@@ -23,7 +23,7 @@ export default function InventoryOverviewPage() {
         <div>
           <p className="eyebrow">仓库管理</p>
           <h2>库存总览</h2>
-          <p>从一个入口查看原材料和成品当前库存，并快速进入流水、调整、其他入库和其他出库。</p>
+          <p>从一个入口查看辅料和成品当前库存，并快速进入流水、调整、其他入库和其他出库。</p>
         </div>
         <span className="statusPill">Supabase 数据</span>
       </section>

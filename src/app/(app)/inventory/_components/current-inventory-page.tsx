@@ -54,11 +54,11 @@ const pageConfig: Record<
   }
 > = {
   materials: {
-    title: "原材料库存",
-    description: "查看各仓库当前原材料库存、安全库存和库存状态。",
-    keywordLabel: "原材料搜索",
-    keywordPlaceholder: "输入原材料编码或名称",
-    emptyText: "暂无原材料库存"
+    title: "辅料库存",
+    description: "查看各仓库当前辅料库存、安全库存和库存状态。",
+    keywordLabel: "辅料搜索",
+    keywordPlaceholder: "输入辅料编码或名称",
+    emptyText: "暂无辅料库存"
   },
   products: {
     title: "成品库存",
@@ -98,7 +98,15 @@ function formatDateTime(value: string | null | undefined) {
 }
 
 function getUnit(row: CurrentInventoryRow) {
-  return row.sku?.unit ?? row.unit ?? "-";
+  return row.material?.unit ?? row.product_sku?.unit ?? row.sku?.unit ?? row.unit ?? "-";
+}
+
+function getItemCode(row: CurrentInventoryRow) {
+  return row.material?.material_code ?? row.product_sku?.sku_code ?? row.sku?.sku_code ?? "-";
+}
+
+function getItemName(row: CurrentInventoryRow) {
+  return row.material?.material_name ?? row.product_sku?.sku_name ?? row.sku?.sku_name ?? "-";
 }
 
 function getAvailableQuantity(row: CurrentInventoryRow) {
@@ -110,7 +118,7 @@ function getInventoryActionHref(
   path: "/inventory/transactions" | "/inventory/adjustments" | "/inventory/inbound" | "/inventory/fba-outbound",
   tab?: "other"
 ) {
-  const keyword = row.sku?.sku_code ?? row.sku?.sku_name ?? "";
+  const keyword = getItemCode(row) !== "-" ? getItemCode(row) : getItemName(row);
   const params = new URLSearchParams();
 
   if (tab) {
@@ -131,7 +139,9 @@ function getInventoryActionHref(
 }
 
 function countUniqueSkus(rows: CurrentInventoryRow[]) {
-  return new Set(rows.map((row) => row.sku_id)).size;
+  return new Set(
+    rows.map((row) => row.material_id ?? row.product_sku_id ?? row.sku_id)
+  ).size;
 }
 
 function getProductSkuStockCounts(rows: ProductInventoryRow[]) {
@@ -139,8 +149,9 @@ function getProductSkuStockCounts(rows: ProductInventoryRow[]) {
 
   for (const row of rows) {
     quantityBySku.set(
-      row.sku_id,
-      (quantityBySku.get(row.sku_id) ?? 0) + Number(row.quantity_on_hand)
+      row.product_sku_id ?? row.sku_id,
+      (quantityBySku.get(row.product_sku_id ?? row.sku_id) ?? 0) +
+        Number(row.quantity_on_hand)
     );
   }
 
@@ -457,9 +468,9 @@ export function CurrentInventoryPage({ mode, embedded = false }: CurrentInventor
               <thead>
                 {mode === "materials" ? (
                   <tr>
-                    <th>原材料编码</th>
-                    <th>原材料名称</th>
-                    <th>品牌/所属产品</th>
+                    <th>辅料编码</th>
+                    <th>辅料名称</th>
+                    <th>规格/供应商</th>
                     <th>仓库</th>
                     <th>当前库存</th>
                     <th>可用库存</th>
@@ -486,11 +497,11 @@ export function CurrentInventoryPage({ mode, embedded = false }: CurrentInventor
                 {mode === "materials"
                   ? (paginatedItems as MaterialInventoryRow[]).map((item) => (
                       <tr key={item.id}>
-                        <td>{item.sku?.sku_code ?? "-"}</td>
-                        <td>{item.sku?.sku_name ?? "-"}</td>
+                        <td>{getItemCode(item)}</td>
+                        <td>{getItemName(item)}</td>
                         <td>
-                          <strong>{getBrandCodeName(item.sku?.product?.brand)}</strong>
-                          <span>{item.sku?.product?.name ?? "-"}</span>
+                          <strong>{item.material?.specs ?? "-"}</strong>
+                          <span>{item.material?.supplier?.name ?? "-"}</span>
                         </td>
                         <td>
                           <strong>{item.warehouse?.name ?? "-"}</strong>
@@ -546,10 +557,14 @@ export function CurrentInventoryPage({ mode, embedded = false }: CurrentInventor
                     ))
                   : (paginatedItems as ProductInventoryRow[]).map((item) => (
                       <tr key={item.id}>
-                        <td>{item.sku?.sku_code ?? "-"}</td>
-                        <td>{item.sku?.sku_name ?? "-"}</td>
-                        <td>{item.sku?.product?.name ?? "-"}</td>
-                        <td>{getBrandCodeName(item.sku?.product?.brand)}</td>
+                        <td>{getItemCode(item)}</td>
+                        <td>{getItemName(item)}</td>
+                        <td>{item.product_sku?.product?.name ?? item.sku?.product?.name ?? "-"}</td>
+                        <td>
+                          {getBrandCodeName(
+                            item.product_sku?.product?.brand ?? item.sku?.product?.brand
+                          )}
+                        </td>
                         <td>
                           <strong>{item.warehouse?.name ?? "-"}</strong>
                           <span>{item.warehouse?.warehouse_code ?? "-"}</span>
@@ -612,29 +627,38 @@ export function CurrentInventoryPage({ mode, embedded = false }: CurrentInventor
       {selectedItem ? (
         <Modal
           open={Boolean(selectedItem)}
-          eyebrow={mode === "materials" ? "原材料库存详情" : "成品库存详情"}
-          title={`${selectedItem.sku?.sku_code ?? "-"} / ${
-            selectedItem.sku?.sku_name ?? "-"
-          }`}
+          eyebrow={mode === "materials" ? "辅料库存详情" : "成品库存详情"}
+          title={`${getItemCode(selectedItem)} / ${getItemName(selectedItem)}`}
           onClose={() => setSelectedItem(null)}
         >
           <div className="detailGrid">
             <div className="detailItem">
-              <span>SKU 编码</span>
-              <strong>{selectedItem.sku?.sku_code ?? "-"}</strong>
+              <span>{mode === "materials" ? "辅料编码" : "SKU 编码"}</span>
+              <strong>{getItemCode(selectedItem)}</strong>
             </div>
             <div className="detailItem">
-              <span>SKU 名称</span>
-              <strong>{selectedItem.sku?.sku_name ?? "-"}</strong>
+              <span>{mode === "materials" ? "辅料名称" : "SKU 名称"}</span>
+              <strong>{getItemName(selectedItem)}</strong>
             </div>
             <div className="detailItem">
-              <span>所属产品</span>
-              <strong>{selectedItem.sku?.product?.name ?? "-"}</strong>
+              <span>{mode === "materials" ? "规格" : "所属产品"}</span>
+              <strong>
+                {mode === "materials"
+                  ? selectedItem.material?.specs ?? "-"
+                  : selectedItem.product_sku?.product?.name ??
+                    selectedItem.sku?.product?.name ??
+                    "-"}
+              </strong>
             </div>
             {mode === "products" ? (
               <div className="detailItem">
                 <span>品牌</span>
-                <strong>{getBrandCodeName(selectedItem.sku?.product?.brand)}</strong>
+                <strong>
+                  {getBrandCodeName(
+                    selectedItem.product_sku?.product?.brand ??
+                      selectedItem.sku?.product?.brand
+                  )}
+                </strong>
               </div>
             ) : null}
             <div className="detailItem">

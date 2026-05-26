@@ -36,7 +36,7 @@ export type SkuImportInput = {
   rowNumber: number;
   skuCode: string;
   skuName: string;
-  skuType: "finished_good" | "material";
+  skuType: "finished_good" | "semi_finished";
   productId: string | null;
   productCode: string | null;
   unit: string;
@@ -69,13 +69,14 @@ export type BomImportInput = {
   rowNumber: number;
   finishedSkuCode: string;
   bomVersion: string;
-  materialSkuCode: string;
+  materialCode: string;
   quantityPer: number;
   lossRate: number;
   notes: string | null;
   status: Status;
   productSkuId: string;
-  componentSkuId: string;
+  materialId: string;
+  componentSkuId: string | null;
   componentUnit: string;
   groupKey: string;
   existingBomHeaderId: string | null;
@@ -136,7 +137,16 @@ type BomHeaderMinimal = {
 type BomItemMinimal = {
   id: string;
   bom_header_id: string;
-  component_sku_id: string;
+  component_sku_id: string | null;
+  material_id: string | null;
+};
+
+type MaterialMinimal = {
+  id: string;
+  material_code: string;
+  material_name: string;
+  unit: string;
+  status?: string;
 };
 
 function formatSupabaseError(action: string, error: { message: string }) {
@@ -655,8 +665,8 @@ export async function validateSkuImportRows(
       errors.push("SKU 名称必填。");
     }
 
-    if (!["finished_good", "material"].includes(skuType)) {
-      errors.push("SKU 类型只能是 finished_good 或 material。");
+    if (!["finished_good", "semi_finished"].includes(skuType)) {
+      errors.push("SKU 类型只能是 finished_good 或 semi_finished。辅料请到“辅料管理”导入。");
     }
 
     if (skuType === "finished_good" && !productCode) {
@@ -692,7 +702,7 @@ export async function validateSkuImportRows(
               rowNumber,
               skuCode,
               skuName,
-              skuType: skuType as "finished_good" | "material",
+              skuType: skuType as "finished_good" | "semi_finished",
               productId: product?.id ?? null,
               productCode,
               unit,
@@ -1054,10 +1064,17 @@ export async function validateBomImportRows(
   rows: CsvDataRow[]
 ): Promise<BulkImportValidationRow<BomImportInput>[]> {
   const supabase = getSupabaseClient();
-  const [skuRows, bomHeaders, bomItems] = await Promise.all([
+  const [skuRows, materialRows, bomHeaders, bomItems] = await Promise.all([
     fetchAllSupabaseRows<SkuMinimal>(
       () => supabase.from("skus").select("id, sku_code, sku_name, sku_type, unit, status"),
       "读取 BOM 导入用 SKU"
+    ),
+    fetchAllSupabaseRows<MaterialMinimal>(
+      () =>
+        supabase
+          .from("materials")
+          .select("id, material_code, material_name, unit, status"),
+      "读取 BOM 导入用辅料"
     ),
     fetchAllSupabaseRows<BomHeaderMinimal>(
       () =>
@@ -1067,7 +1084,10 @@ export async function validateBomImportRows(
       "读取 BOM 主表"
     ),
     fetchAllSupabaseRows<BomItemMinimal>(
-      () => supabase.from("bom_items").select("id, bom_header_id, component_sku_id"),
+      () =>
+        supabase
+          .from("bom_items")
+          .select("id, bom_header_id, component_sku_id, material_id"),
       "读取 BOM 明细"
     )
   ]);
@@ -1078,6 +1098,12 @@ export async function validateBomImportRows(
       sku
     ])
   );
+  const materialByCode = new Map(
+    materialRows.map((material) => [
+      material.material_code.toLowerCase(),
+      material
+    ])
+  );
   const headerBySkuVersion = new Map(
     bomHeaders.map((header) => [
       `${header.product_sku_id}||${header.version.toLowerCase()}`,
@@ -1085,14 +1111,23 @@ export async function validateBomImportRows(
     ])
   );
   const existingItems = new Set(
-    bomItems.map((item) => `${item.bom_header_id}||${item.component_sku_id}`)
+    bomItems.flatMap((item) => [
+      item.material_id
+        ? `${item.bom_header_id}||material:${item.material_id}`
+        : "",
+      item.component_sku_id
+        ? `${item.bom_header_id}||sku:${item.component_sku_id}`
+        : ""
+    ].filter(Boolean))
   );
   const fileMaterialKeys = rows.map((row) => {
     const finishedSkuCode = normalizeCsvValue(row.finished_sku_code).toLowerCase();
     const bomVersion = normalizeCsvValue(row.bom_version || row.version).toLowerCase();
-    const materialSkuCode = normalizeCsvValue(row.material_sku_code).toLowerCase();
+    const materialCode = normalizeCsvValue(
+      row.material_code || row.material_sku_code
+    ).toLowerCase();
 
-    return `${finishedSkuCode}||${bomVersion}||${materialSkuCode}`;
+    return `${finishedSkuCode}||${bomVersion}||${materialCode}`;
   });
   const duplicatedMaterialKeys = getDuplicateSet(fileMaterialKeys);
   const statusesByGroup = new Map<string, Set<string>>();
@@ -1112,7 +1147,9 @@ export async function validateBomImportRows(
     const rowNumber = index + 2;
     const finishedSkuCode = normalizeCsvValue(row.finished_sku_code);
     const bomVersion = normalizeCsvValue(row.bom_version || row.version);
-    const materialSkuCode = normalizeCsvValue(row.material_sku_code);
+    const materialCode = normalizeCsvValue(
+      row.material_code || row.material_sku_code
+    );
     const quantityPerText = normalizeCsvValue(
       row.quantity_per_unit || row.quantity_per
     );
@@ -1123,8 +1160,11 @@ export async function validateBomImportRows(
     const finishedSku = finishedSkuCode
       ? skuByCode.get(finishedSkuCode.toLowerCase())
       : null;
-    const materialSku = materialSkuCode
-      ? skuByCode.get(materialSkuCode.toLowerCase())
+    const material = materialCode
+      ? materialByCode.get(materialCode.toLowerCase())
+      : null;
+    const legacyMaterialSku = materialCode
+      ? skuByCode.get(materialCode.toLowerCase())
       : null;
 
     if (!finishedSkuCode) {
@@ -1135,8 +1175,8 @@ export async function validateBomImportRows(
       errors.push("BOM 版本必填。");
     }
 
-    if (!materialSkuCode) {
-      errors.push("原材料 SKU 编码必填。");
+    if (!materialCode) {
+      errors.push("辅料编码必填。");
     }
 
     if (!finishedSku) {
@@ -1145,10 +1185,12 @@ export async function validateBomImportRows(
       errors.push("成品 SKU 必须是 sku_type = finished_good。");
     }
 
-    if (!materialSku) {
-      errors.push("原材料 SKU 编码不存在。");
-    } else if (materialSku.sku_type !== "material") {
-      errors.push("原材料 SKU 必须是 sku_type = material，不能把成品当原材料。");
+    if (!material) {
+      errors.push("辅料编码不存在，请先到辅料管理维护。");
+    }
+
+    if (legacyMaterialSku && legacyMaterialSku.sku_type !== "material") {
+      errors.push("同编码旧 SKU 不是 material 类型，请先检查旧 SKU 资料。");
     }
 
     if (!quantityPerText || Number.isNaN(quantityPer) || quantityPer <= 0) {
@@ -1161,10 +1203,10 @@ export async function validateBomImportRows(
 
     validateStatus(row.status, errors);
 
-    const materialKey = `${finishedSkuCode.toLowerCase()}||${bomVersion.toLowerCase()}||${materialSkuCode.toLowerCase()}`;
+    const materialKey = `${finishedSkuCode.toLowerCase()}||${bomVersion.toLowerCase()}||${materialCode.toLowerCase()}`;
 
     if (duplicatedMaterialKeys.has(materialKey)) {
-      errors.push("同一个 BOM 中不能重复添加同一个原材料 SKU。");
+      errors.push("同一个 BOM 中不能重复添加同一个辅料。");
     }
 
     const groupStatusValues = statusesByGroup.get(
@@ -1184,10 +1226,12 @@ export async function validateBomImportRows(
 
     if (
       existingHeader &&
-      materialSku &&
-      existingItems.has(`${existingHeader.id}||${materialSku.id}`)
+      material &&
+      (existingItems.has(`${existingHeader.id}||material:${material.id}`) ||
+        (legacyMaterialSku &&
+          existingItems.has(`${existingHeader.id}||sku:${legacyMaterialSku.id}`)))
     ) {
-      errors.push("这个原材料已经存在于对应 BOM 明细中。");
+      errors.push("这个辅料已经存在于对应 BOM 明细中。");
     }
 
     const groupKey = `${finishedSkuCode} / ${bomVersion}`;
@@ -1205,19 +1249,20 @@ export async function validateBomImportRows(
             ]
           : undefined,
       data:
-        errors.length === 0 && finishedSku && materialSku
+        errors.length === 0 && finishedSku && material
           ? {
               rowNumber,
               finishedSkuCode,
               bomVersion,
-              materialSkuCode,
+              materialCode,
               quantityPer,
               lossRate,
               notes: normalizeOptionalText(row.remark || row.notes),
               status: normalizeStatus(row.status),
               productSkuId: finishedSku.id,
-              componentSkuId: materialSku.id,
-              componentUnit: materialSku.unit,
+              materialId: material.id,
+              componentSkuId: legacyMaterialSku?.id ?? null,
+              componentUnit: material.unit,
               groupKey,
               existingBomHeaderId: existingHeader?.id ?? null,
               willCreateHeader: !existingHeader
@@ -1306,7 +1351,7 @@ export async function bulkImportBomRows(
           .from("bom_items")
           .select("id")
           .eq("bom_header_id", bomHeaderId)
-          .eq("component_sku_id", row.componentSkuId)
+          .eq("material_id", row.materialId)
           .maybeSingle(),
         "确认 BOM 明细是否重复"
       );
@@ -1314,7 +1359,7 @@ export async function bulkImportBomRows(
       if (existingItemError) {
         errors.push({
           rowNumber: row.rowNumber,
-          label: row.materialSkuCode,
+          label: row.materialCode,
           message: formatSupabaseError("确认 BOM 明细是否重复", existingItemError)
             .message
         });
@@ -1324,8 +1369,8 @@ export async function bulkImportBomRows(
       if (existingItem) {
         errors.push({
           rowNumber: row.rowNumber,
-          label: row.materialSkuCode,
-          message: "这个原材料已经存在于对应 BOM 明细中。"
+          label: row.materialCode,
+          message: "这个辅料已经存在于对应 BOM 明细中。"
         });
         continue;
       }
@@ -1333,7 +1378,8 @@ export async function bulkImportBomRows(
       const { error } = await withTimeout(
         supabase.from("bom_items").insert({
           bom_header_id: bomHeaderId,
-          component_sku_id: row.componentSkuId,
+          component_sku_id: null,
+          material_id: row.materialId,
           quantity_per: row.quantityPer,
           unit: row.componentUnit,
           loss_rate: row.lossRate,
@@ -1345,7 +1391,7 @@ export async function bulkImportBomRows(
       if (error) {
         errors.push({
           rowNumber: row.rowNumber,
-          label: row.materialSkuCode,
+          label: row.materialCode,
           message: formatSupabaseError("创建 BOM 明细", error).message
         });
       } else {
@@ -1621,7 +1667,11 @@ export async function deleteSuppliersByIds(
     const label = `${supplier.supplier_code} / ${supplier.name}`;
 
     try {
-      const [hasPurchaseOrders, hasDefaultMaterials] = await Promise.all([
+      const [
+        hasPurchaseOrders,
+        hasDefaultMaterials,
+        hasLegacyDefaultMaterialSkus
+      ] = await Promise.all([
         hasReference(
           "purchase_orders",
           "supplier_id",
@@ -1629,14 +1679,20 @@ export async function deleteSuppliersByIds(
           "检查供应商采购单引用"
         ),
         hasReference(
-          "skus",
+          "materials",
           "default_supplier_id",
           supplier.id,
           "检查供应商默认辅料引用"
+        ),
+        hasReference(
+          "skus",
+          "default_supplier_id",
+          supplier.id,
+          "检查供应商旧辅料默认供应商引用"
         )
       ]);
 
-      if (hasDefaultMaterials) {
+      if (hasDefaultMaterials || hasLegacyDefaultMaterialSkus) {
         results.push(
           actionBlocked(
             supplier.id,
@@ -1830,7 +1886,7 @@ export async function deleteBomItemsByIds(
 ): Promise<BulkActionResult[]> {
   const items = await getRowsByIds<BomItemMinimal>(
     "bom_items",
-    "id, bom_header_id, component_sku_id",
+    "id, bom_header_id, component_sku_id, material_id",
     ids
   );
   const results: BulkActionResult[] = [];
@@ -1840,37 +1896,62 @@ export async function deleteBomItemsByIds(
 
     try {
       const supabase = getSupabaseClient();
-      const [headerResult, skuResult] = await Promise.all([
-        withTimeout(
+      const headerResult = await withTimeout(
+        supabase
+          .from("bom_headers")
+          .select("id, product_sku_id, bom_code, version, status")
+          .eq("id", item.bom_header_id)
+          .single(),
+        "读取 BOM 主表"
+      );
+
+      if (headerResult.error) {
+        throw formatSupabaseError("读取 BOM 主表", headerResult.error);
+      }
+
+      let material: MaterialMinimal | null = null;
+
+      if (item.material_id) {
+        const materialResult = await withTimeout(
           supabase
-            .from("bom_headers")
-            .select("id, product_sku_id, bom_code, version, status")
-            .eq("id", item.bom_header_id)
+            .from("materials")
+            .select("id, material_code, material_name, unit")
+            .eq("id", item.material_id)
             .single(),
-          "读取 BOM 主表"
-        ),
-        withTimeout(
+          "读取 BOM 辅料"
+        );
+
+        if (materialResult.error) {
+          throw formatSupabaseError("读取 BOM 辅料", materialResult.error);
+        }
+
+        material = materialResult.data as MaterialMinimal;
+      }
+
+      let sku: SkuMinimal | null = null;
+
+      if (item.component_sku_id) {
+        const skuResult = await withTimeout(
           supabase
             .from("skus")
             .select("id, sku_code, sku_name, sku_type, unit")
             .eq("id", item.component_sku_id)
             .single(),
           "读取 BOM 原材料 SKU"
-        )
-      ]);
+        );
 
-      if (headerResult.error) {
-        throw formatSupabaseError("读取 BOM 主表", headerResult.error);
-      }
+        if (skuResult.error) {
+          throw formatSupabaseError("读取 BOM 原材料 SKU", skuResult.error);
+        }
 
-      if (skuResult.error) {
-        throw formatSupabaseError("读取 BOM 原材料 SKU", skuResult.error);
+        sku = skuResult.data as SkuMinimal;
       }
 
       const header = headerResult.data as BomHeaderMinimal;
-      const sku = skuResult.data as SkuMinimal;
 
-      label = `${header.bom_code} / ${sku.sku_code}`;
+      label = `${header.bom_code} / ${
+        material?.material_code ?? sku?.sku_code ?? item.id
+      }`;
 
       const hasProductionOrders = await hasReference(
         "production_orders",

@@ -32,13 +32,14 @@ import {
   createBomHeader,
   getBomDetail,
   getBomList,
+  getBomMaterials,
   getFinishedGoodSkus,
-  getMaterialSkus,
   toggleBomStatus,
   updateBomItem,
   type BomDetail,
   type BomItemRow,
   type BomListRow,
+  type BomMaterialOption,
   type BomSkuOption,
   type BomStatus
 } from "@/lib/api/bom";
@@ -59,7 +60,7 @@ type BomHeaderFormState = {
 };
 
 type BomItemFormState = {
-  componentSkuId: string;
+  materialId: string;
   quantityPer: string;
   lossRate: string;
   notes: string;
@@ -80,7 +81,7 @@ const initialHeaderForm: BomHeaderFormState = {
 };
 
 const initialItemForm: BomItemFormState = {
-  componentSkuId: "",
+  materialId: "",
   quantityPer: "",
   lossRate: "0",
   notes: ""
@@ -100,8 +101,8 @@ const bomImportFields: CsvTemplateField[] = [
     example: "v1"
   },
   {
-    key: "material_sku_code",
-    label: "原材料 SKU 编码",
+    key: "material_code",
+    label: "辅料编码",
     required: true,
     example: "MAT-001"
   },
@@ -173,6 +174,13 @@ function getSkuOptionLabel(sku: BomSkuOption) {
   return `${sku.sku_code} / ${sku.sku_name}${productName}${brandName}`;
 }
 
+function getMaterialOptionLabel(material: BomMaterialOption) {
+  const category = material.category ? ` / ${material.category}` : "";
+  const specs = material.specs ? ` / ${material.specs}` : "";
+
+  return `${material.material_code} / ${material.material_name}${category}${specs}`;
+}
+
 type BomSkuSearchSelectProps = {
   label: string;
   skus: BomSkuOption[];
@@ -242,8 +250,91 @@ function BomSkuSearchSelect({
   );
 }
 
+type BomMaterialSearchSelectProps = {
+  label: string;
+  materials: BomMaterialOption[];
+  value: string;
+  disabled?: boolean;
+  placeholder: string;
+  onChange: (materialId: string) => void;
+};
+
+function BomMaterialSearchSelect({
+  label,
+  materials,
+  value,
+  disabled = false,
+  placeholder,
+  onChange
+}: BomMaterialSearchSelectProps) {
+  const [keyword, setKeyword] = useState("");
+  const selectedMaterial = materials.find((material) => material.id === value);
+  const normalizedKeyword = keyword.trim().toLowerCase();
+  const filteredMaterials = normalizedKeyword
+    ? materials.filter((material) =>
+        getMaterialOptionLabel(material).toLowerCase().includes(normalizedKeyword)
+      )
+    : materials.slice(0, 8);
+
+  return (
+    <div className="fieldBlock">
+      <span>{label}</span>
+      <input
+        value={keyword}
+        onChange={(event) => setKeyword(event.target.value)}
+        disabled={disabled}
+        placeholder={
+          selectedMaterial
+            ? `当前：${getMaterialOptionLabel(selectedMaterial)}`
+            : placeholder
+        }
+      />
+      {selectedMaterial ? (
+        <div className="selectedPickerValue">
+          <strong>{getMaterialOptionLabel(selectedMaterial)}</strong>
+          <button type="button" onClick={() => onChange("")} disabled={disabled}>
+            清除
+          </button>
+        </div>
+      ) : null}
+      <div className="searchPickerList">
+        {filteredMaterials.length === 0 ? (
+          <p className="tableHint">没有匹配的辅料。</p>
+        ) : (
+          filteredMaterials.map((material) => (
+            <button
+              type="button"
+              key={material.id}
+              className={material.id === value ? "active" : undefined}
+              onClick={() => {
+                onChange(material.id);
+                setKeyword("");
+              }}
+              disabled={disabled}
+            >
+              {getMaterialOptionLabel(material)}
+            </button>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 function getItemUnit(item: BomItemRow) {
-  return item.component_sku?.unit ?? item.unit;
+  return item.material?.unit ?? item.component_sku?.unit ?? item.unit;
+}
+
+function getItemCode(item: BomItemRow) {
+  return item.material?.material_code ?? item.component_sku?.sku_code ?? "-";
+}
+
+function getItemName(item: BomItemRow) {
+  return item.material?.material_name ?? item.component_sku?.sku_name ?? "-";
+}
+
+function getItemSpecs(item: BomItemRow) {
+  return item.material?.specs ?? item.component_sku?.specs ?? "-";
 }
 
 function renderBomImportSummary(
@@ -283,7 +374,7 @@ export default function BomPage() {
   const [boms, setBoms] = useState<BomListRow[]>([]);
   const [bomDetail, setBomDetail] = useState<BomDetail | null>(null);
   const [finishedGoodSkus, setFinishedGoodSkus] = useState<BomSkuOption[]>([]);
-  const [materialSkus, setMaterialSkus] = useState<BomSkuOption[]>([]);
+  const [materials, setMaterials] = useState<BomMaterialOption[]>([]);
   const [selectedBomId, setSelectedBomId] = useState("");
   const [headerForm, setHeaderForm] =
     useState<BomHeaderFormState>(initialHeaderForm);
@@ -324,16 +415,23 @@ export default function BomPage() {
   }, [boms, headerForm.productSkuId, headerForm.status]);
 
   const duplicateMaterial = useMemo(() => {
-    if (!bomDetail || !itemForm.componentSkuId) {
+    if (!bomDetail || !itemForm.materialId) {
       return null;
     }
 
+    const selectedMaterial = materials.find(
+      (material) => material.id === itemForm.materialId
+    );
+
     return (
       bomDetail.items.find(
-        (item) => item.component_sku_id === itemForm.componentSkuId
+        (item) =>
+          item.material_id === itemForm.materialId ||
+          (Boolean(selectedMaterial?.legacy_component_sku_id) &&
+            item.component_sku_id === selectedMaterial?.legacy_component_sku_id)
       ) ?? null
     );
-  }, [bomDetail, itemForm.componentSkuId]);
+  }, [bomDetail, itemForm.materialId, materials]);
 
   const selectedBoms = useMemo(
     () => boms.filter((bom) => selectedBomIds.includes(bom.id)),
@@ -412,12 +510,12 @@ export default function BomPage() {
       const [bomData, finishedGoodData, materialData] = await Promise.all([
         getBomList(),
         getFinishedGoodSkus(),
-        getMaterialSkus()
+        getBomMaterials()
       ]);
 
       setBoms(bomData);
       setFinishedGoodSkus(finishedGoodData);
-      setMaterialSkus(materialData);
+      setMaterials(materialData);
       setSelectedBomIds((current) =>
         current.filter((bomId) => bomData.some((bom) => bom.id === bomId))
       );
@@ -430,7 +528,7 @@ export default function BomPage() {
       setErrorMessage(getErrorMessage(error));
       setBoms([]);
       setFinishedGoodSkus([]);
-      setMaterialSkus([]);
+      setMaterials([]);
       setSelectedBomIds([]);
       setBomDetail(null);
     } finally {
@@ -503,13 +601,13 @@ export default function BomPage() {
 
       await addBomItem({
         bomHeaderId: bomDetail.id,
-        componentSkuId: itemForm.componentSkuId,
+        materialId: itemForm.materialId,
         quantityPer: Number(itemForm.quantityPer),
         lossRate: Number(itemForm.lossRate),
         notes: itemForm.notes
       });
 
-      setSuccessMessage("BOM 原材料添加成功。");
+      setSuccessMessage("BOM 辅料添加成功。");
       setItemForm(initialItemForm);
       await refreshAll();
     } catch (error) {
@@ -680,7 +778,7 @@ export default function BomPage() {
       <PageHeader
         eyebrow="生产基础资料"
         title="BOM 管理"
-        description="管理每个成品 SKU 的 BOM 版本和原材料用量，生产任务会按启用中的 BOM 自动计算物料需求。"
+        description="管理每个成品 SKU 的 BOM 版本和辅料用量，生产任务会按启用中的 BOM 自动计算物料需求。"
         actions={
           <div className="rowActions">
             <button
@@ -708,7 +806,7 @@ export default function BomPage() {
         <StatCard title="当前筛选 BOM" value={filteredBoms.length} change="符合当前条件" tone="blue" icon={<FactoryIcon size={20} />} />
         <StatCard title="启用 BOM" value={activeBomCount} change="可用于生产" tone="green" icon={<FactoryIcon size={20} />} />
         <StatCard title="停用 BOM" value={inactiveBomCount} change="暂不使用" tone="orange" icon={<FactoryIcon size={20} />} />
-        <StatCard title="原材料明细" value={totalBomItems} change="BOM 用料行" tone="purple" icon={<DatabaseIcon size={20} />} />
+        <StatCard title="辅料明细" value={totalBomItems} change="BOM 用料行" tone="purple" icon={<DatabaseIcon size={20} />} />
       </section>
 
       {successMessage ? (
@@ -894,7 +992,7 @@ export default function BomPage() {
                   <th>品牌</th>
                   <th>BOM 版本</th>
                   <th>BOM 状态</th>
-                  <th>原材料数量</th>
+                  <th>辅料数量</th>
                   <th>创建时间</th>
                   <th>操作</th>
                 </tr>
@@ -945,7 +1043,7 @@ export default function BomPage() {
                             onClick={() => openBomDetail(bom.id, true)}
                             disabled={detailLoading}
                           >
-                            添加原材料
+                            添加辅料
                           </button>
                           <button
                             type="button"
@@ -1012,7 +1110,7 @@ export default function BomPage() {
                 type="button"
                 onClick={() => setShowItemForm((current) => !current)}
               >
-                {showItemForm ? "收起添加" : "添加原材料"}
+                {showItemForm ? "收起添加" : "添加辅料"}
               </button>
           </div>
 
@@ -1041,16 +1139,16 @@ export default function BomPage() {
 
           {showItemForm ? (
             <form className="dataForm bomItemForm" onSubmit={submitItem}>
-              <BomSkuSearchSelect
-                label="原材料 SKU"
-                skus={materialSkus}
-                value={itemForm.componentSkuId}
+              <BomMaterialSearchSelect
+                label="辅料"
+                materials={materials}
+                value={itemForm.materialId}
                 disabled={submittingItem}
-                placeholder="搜索原材料 SKU 编码或名称"
-                onChange={(componentSkuId) =>
+                placeholder="搜索辅料编码、名称、分类或规格"
+                onChange={(materialId) =>
                   setItemForm((current) => ({
                     ...current,
-                    componentSkuId
+                    materialId
                   }))
                 }
               />
@@ -1102,7 +1200,7 @@ export default function BomPage() {
                     }))
                   }
                   disabled={submittingItem}
-                  placeholder="可填写原材料用量说明"
+                  placeholder="可填写辅料用量说明"
                 />
               </label>
 
@@ -1110,7 +1208,7 @@ export default function BomPage() {
                 <div className="warningNotice fullField">
                   <strong>提示</strong>
                   <p>
-                    这个原材料已经在当前 BOM 明细里：{duplicateMaterial.component_sku?.sku_code ?? "-"}。
+                    这个辅料已经在当前 BOM 明细里：{getItemCode(duplicateMaterial)}。
                   </p>
                 </div>
               ) : null}
@@ -1121,21 +1219,22 @@ export default function BomPage() {
                   type="submit"
                   disabled={submittingItem}
                 >
-                  {submittingItem ? "正在添加..." : "添加原材料"}
+                  {submittingItem ? "正在添加..." : "添加辅料"}
                 </button>
               </div>
             </form>
           ) : null}
 
           {bomDetail.items.length === 0 ? (
-            <div className="emptyState">当前 BOM 暂无原材料明细</div>
+            <div className="emptyState">当前 BOM 暂无辅料明细</div>
           ) : (
             <div className="tableWrap">
               <table className="dataTable bomDetailTable">
                 <thead>
                   <tr>
-                    <th>原材料 SKU 编码</th>
-                    <th>原材料名称</th>
+                    <th>辅料编码</th>
+                    <th>辅料名称</th>
+                    <th>规格</th>
                     <th>单位</th>
                     <th>每生产 1 个成品需要数量</th>
                     <th>损耗率</th>
@@ -1150,8 +1249,9 @@ export default function BomPage() {
 
                     return (
                       <tr key={item.id}>
-                        <td>{item.component_sku?.sku_code ?? "-"}</td>
-                        <td>{item.component_sku?.sku_name ?? "-"}</td>
+                        <td>{getItemCode(item)}</td>
+                        <td>{getItemName(item)}</td>
+                        <td>{getItemSpecs(item)}</td>
                         <td>{getItemUnit(item)}</td>
                         <td>
                           {isEditing ? (
@@ -1274,7 +1374,7 @@ export default function BomPage() {
       <BulkImportDialog<BomImportInput>
         open={importOpen}
         title="BOM 批量导入"
-        description="请按模板填写成品 SKU、BOM 版本、原材料 SKU、单位用量、损耗率、备注和状态。系统会按成品 SKU + BOM 版本分组预览。"
+        description="请按模板填写成品 SKU、BOM 版本、辅料编码、单位用量、损耗率、备注和状态。系统会按成品 SKU + BOM 版本分组预览。"
         templateFileName="bom-import-template.csv"
         fields={bomImportFields}
         validateRows={validateBomImportRows}
@@ -1304,7 +1404,7 @@ export default function BomPage() {
         title="确认删除 BOM 明细"
         description={
           <p>
-            删除明细会改变这个 BOM 的原材料清单。系统会先检查该 BOM 是否已被生产任务使用；已使用过的 BOM 不允许删除明细。
+            删除明细会改变这个 BOM 的辅料清单。系统会先检查该 BOM 是否已被生产任务使用；已使用过的 BOM 不允许删除明细。
           </p>
         }
         confirmLabel="确认删除明细"
@@ -1313,9 +1413,7 @@ export default function BomPage() {
         items={
           bomItemToDelete
             ? [
-                `${bomItemToDelete.component_sku?.sku_code ?? "-"} / ${
-                  bomItemToDelete.component_sku?.sku_name ?? "-"
-                }`
+                `${getItemCode(bomItemToDelete)} / ${getItemName(bomItemToDelete)}`
               ]
             : []
         }

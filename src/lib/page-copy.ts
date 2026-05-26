@@ -38,13 +38,13 @@ export const pageCopy: Record<string, PageCopy> = {
   },
   bom: {
     title: "BOM 管理",
-    description: "维护每个成品 SKU 对应需要用到的原材料和用量。",
+    description: "维护每个成品 SKU 对应需要用到的辅料和用量。",
     owner: "管理员 / 厂长",
     nextSteps: ["维护 BOM 版本", "支持半成品", "计算物料需求"]
   },
   materialRequirements: {
     title: "物料需求",
-    description: "根据备货数量和 BOM 计算需要多少原材料，并对比库存。",
+    description: "根据备货数量和 BOM 计算需要多少辅料，并对比库存。",
     owner: "厂长 / 采购 / 仓库",
     nextSteps: ["自动计算缺料", "生成采购建议", "锁定生产用料"]
   },
@@ -55,8 +55,8 @@ export const pageCopy: Record<string, PageCopy> = {
     nextSteps: ["供应商资料", "采购状态", "到货入库"]
   },
   inventoryMaterials: {
-    title: "原材料库存",
-    description: "管理原材料库存、库位、可用数量和安全库存。",
+    title: "辅料库存",
+    description: "管理辅料库存、库位、可用数量和安全库存。",
     owner: "仓库",
     nextSteps: ["入库", "出库", "库存预警"]
   },
@@ -68,7 +68,7 @@ export const pageCopy: Record<string, PageCopy> = {
   },
   inventoryTransactions: {
     title: "出入库记录",
-    description: "记录原材料、半成品、成品的每一次库存变化。",
+    description: "记录辅料、半成品、成品的每一次库存变化。",
     owner: "仓库",
     nextSteps: ["按 SKU 查询", "按时间导出", "追踪操作人"]
   },

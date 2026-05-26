@@ -20,7 +20,6 @@ import {
   UploadIcon,
   WarehouseIcon
 } from "@/components/ui/icons";
-import { SupplierSearchSelect } from "@/components/SupplierSearchSelect";
 import {
   bulkImportSkus,
   deactivateSkusByIds,
@@ -41,7 +40,6 @@ import {
   type SkuProductOption,
   type SkuStatus
 } from "@/lib/api/skus";
-import { getSuppliers, type Supplier } from "@/lib/api/master-data";
 import { getBrandCodeName, getSkuBrandLabel } from "@/lib/brand-utils";
 import { downloadCsvTemplate, type CsvTemplateField } from "@/lib/utils/csv";
 
@@ -49,7 +47,8 @@ const SKU_PAGE_SIZE = 100;
 
 const skuTypeLabels: Record<string, string> = {
   finished_good: "成品",
-  material: "原材料"
+  finished_product: "成品",
+  semi_finished: "半成品"
 };
 
 const skuStatusLabels: Record<string, string> = {
@@ -83,7 +82,7 @@ type SkuEditFormState = {
 type SkuStats = {
   totalSkus: number;
   finishedGoodSkus: number;
-  materialSkus: number;
+  semiFinishedSkus: number;
   inStockSkus: number;
   outOfStockSkus: number;
 };
@@ -188,16 +187,6 @@ function formatQuantity(value: number | null | undefined) {
   });
 }
 
-function formatPercent(value: number | null | undefined) {
-  if (value === null || value === undefined) {
-    return "-";
-  }
-
-  return `${Number(value * 100).toLocaleString("zh-CN", {
-    maximumFractionDigits: 2
-  })}%`;
-}
-
 function getProductLabel(product: SkuProductOption | null | undefined) {
   if (!product) {
     return "未绑定产品";
@@ -212,20 +201,6 @@ function getProductOptionLabel(product: SkuProductOption) {
   const brandText = product.brand ? ` / ${getBrandCodeName(product.brand)}` : "";
 
   return `${product.product_code} / ${product.name}${brandText}${statusText}`;
-}
-
-function getSkuDefaultSupplierLabel(sku: SkuListRow) {
-  if (sku.sku_type !== "material") {
-    return "-";
-  }
-
-  if (!sku.default_supplier) {
-    return "未设置";
-  }
-
-  const statusText = sku.default_supplier.status === "inactive" ? " / 停用" : "";
-
-  return `${sku.default_supplier.supplier_code} / ${sku.default_supplier.name}${statusText}`;
 }
 
 type ProductSearchSelectProps = {
@@ -300,16 +275,12 @@ function ProductSearchSelect({
 }
 
 function getInventoryHref(skuType: string) {
-  return skuType === "material" ? "/inventory/materials" : "/inventory/products";
+  return "/inventory/products";
 }
 
 function getBomUsageTitle(sku: SkuListRow) {
   if (sku.sku_type === "finished_good") {
     return "作为成品使用的 BOM";
-  }
-
-  if (sku.sku_type === "material") {
-    return "作为原材料使用的 BOM";
   }
 
   return "BOM 关联";
@@ -319,7 +290,6 @@ export default function AdminSkusPage() {
   const router = useRouter();
   const [skus, setSkus] = useState<SkuListRow[]>([]);
   const [products, setProducts] = useState<SkuProductOption[]>([]);
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [skuForm, setSkuForm] = useState<SkuFormState>(initialSkuForm);
   const [editForm, setEditForm] = useState<SkuEditFormState | null>(null);
   const [selectedBomSku, setSelectedBomSku] = useState<SkuListRow | null>(null);
@@ -328,7 +298,6 @@ export default function AdminSkusPage() {
   const [skuTypeFilter, setSkuTypeFilter] = useState("all");
   const [brandFilter, setBrandFilter] = useState("all");
   const [productFilter, setProductFilter] = useState("all");
-  const [supplierFilter, setSupplierFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedSkuIds, setSelectedSkuIds] = useState<string[]>([]);
   const [page, setPage] = useState(1);
@@ -351,9 +320,9 @@ export default function AdminSkusPage() {
     return {
       totalSkus: skuTotal,
       finishedGoodSkus: skus.filter(
-        (sku) => sku.sku_type === "finished_good"
+        (sku) => sku.sku_type === "finished_good" || sku.sku_type === "finished_product"
       ).length,
-      materialSkus: skus.filter((sku) => sku.sku_type === "material").length,
+      semiFinishedSkus: skus.filter((sku) => sku.sku_type === "semi_finished").length,
       inStockSkus,
       outOfStockSkus: skus.length - inStockSkus
     };
@@ -372,33 +341,6 @@ export default function AdminSkusPage() {
       first.brand_code.localeCompare(second.brand_code, "zh-CN")
     );
   }, [products]);
-
-  const supplierOptions = useMemo(() => {
-    const supplierById = new Map<string, Supplier>();
-
-    suppliers.forEach((supplier) => supplierById.set(supplier.id, supplier));
-    skus.forEach((sku) => {
-      if (sku.default_supplier) {
-        supplierById.set(sku.default_supplier.id, {
-          id: sku.default_supplier.id,
-          supplier_code: sku.default_supplier.supplier_code,
-          name: sku.default_supplier.name,
-          contact_name: sku.default_supplier.contact_name,
-          phone: sku.default_supplier.phone,
-          email: null,
-          address: null,
-          notes: null,
-          status: sku.default_supplier.status,
-          created_at: "",
-          updated_at: ""
-        });
-      }
-    });
-
-    return [...supplierById.values()].sort((first, second) =>
-      first.supplier_code.localeCompare(second.supplier_code, "zh-CN")
-    );
-  }, [skus, suppliers]);
 
   const selectedSkuRows = useMemo(
     () => skus.filter((sku) => selectedSkuIds.includes(sku.id)),
@@ -419,8 +361,7 @@ export default function AdminSkusPage() {
         skuType: skuTypeFilter,
         status: statusFilter,
         brandId: brandFilter,
-        productId: productFilter,
-        supplierId: supplierFilter
+        productId: productFilter
       });
 
       setSkus(skuPage.rows);
@@ -452,17 +393,11 @@ export default function AdminSkusPage() {
 
   const loadOptions = async () => {
     try {
-      const [productData, supplierData] = await Promise.all([
-        getProductsForSkuForm(),
-        getSuppliers()
-      ]);
-
+      const productData = await getProductsForSkuForm();
       setProducts(productData);
-      setSuppliers(supplierData);
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setProducts([]);
-      setSuppliers([]);
     }
   };
 
@@ -479,7 +414,6 @@ export default function AdminSkusPage() {
     searchKeyword,
     skuTypeFilter,
     statusFilter,
-    supplierFilter
   ]);
 
   const refreshAll = async () => {
@@ -682,9 +616,12 @@ export default function AdminSkusPage() {
       <PageHeader
         eyebrow="基础资料"
         title="SKU 管理"
-        description="管理成品 SKU 和原材料 SKU。成品用于 FBA、生产和成品库存；原材料用于 BOM、采购和原材料库存。"
+        description="只管理成品和半成品 SKU。辅料已经拆到独立的辅料管理页面。"
         actions={
           <div className="rowActions">
+            <button type="button" onClick={() => router.push("/admin/materials")}>
+              辅料管理
+            </button>
             <button
               type="button"
               onClick={() =>
@@ -709,7 +646,7 @@ export default function AdminSkusPage() {
       <section className="modernStatGrid skuStatGrid">
         <StatCard title="当前筛选 SKU" value={stats.totalSkus} change="符合当前条件" tone="blue" icon={<DatabaseIcon size={20} />} />
         <StatCard title="本页成品 SKU" value={stats.finishedGoodSkus} change="用于生产和 FBA" tone="green" icon={<BoxIcon size={20} />} />
-        <StatCard title="本页原材料 SKU" value={stats.materialSkus} change="用于 BOM 和采购" tone="orange" icon={<DatabaseIcon size={20} />} />
+        <StatCard title="本页半成品 SKU" value={stats.semiFinishedSkus} change="用于后续生产扩展" tone="orange" icon={<DatabaseIcon size={20} />} />
         <StatCard title="本页有库存 SKU" value={stats.inStockSkus} change="已有库存记录" tone="purple" icon={<WarehouseIcon size={20} />} />
         <StatCard title="本页无库存 SKU" value={stats.outOfStockSkus} change="暂无库存记录" tone="red" icon={<WarehouseIcon size={20} />} />
       </section>
@@ -776,17 +713,14 @@ export default function AdminSkusPage() {
                 setSkuForm((current) => ({
                   ...current,
                   skuType: event.target.value as SkuEditableType,
-                  defaultSupplierId:
-                    event.target.value === "material"
-                      ? current.defaultSupplierId
-                      : ""
+                  defaultSupplierId: ""
                 }))
               }
               disabled={creating}
               required
             >
               <option value="finished_good">成品</option>
-              <option value="material">原材料</option>
+              <option value="semi_finished">半成品</option>
             </select>
           </label>
 
@@ -802,21 +736,6 @@ export default function AdminSkusPage() {
               }))
             }
           />
-
-          {skuForm.skuType === "material" ? (
-            <SupplierSearchSelect
-              label="默认供应商"
-              suppliers={supplierOptions}
-              value={skuForm.defaultSupplierId}
-              disabled={creating}
-              onChange={(supplierId) =>
-                setSkuForm((current) => ({
-                  ...current,
-                  defaultSupplierId: supplierId
-                }))
-              }
-            />
-          ) : null}
 
           <label>
             单位
@@ -910,16 +829,16 @@ export default function AdminSkusPage() {
             <label>
               SKU 类型
               <select value={editForm.skuType} disabled>
-                {["finished_good", "material"].includes(editForm.skuType) ? null : (
+                {["finished_good", "finished_product", "semi_finished"].includes(editForm.skuType) ? null : (
                   <option value={editForm.skuType}>
                     {getSkuTypeLabel(editForm.skuType)}
                   </option>
                 )}
                 <option value="finished_good">成品</option>
-                <option value="material">原材料</option>
+                <option value="semi_finished">半成品</option>
               </select>
               <span className="fieldHint">
-                SKU 类型已锁定，避免影响现有 BOM、库存、采购和生产记录。
+                SKU 类型已锁定，避免影响现有 BOM、库存和生产记录。
               </span>
             </label>
 
@@ -939,25 +858,6 @@ export default function AdminSkusPage() {
                 )
               }
             />
-
-            {editForm.skuType === "material" ? (
-              <SupplierSearchSelect
-                label="默认供应商"
-                suppliers={supplierOptions}
-                value={editForm.defaultSupplierId}
-                disabled={updating}
-                onChange={(supplierId) =>
-                  setEditForm((current) =>
-                    current
-                      ? {
-                          ...current,
-                          defaultSupplierId: supplierId
-                        }
-                      : current
-                  )
-                }
-              />
-            ) : null}
 
             <label>
               单位
@@ -1058,7 +958,6 @@ export default function AdminSkusPage() {
             setSkuTypeFilter("all");
             setBrandFilter("all");
             setProductFilter("all");
-            setSupplierFilter("all");
             setStatusFilter("all");
           }}
         >
@@ -1074,7 +973,7 @@ export default function AdminSkusPage() {
             >
               <option value="all">全部类型</option>
               <option value="finished_good">成品</option>
-              <option value="material">原材料</option>
+              <option value="semi_finished">半成品</option>
             </select>
           </label>
 
@@ -1107,7 +1006,7 @@ export default function AdminSkusPage() {
               }}
             >
               <option value="all">全部品牌</option>
-              <option value="none">无品牌 / 辅料</option>
+              <option value="none">无品牌</option>
               {brandOptions.map((brand) => (
                 <option key={brand.id} value={brand.id}>
                   {getBrandCodeName(brand)}
@@ -1131,24 +1030,6 @@ export default function AdminSkusPage() {
             </select>
           </label>
 
-          <label>
-            默认供应商
-            <select
-              value={supplierFilter}
-              onChange={(event) => {
-                resetToFirstPage();
-                setSupplierFilter(event.target.value);
-              }}
-            >
-              <option value="all">全部供应商</option>
-              <option value="none">未设置供应商</option>
-              {supplierOptions.map((supplier) => (
-                <option key={supplier.id} value={supplier.id}>
-                  {supplier.supplier_code} / {supplier.name}
-                </option>
-              ))}
-            </select>
-          </label>
         </SearchFilterBar>
 
         <BulkActionBar
@@ -1186,7 +1067,6 @@ export default function AdminSkusPage() {
                   <th>SKU 类型</th>
                   <th>所属产品</th>
                   <th>品牌</th>
-                  <th>默认供应商</th>
                   <th>单位</th>
                   <th>状态</th>
                   <th>当前库存数量</th>
@@ -1222,7 +1102,7 @@ export default function AdminSkusPage() {
                       </td>
                       <td>{sku.sku_name}</td>
                       <td>
-                        <StatusBadge status={sku.sku_type === "material" ? "pending" : "accepted"} label={getSkuTypeLabel(sku.sku_type)} />
+                        <StatusBadge status={sku.sku_type === "semi_finished" ? "pending" : "accepted"} label={getSkuTypeLabel(sku.sku_type)} />
                       </td>
                       <td>{getProductLabel(sku.product)}</td>
                       <td>
@@ -1231,7 +1111,6 @@ export default function AdminSkusPage() {
                           product: sku.product
                         })}
                       </td>
-                      <td>{getSkuDefaultSupplierLabel(sku)}</td>
                       <td>{sku.unit}</td>
                       <td>
                         <StatusBadge status={sku.status} label={getSkuStatusLabel(sku.status)} />
@@ -1349,7 +1228,7 @@ export default function AdminSkusPage() {
             </div>
             <div className="detailItem">
               <span>默认供应商</span>
-              <strong>{getSkuDefaultSupplierLabel(selectedBomSku)}</strong>
+              <strong>辅料供应商请到辅料管理查看</strong>
             </div>
           </div>
 
@@ -1392,61 +1271,10 @@ export default function AdminSkusPage() {
             )
           ) : null}
 
-          {bomUsage && selectedBomSku.sku_type === "material" ? (
-            bomUsage.materialBomItems.length === 0 ? (
-              <div className="emptyState">当前原材料 SKU 暂无 BOM 明细关联</div>
-            ) : (
-              <div className="tableWrap">
-                <table className="dataTable skuBomTable">
-                  <thead>
-                    <tr>
-                      <th>BOM 编码</th>
-                      <th>成品 SKU</th>
-                      <th>所属产品</th>
-                      <th>单位用量</th>
-                      <th>损耗率</th>
-                      <th>单位</th>
-                      <th>BOM 状态</th>
-                      <th>备注</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {bomUsage.materialBomItems.map((item) => (
-                      <tr key={item.id}>
-                        <td>{item.bom_header?.bom_code ?? "-"}</td>
-                        <td>
-                          {item.bom_header?.product_sku
-                            ? `${item.bom_header.product_sku.sku_code} / ${item.bom_header.product_sku.sku_name}`
-                            : "-"}
-                        </td>
-                        <td>
-                          {getProductLabel(item.bom_header?.product_sku?.product)}
-                        </td>
-                        <td className="quantityCell">
-                          {formatQuantity(item.quantity_per)}
-                        </td>
-                        <td>{formatPercent(item.loss_rate)}</td>
-                        <td>{item.unit}</td>
-                        <td>
-                          <span
-                            className={`tablePill bom-status-${item.bom_header?.status ?? "unknown"}`}
-                          >
-                            {getSkuStatusLabel(item.bom_header?.status ?? "-")}
-                          </span>
-                        </td>
-                        <td className="notesCell">{item.notes ?? "-"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )
-          ) : null}
-
           {bomUsage &&
-          !["finished_good", "material"].includes(selectedBomSku.sku_type) ? (
+          !["finished_good", "finished_product"].includes(selectedBomSku.sku_type) ? (
             <div className="emptyState">
-              当前 SKU 类型不是成品或原材料，请先确认业务类型后再查看 BOM 关系。
+              当前 SKU 不是成品 SKU，暂不展示 BOM 主表关系。
             </div>
           ) : null}
         </Modal>
@@ -1455,7 +1283,7 @@ export default function AdminSkusPage() {
       <BulkImportDialog<SkuImportInput>
         open={importOpen}
         title="SKU 批量导入"
-        description="原材料也写入 skus 表，通过 sku_type = material 区分；不会新增 materials 表。成品 SKU 必须填写所属产品编码。"
+        description="只导入成品和半成品 SKU；辅料请到“辅料管理”批量导入。成品 SKU 必须填写所属产品编码。"
         templateFileName="skus-import-template.csv"
         fields={skuImportFields}
         validateRows={validateSkuImportRows}

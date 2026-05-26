@@ -10,7 +10,7 @@ const resultTypes: Array<GlobalSearchResult["type"]> = [
   "功能",
   "单据",
   "产品/SKU",
-  "原材料"
+  "辅料"
 ];
 
 export function GlobalSearch() {
@@ -75,7 +75,7 @@ export function GlobalSearch() {
             setOpen(true);
           }}
           onFocus={() => setOpen(true)}
-          placeholder="搜索功能、单据、产品、SKU等"
+          placeholder="搜索功能、单据、产品、SKU、辅料等"
         />
       </label>
 

@@ -41,11 +41,28 @@ export type InventoryTransactionWarehouse = {
   status: string;
 };
 
+export type InventoryTransactionSku = {
+  id: string;
+  sku_code: string;
+  sku_name: string;
+  sku_type: string;
+  unit: string;
+  product: {
+    id: string;
+    brand_id: string | null;
+    product_code: string;
+    name: string;
+    brand: BrandSummary | null;
+  } | null;
+};
+
 export type InventoryTransactionRow = {
   id: string;
   transaction_no: string;
   warehouse_id: string;
   sku_id: string;
+  product_sku_id: string | null;
+  material_id: string | null;
   transaction_type: InventoryTransactionType;
   quantity: number;
   production_order_id: string | null;
@@ -56,20 +73,9 @@ export type InventoryTransactionRow = {
   notes: string | null;
   created_at: string;
   warehouse: InventoryTransactionWarehouse | null;
-  sku: {
-    id: string;
-    sku_code: string;
-    sku_name: string;
-    sku_type: string;
-    unit: string;
-    product: {
-      id: string;
-      brand_id: string | null;
-      product_code: string;
-      name: string;
-      brand: BrandSummary | null;
-    } | null;
-  } | null;
+  sku: InventoryTransactionSku | null;
+  product_sku: InventoryTransactionSku | null;
+  material: InventoryMaterial | null;
   purchase_order: {
     id: string;
     purchase_order_no: string;
@@ -152,10 +158,28 @@ export type CurrentInventorySku = {
   product: CurrentInventoryProduct;
 };
 
+export type InventoryMaterial = {
+  id: string;
+  material_code: string;
+  material_name: string;
+  category: string | null;
+  unit: string;
+  specs: string | null;
+  default_supplier_id: string | null;
+  status: string;
+  supplier?: {
+    id: string;
+    supplier_code: string;
+    name: string;
+  } | null;
+};
+
 export type CurrentInventoryRow = {
   id: string;
   warehouse_id: string;
   sku_id: string;
+  product_sku_id: string | null;
+  material_id: string | null;
   item_type: string;
   quantity_on_hand: number;
   reserved_quantity: number;
@@ -164,6 +188,8 @@ export type CurrentInventoryRow = {
   updated_at: string;
   warehouse: CurrentInventoryWarehouse | null;
   sku: CurrentInventorySku | null;
+  product_sku: CurrentInventorySku | null;
+  material: InventoryMaterial | null;
 };
 
 export type MaterialInventoryRow = CurrentInventoryRow & {
@@ -181,6 +207,7 @@ export type ReceivablePurchaseOrderItem = {
   id: string;
   purchase_order_id: string;
   sku_id: string;
+  material_id: string | null;
   material_requirement_id: string | null;
   ordered_quantity: number;
   received_quantity: number;
@@ -192,6 +219,7 @@ export type ReceivablePurchaseOrderItem = {
     sku_name: string;
     unit: string;
   } | null;
+  material: InventoryMaterial | null;
   material_requirement: {
     id: string;
     status: string;
@@ -329,6 +357,7 @@ export type AdjustInventoryItemInput = {
 export type AdjustInventoryByWarehouseSkuInput = {
   warehouseId: string;
   skuId: string;
+  itemType?: "product_sku" | "material";
   adjustmentMode: InventoryAdjustmentMode;
   adjustmentQuantity?: number;
   targetQuantity?: number;
@@ -348,6 +377,9 @@ export type CreateAdjustmentTransactionInput = {
 
 export type InventorySkuOption = {
   id: string;
+  product_sku_id: string | null;
+  material_id: string | null;
+  legacy_sku_id: string | null;
   product_id: string | null;
   sku_code: string;
   sku_name: string;
@@ -355,11 +387,13 @@ export type InventorySkuOption = {
   unit: string;
   status: string;
   product: CurrentInventoryProduct;
+  material: InventoryMaterial | null;
 };
 
 export type OtherInventoryMovementInput = {
   warehouseId: string;
   skuId: string;
+  itemType?: "product_sku" | "material";
   quantity: number;
   reason: string;
   notes?: string;
@@ -369,6 +403,8 @@ export type OtherInventoryMovementImportInput = {
   warehouseId: string;
   warehouseCode: string;
   skuId: string;
+  productSkuId?: string | null;
+  materialId?: string | null;
   skuCode: string;
   skuName: string;
   skuType: string;
@@ -385,6 +421,8 @@ export type InventoryAdjustmentImportInput = {
   warehouseId: string;
   warehouseCode: string;
   skuId: string;
+  productSkuId?: string | null;
+  materialId?: string | null;
   skuCode: string;
   skuName: string;
   skuType: string;
@@ -409,9 +447,10 @@ type MaybeRelation<T> = T | T[] | null;
 
 type RawReceivablePurchaseOrderItem = Omit<
   ReceivablePurchaseOrderItem,
-  "sku" | "material_requirement"
+  "sku" | "material" | "material_requirement"
 > & {
   sku: MaybeRelation<NonNullable<ReceivablePurchaseOrderItem["sku"]>>;
+  material: MaybeRelation<InventoryMaterial>;
   material_requirement: MaybeRelation<
     NonNullable<ReceivablePurchaseOrderItem["material_requirement"]>
   >;
@@ -465,6 +504,8 @@ type RawInventoryTransactionRow = Omit<
   InventoryTransactionRow,
   | "warehouse"
   | "sku"
+  | "product_sku"
+  | "material"
   | "purchase_order"
   | "production_order"
   | "replenishment_request"
@@ -480,6 +521,14 @@ type RawInventoryTransactionRow = Omit<
       >;
     }
   >;
+  product_sku: MaybeRelation<
+    Omit<NonNullable<InventoryTransactionRow["product_sku"]>, "product"> & {
+      product: MaybeRelation<
+        NonNullable<NonNullable<InventoryTransactionRow["product_sku"]>["product"]>
+      >;
+    }
+  >;
+  material: MaybeRelation<InventoryMaterial>;
   purchase_order: MaybeRelation<InventoryTransactionRow["purchase_order"]>;
   production_order: MaybeRelation<InventoryTransactionRow["production_order"]>;
   replenishment_request: MaybeRelation<
@@ -488,23 +537,35 @@ type RawInventoryTransactionRow = Omit<
   operator: MaybeRelation<InventoryTransactionRow["operator"]>;
 };
 
-type RawCurrentInventoryRow = Omit<CurrentInventoryRow, "warehouse" | "sku"> & {
+type RawCurrentInventoryRow = Omit<
+  CurrentInventoryRow,
+  "warehouse" | "sku" | "product_sku" | "material"
+> & {
   warehouse: MaybeRelation<CurrentInventoryWarehouse>;
   sku: MaybeRelation<
     Omit<CurrentInventorySku, "product"> & {
       product: MaybeRelation<NonNullable<CurrentInventoryProduct>>;
     }
   >;
+  product_sku: MaybeRelation<
+    Omit<CurrentInventorySku, "product"> & {
+      product: MaybeRelation<NonNullable<CurrentInventoryProduct>>;
+    }
+  >;
+  material: MaybeRelation<InventoryMaterial>;
 };
 
-type RawInventorySkuOption = Omit<InventorySkuOption, "product"> & {
+type RawInventorySkuOption = Omit<InventorySkuOption, "product" | "material"> & {
   product: MaybeRelation<NonNullable<CurrentInventoryProduct>>;
+  material?: MaybeRelation<InventoryMaterial>;
 };
 
 type InventoryItem = {
   id: string;
   warehouse_id: string;
   sku_id: string;
+  product_sku_id: string | null;
+  material_id: string | null;
   item_type: string;
   quantity_on_hand: number;
   reserved_quantity: number;
@@ -515,6 +576,8 @@ type InventoryItem = {
 type InventoryTransactionQuantity = {
   replenishment_request_id: string | null;
   sku_id: string;
+  product_sku_id: string | null;
+  material_id: string | null;
   quantity: number;
 };
 
@@ -620,6 +683,60 @@ function getOutboundTransactionTypeBySkuType(
   return skuType === "material" ? "material_out" : "product_out";
 }
 
+function isFinishedInventoryType(itemType: string) {
+  return (
+    itemType === "finished_product" ||
+    itemType === "finished_good" ||
+    itemType === "product_sku"
+  );
+}
+
+function getInventoryIdentityFromOption(option: InventorySkuOption) {
+  const materialId = option.material_id ?? (option.sku_type === "material" ? option.id : null);
+  const productSkuId =
+    option.product_sku_id ??
+    (option.sku_type === "material" ? null : option.id);
+  const skuId = option.sku_type === "material" ? option.legacy_sku_id : option.id;
+
+  if (!skuId) {
+    throw new Error(
+      `${option.sku_code} 是新辅料，但旧库存字段 sku_id 仍是必填。请先按同编码保留或补齐一个旧辅料 SKU，后续清理阶段再把 sku_id 改成可空。`
+    );
+  }
+
+  return {
+    skuId,
+    productSkuId,
+    materialId,
+    itemType: option.sku_type === "material" ? "material" : "finished_product"
+  };
+}
+
+function getInventoryIdentityFromItem(input: {
+  sku_id: string;
+  product_sku_id?: string | null;
+  material_id?: string | null;
+  item_type: string;
+}) {
+  if (input.material_id || input.item_type === "material") {
+    return {
+      skuId: input.sku_id,
+      productSkuId: null,
+      materialId: input.material_id ?? null,
+      itemType: "material"
+    };
+  }
+
+  return {
+    skuId: input.sku_id,
+    productSkuId: input.product_sku_id ?? input.sku_id,
+    materialId: null,
+    itemType: isFinishedInventoryType(input.item_type)
+      ? input.item_type
+      : "finished_product"
+  };
+}
+
 function isInventorySupportedSkuType(skuType: string) {
   return (
     skuType === "material" ||
@@ -655,6 +772,7 @@ function getPurchaseOrderSelect() {
       id,
       purchase_order_id,
       sku_id,
+      material_id,
       material_requirement_id,
       ordered_quantity,
       received_quantity,
@@ -665,6 +783,21 @@ function getPurchaseOrderSelect() {
         sku_code,
         sku_name,
         unit
+      ),
+      material:materials!purchase_order_items_material_id_fkey (
+        id,
+        material_code,
+        material_name,
+        category,
+        unit,
+        specs,
+        default_supplier_id,
+        status,
+        supplier:suppliers!materials_default_supplier_id_fkey (
+          id,
+          supplier_code,
+          name
+        )
       ),
       material_requirement:material_requirements!purchase_order_items_material_requirement_id_fkey (
         id,
@@ -680,6 +813,7 @@ function normalizePurchaseOrderItem(
   return {
     ...item,
     sku: singleRelation(item.sku),
+    material: singleRelation(item.material),
     material_requirement: singleRelation(item.material_requirement)
   };
 }
@@ -798,6 +932,10 @@ function normalizeInventoryTransaction(
 ): InventoryTransactionRow {
   const sku = singleRelation(transaction.sku);
   const product = normalizeProductBrand(singleRelation(sku?.product ?? null));
+  const productSku = singleRelation(transaction.product_sku);
+  const productSkuProduct = normalizeProductBrand(
+    singleRelation(productSku?.product ?? null)
+  );
   const purchaseOrder = singleRelation(transaction.purchase_order);
   const productionOrder = singleRelation(transaction.production_order);
   const replenishmentRequest = singleRelation(transaction.replenishment_request);
@@ -819,6 +957,13 @@ function normalizeInventoryTransaction(
           product
         }
       : null,
+    product_sku: productSku
+      ? {
+          ...productSku,
+          product: productSkuProduct
+        }
+      : null,
+    material: singleRelation(transaction.material),
     purchase_order: purchaseOrder,
     production_order: productionOrder,
     replenishment_request: replenishmentRequest,
@@ -833,6 +978,8 @@ function getCurrentInventorySelect() {
     id,
     warehouse_id,
     sku_id,
+    product_sku_id,
+    material_id,
     item_type,
     quantity_on_hand,
     reserved_quantity,
@@ -867,6 +1014,43 @@ function getCurrentInventorySelect() {
           status
         )
       )
+    ),
+    product_sku:skus!inventory_items_product_sku_id_fkey (
+      id,
+      product_id,
+      sku_code,
+      sku_name,
+      sku_type,
+      unit,
+      product:products!skus_product_id_fkey (
+        id,
+        brand_id,
+        product_code,
+        name,
+        brand:brands!products_brand_id_fkey (
+          id,
+          brand_code,
+          name,
+          english_name,
+          logo_url,
+          status
+        )
+      )
+    ),
+    material:materials!inventory_items_material_id_fkey (
+      id,
+      material_code,
+      material_name,
+      category,
+      unit,
+      specs,
+      default_supplier_id,
+      status,
+      supplier:suppliers!materials_default_supplier_id_fkey (
+        id,
+        supplier_code,
+        name
+      )
     )
   `;
 }
@@ -877,6 +1061,8 @@ function getInventoryTransactionSelect() {
     transaction_no,
     warehouse_id,
     sku_id,
+    product_sku_id,
+    material_id,
     transaction_type,
     quantity,
     production_order_id,
@@ -914,6 +1100,37 @@ function getInventoryTransactionSelect() {
         )
       )
     ),
+    product_sku:skus!inventory_transactions_product_sku_id_fkey (
+      id,
+      sku_code,
+      sku_name,
+      sku_type,
+      unit,
+      product:products!skus_product_id_fkey (
+        id,
+        brand_id,
+        product_code,
+        name,
+        brand:brands!products_brand_id_fkey (
+          id,
+          brand_code,
+          name,
+          english_name,
+          logo_url,
+          status
+        )
+      )
+    ),
+    material:materials!inventory_transactions_material_id_fkey (
+      id,
+      material_code,
+      material_name,
+      category,
+      unit,
+      specs,
+      default_supplier_id,
+      status
+    ),
     purchase_order:purchase_orders!inventory_transactions_purchase_order_id_fkey (
       id,
       purchase_order_no
@@ -937,6 +1154,11 @@ function getInventoryTransactionSelect() {
 function normalizeCurrentInventory(row: RawCurrentInventoryRow): CurrentInventoryRow {
   const sku = singleRelation(row.sku);
   const product = normalizeProductBrand(singleRelation(sku?.product ?? null));
+  const productSku = singleRelation(row.product_sku);
+  const productSkuProduct = normalizeProductBrand(
+    singleRelation(productSku?.product ?? null)
+  );
+  const material = singleRelation(row.material);
 
   return {
     ...row,
@@ -952,14 +1174,22 @@ function normalizeCurrentInventory(row: RawCurrentInventoryRow): CurrentInventor
           ...sku,
           product
         }
-      : null
+      : null,
+    product_sku: productSku
+      ? {
+          ...productSku,
+          product: productSkuProduct
+        }
+      : null,
+    material
   };
 }
 
 function normalizeInventorySkuOption(row: RawInventorySkuOption): InventorySkuOption {
   return {
     ...row,
-    product: normalizeProductBrand(singleRelation(row.product ?? null))
+    product: normalizeProductBrand(singleRelation(row.product ?? null)),
+    material: singleRelation(row.material ?? null)
   };
 }
 
@@ -967,11 +1197,15 @@ function createSyntheticInventoryRow(input: {
   warehouse: CurrentInventoryWarehouse;
   sku: InventorySkuOption;
 }): InventoryAdjustmentRow {
+  const identity = getInventoryIdentityFromOption(input.sku);
+
   return {
     id: "",
     warehouse_id: input.warehouse.id,
-    sku_id: input.sku.id,
-    item_type: getInventoryItemTypeBySkuType(input.sku.sku_type),
+    sku_id: identity.skuId,
+    product_sku_id: identity.productSkuId,
+    material_id: identity.materialId,
+    item_type: identity.itemType,
     quantity_on_hand: 0,
     reserved_quantity: 0,
     safety_stock_quantity: 0,
@@ -979,21 +1213,38 @@ function createSyntheticInventoryRow(input: {
     updated_at: new Date().toISOString(),
     warehouse: input.warehouse,
     sku: {
-      id: input.sku.id,
+      id: identity.skuId,
       product_id: input.sku.product_id,
       sku_code: input.sku.sku_code,
       sku_name: input.sku.sku_name,
       sku_type: input.sku.sku_type,
       unit: input.sku.unit,
       product: input.sku.product
-    }
+    },
+    product_sku:
+      identity.productSkuId && input.sku.sku_type !== "material"
+        ? {
+            id: identity.productSkuId,
+            product_id: input.sku.product_id,
+            sku_code: input.sku.sku_code,
+            sku_name: input.sku.sku_name,
+            sku_type: input.sku.sku_type,
+            unit: input.sku.unit,
+            product: input.sku.product
+          }
+        : null,
+    material: input.sku.material
   };
 }
 
 function sortCurrentInventoryRows<T extends CurrentInventoryRow>(rows: T[]) {
   return [...rows].sort((a, b) => {
-    const skuCompare = (a.sku?.sku_code ?? "").localeCompare(
-      b.sku?.sku_code ?? "",
+    const aCode =
+      a.material?.material_code ?? a.product_sku?.sku_code ?? a.sku?.sku_code ?? "";
+    const bCode =
+      b.material?.material_code ?? b.product_sku?.sku_code ?? b.sku?.sku_code ?? "";
+    const skuCompare = aCode.localeCompare(
+      bCode,
       "zh-CN"
     );
 
@@ -1015,7 +1266,14 @@ function matchesSkuKeyword(row: CurrentInventoryRow, keyword: string) {
     return true;
   }
 
-  return [row.sku?.sku_code, row.sku?.sku_name]
+  return [
+    row.material?.material_code,
+    row.material?.material_name,
+    row.product_sku?.sku_code,
+    row.product_sku?.sku_name,
+    row.sku?.sku_code,
+    row.sku?.sku_name
+  ]
     .filter(Boolean)
     .some((value) => value?.toLowerCase().includes(normalizedKeyword));
 }
@@ -1025,7 +1283,8 @@ function matchesBrand(row: CurrentInventoryRow, brandId?: string) {
     return true;
   }
 
-  const currentBrandId = row.sku?.product?.brand?.id ?? null;
+  const currentBrandId =
+    row.product_sku?.product?.brand?.id ?? row.sku?.product?.brand?.id ?? null;
 
   return brandId === "none" ? !currentBrandId : currentBrandId === brandId;
 }
@@ -1040,12 +1299,13 @@ function matchesAdjustmentSkuType(
 
   if (skuType === "finished_good") {
     return (
+      Boolean(row.product_sku_id) ||
       row.sku?.sku_type === "finished_good" ||
       row.sku?.sku_type === "finished_product"
     );
   }
 
-  return row.sku?.sku_type === skuType;
+  return Boolean(row.material_id) || row.sku?.sku_type === skuType;
 }
 
 async function getCurrentInventoryRows(
@@ -1075,7 +1335,13 @@ async function getCurrentInventoryRows(
   return sortCurrentInventoryRows(
     data
       .map(normalizeCurrentInventory)
-      .filter((row) => row.sku?.sku_type === skuType)
+      .filter((row) =>
+        skuType === "material"
+          ? Boolean(row.material_id) || row.sku?.sku_type === "material"
+          : Boolean(row.product_sku_id) ||
+            row.sku?.sku_type === "finished_good" ||
+            row.sku?.sku_type === "finished_product"
+      )
       .filter((row) => matchesBrand(row, filters.brandId))
       .filter((row) => matchesSkuKeyword(row, keyword))
   );
@@ -1156,27 +1422,45 @@ export async function getInventoryForAdjustment(
   );
 }
 
-async function getSkuIdsByKeyword(keyword: string): Promise<string[]> {
+async function getInventoryObjectIdsByKeyword(keyword: string): Promise<{
+  skuIds: string[];
+  materialIds: string[];
+}> {
   const trimmedKeyword = keyword.trim();
 
   if (!trimmedKeyword) {
-    return [];
+    return { skuIds: [], materialIds: [] };
   }
 
   const supabase = getSupabaseClient();
   const escapedKeyword = trimmedKeyword
     .replaceAll("%", "\\%")
     .replaceAll("_", "\\_");
-  const data = await fetchAllSupabaseRows<{ id: string }>(
-    () =>
+  const [skus, materials] = await Promise.all([
+    fetchAllSupabaseRows<{ id: string }>(
+      () =>
       supabase
       .from("skus")
       .select("id")
       .or(`sku_code.ilike.%${escapedKeyword}%,sku_name.ilike.%${escapedKeyword}%`),
     "按 SKU 搜索库存流水"
-  );
+    ),
+    fetchAllSupabaseRows<{ id: string }>(
+      () =>
+        supabase
+          .from("materials")
+          .select("id")
+          .or(
+            `material_code.ilike.%${escapedKeyword}%,material_name.ilike.%${escapedKeyword}%,specs.ilike.%${escapedKeyword}%`
+          ),
+      "按辅料搜索库存流水"
+    )
+  ]);
 
-  return data.map((item) => item.id);
+  return {
+    skuIds: skus.map((item) => item.id),
+    materialIds: materials.map((item) => item.id)
+  };
 }
 
 export async function getWarehousesForFilter(): Promise<
@@ -1200,7 +1484,8 @@ export async function getWarehousesForFilter(): Promise<
 
 export async function getSkuOptionsForInventory(): Promise<InventorySkuOption[]> {
   const supabase = getSupabaseClient();
-  const data = await fetchAllSupabaseRows<RawInventorySkuOption>(
+  const [skuData, materialData] = await Promise.all([
+    fetchAllSupabaseRows<RawInventorySkuOption>(
     () =>
       supabase
         .from("skus")
@@ -1229,12 +1514,69 @@ export async function getSkuOptionsForInventory(): Promise<InventorySkuOption[]>
             )
           `
         )
-        .in("sku_type", ["material", "finished_good", "finished_product"])
+        .in("sku_type", ["finished_good", "finished_product", "material"])
         .order("sku_code", { ascending: true }),
     "读取库存可选 SKU"
-  );
+  ),
+    fetchAllSupabaseRows<InventoryMaterial>(
+      () =>
+        supabase
+          .from("materials")
+          .select(
+            `
+              id,
+              material_code,
+              material_name,
+              category,
+              unit,
+              specs,
+              default_supplier_id,
+              status,
+              supplier:suppliers!materials_default_supplier_id_fkey (
+                id,
+                supplier_code,
+                name
+              )
+            `
+          )
+          .order("material_code", { ascending: true }),
+      "读取库存可选辅料"
+    )
+  ]);
 
-  return data.map(normalizeInventorySkuOption);
+  const legacyMaterialSkuByCode = new Map(
+    skuData
+      .filter((sku) => sku.sku_type === "material")
+      .map((sku) => [sku.sku_code, sku.id])
+  );
+  const productOptions = skuData
+    .filter((sku) => sku.sku_type !== "material")
+    .map((sku) =>
+      normalizeInventorySkuOption({
+        ...sku,
+        product_sku_id: sku.id,
+        material_id: null,
+        legacy_sku_id: sku.id
+      })
+    );
+  const materialOptions: InventorySkuOption[] = materialData.map((material) => ({
+    id: material.id,
+    product_sku_id: null,
+    material_id: material.id,
+    legacy_sku_id: legacyMaterialSkuByCode.get(material.material_code) ?? null,
+    product_id: null,
+    sku_code: material.material_code,
+    sku_name: material.material_name,
+    sku_type: "material",
+    unit: material.unit,
+    status: material.status,
+    product: null,
+    material
+  }));
+
+  return [...materialOptions, ...productOptions].sort((a, b) =>
+    a.sku_code.localeCompare(b.sku_code, "zh-CN")
+  );
 }
 
 export async function getInventoryItemByWarehouseAndSku(
@@ -1246,13 +1588,25 @@ export async function getInventoryItemByWarehouseAndSku(
   }
 
   const supabase = getSupabaseClient();
+  const option = (await getSkuOptionsForInventory()).find((item) => item.id === skuId);
+  const identity = option ? getInventoryIdentityFromOption(option) : null;
   const { data, error } = await withTimeout(
-    supabase
+    (() => {
+      let query = supabase
       .from("inventory_items")
       .select(getCurrentInventorySelect())
-      .eq("warehouse_id", warehouseId)
-      .eq("sku_id", skuId)
-      .maybeSingle(),
+        .eq("warehouse_id", warehouseId);
+
+      if (identity?.materialId) {
+        query = query.eq("material_id", identity.materialId);
+      } else if (identity?.productSkuId) {
+        query = query.eq("product_sku_id", identity.productSkuId);
+      } else {
+        query = query.eq("sku_id", skuId);
+      }
+
+      return query.maybeSingle();
+    })(),
     "读取仓库 SKU 库存"
   );
 
@@ -1272,9 +1626,15 @@ export async function getInventoryTransactions(
 ): Promise<InventoryTransactionRow[]> {
   const supabase = getSupabaseClient();
   const skuKeyword = filters.skuKeyword?.trim() ?? "";
-  const skuIds = skuKeyword ? await getSkuIdsByKeyword(skuKeyword) : [];
+  const objectIds = skuKeyword
+    ? await getInventoryObjectIdsByKeyword(skuKeyword)
+    : { skuIds: [], materialIds: [] };
 
-  if (skuKeyword && skuIds.length === 0) {
+  if (
+    skuKeyword &&
+    objectIds.skuIds.length === 0 &&
+    objectIds.materialIds.length === 0
+  ) {
     return [];
   }
 
@@ -1293,8 +1653,19 @@ export async function getInventoryTransactions(
         query = query.eq("warehouse_id", filters.warehouseId);
       }
 
-      if (skuIds.length > 0) {
-        query = query.in("sku_id", skuIds);
+      if (objectIds.skuIds.length > 0 || objectIds.materialIds.length > 0) {
+        const conditions: string[] = [];
+
+        if (objectIds.skuIds.length > 0) {
+          const ids = objectIds.skuIds.join(",");
+          conditions.push(`sku_id.in.(${ids})`, `product_sku_id.in.(${ids})`);
+        }
+
+        if (objectIds.materialIds.length > 0) {
+          conditions.push(`material_id.in.(${objectIds.materialIds.join(",")})`);
+        }
+
+        query = query.or(conditions.join(","));
       }
 
       if (filters.startDate) {
@@ -1325,7 +1696,10 @@ export async function getInventoryTransactions(
         return true;
       }
 
-      const currentBrandId = transaction.sku?.product?.brand?.id ?? null;
+      const currentBrandId =
+        transaction.product_sku?.product?.brand?.id ??
+        transaction.sku?.product?.brand?.id ??
+        null;
 
       return brandId === "none" ? !currentBrandId : currentBrandId === brandId;
     });
@@ -1357,20 +1731,38 @@ export async function getRecentAdjustmentTransactions(
 export async function upsertInventoryItem(input: {
   warehouseId: string;
   skuId: string;
+  productSkuId?: string | null;
+  materialId?: string | null;
   itemType: string;
   quantity: number;
   unit: string;
 }) {
   const supabase = getSupabaseClient();
+  const identity = getInventoryIdentityFromItem({
+    sku_id: input.skuId,
+    product_sku_id: input.productSkuId ?? null,
+    material_id: input.materialId ?? null,
+    item_type: input.itemType
+  });
   const { data, error } = await withTimeout(
-    supabase
+    (() => {
+      let query = supabase
       .from("inventory_items")
       .select(
-        "id, warehouse_id, sku_id, item_type, quantity_on_hand, reserved_quantity, safety_stock_quantity, unit"
+        "id, warehouse_id, sku_id, product_sku_id, material_id, item_type, quantity_on_hand, reserved_quantity, safety_stock_quantity, unit"
       )
-      .eq("warehouse_id", input.warehouseId)
-      .eq("sku_id", input.skuId)
-      .maybeSingle(),
+        .eq("warehouse_id", input.warehouseId);
+
+      if (identity.materialId) {
+        query = query.eq("material_id", identity.materialId);
+      } else if (identity.productSkuId) {
+        query = query.eq("product_sku_id", identity.productSkuId);
+      } else {
+        query = query.eq("sku_id", identity.skuId);
+      }
+
+      return query.maybeSingle();
+    })(),
     "读取当前库存"
   );
 
@@ -1390,6 +1782,8 @@ export async function upsertInventoryItem(input: {
         .update({
           quantity_on_hand: nextQuantity,
           item_type: existing.item_type || input.itemType,
+          product_sku_id: existing.product_sku_id ?? identity.productSkuId,
+          material_id: existing.material_id ?? identity.materialId,
           unit: existing.unit || input.unit
         })
         .eq("id", existing.id),
@@ -1406,8 +1800,10 @@ export async function upsertInventoryItem(input: {
   const { error: insertError } = await withTimeout(
     supabase.from("inventory_items").insert({
       warehouse_id: input.warehouseId,
-      sku_id: input.skuId,
-      item_type: input.itemType,
+      sku_id: identity.skuId,
+      product_sku_id: identity.productSkuId,
+      material_id: identity.materialId,
+      item_type: identity.itemType,
       quantity_on_hand: input.quantity,
       reserved_quantity: 0,
       safety_stock_quantity: 0,
@@ -1424,6 +1820,9 @@ export async function upsertInventoryItem(input: {
 export async function createInventoryTransaction(input: {
   warehouseId: string;
   skuId: string;
+  productSkuId?: string | null;
+  materialId?: string | null;
+  itemType?: string;
   transactionType: InventoryTransactionType;
   quantity: number;
   purchaseOrderId?: string | null;
@@ -1432,11 +1831,21 @@ export async function createInventoryTransaction(input: {
   notes?: string | null;
 }) {
   const supabase = getSupabaseClient();
+  const identity = getInventoryIdentityFromItem({
+    sku_id: input.skuId,
+    product_sku_id: input.productSkuId ?? null,
+    material_id: input.materialId ?? null,
+    item_type:
+      input.itemType ??
+      (input.transactionType.startsWith("material") ? "material" : "finished_product")
+  });
   const { error } = await withTimeout(
     supabase.from("inventory_transactions").insert({
       transaction_no: createInventoryTransactionNo(),
       warehouse_id: input.warehouseId,
-      sku_id: input.skuId,
+      sku_id: identity.skuId,
+      product_sku_id: identity.productSkuId,
+      material_id: identity.materialId,
       transaction_type: input.transactionType,
       quantity: input.quantity,
       purchase_order_id: input.purchaseOrderId ?? null,
@@ -1457,18 +1866,30 @@ export async function createInventoryTransaction(input: {
 async function getRawInventoryItemByWarehouseAndSku(input: {
   warehouseId: string;
   skuId: string;
+  productSkuId?: string | null;
+  materialId?: string | null;
   action?: string;
 }): Promise<InventoryItem | null> {
   const supabase = getSupabaseClient();
   const { data, error } = await withTimeout(
-    supabase
+    (() => {
+      let query = supabase
       .from("inventory_items")
       .select(
-        "id, warehouse_id, sku_id, item_type, quantity_on_hand, reserved_quantity, safety_stock_quantity, unit"
+        "id, warehouse_id, sku_id, product_sku_id, material_id, item_type, quantity_on_hand, reserved_quantity, safety_stock_quantity, unit"
       )
-      .eq("warehouse_id", input.warehouseId)
-      .eq("sku_id", input.skuId)
-      .maybeSingle(),
+        .eq("warehouse_id", input.warehouseId);
+
+      if (input.materialId) {
+        query = query.eq("material_id", input.materialId);
+      } else if (input.productSkuId) {
+        query = query.eq("product_sku_id", input.productSkuId);
+      } else {
+        query = query.eq("sku_id", input.skuId);
+      }
+
+      return query.maybeSingle();
+    })(),
     input.action ?? "读取当前库存"
   );
 
@@ -1482,26 +1903,36 @@ async function getRawInventoryItemByWarehouseAndSku(input: {
 async function insertInventoryItemWithQuantity(input: {
   warehouseId: string;
   skuId: string;
+  productSkuId?: string | null;
+  materialId?: string | null;
   itemType: string;
   quantity: number;
   unit: string;
   action?: string;
 }): Promise<InventoryItem> {
   const supabase = getSupabaseClient();
+  const identity = getInventoryIdentityFromItem({
+    sku_id: input.skuId,
+    product_sku_id: input.productSkuId ?? null,
+    material_id: input.materialId ?? null,
+    item_type: input.itemType
+  });
   const { data, error } = await withTimeout(
     supabase
       .from("inventory_items")
       .insert({
         warehouse_id: input.warehouseId,
-        sku_id: input.skuId,
-        item_type: input.itemType,
+        sku_id: identity.skuId,
+        product_sku_id: identity.productSkuId,
+        material_id: identity.materialId,
+        item_type: identity.itemType,
         quantity_on_hand: input.quantity,
         reserved_quantity: 0,
         safety_stock_quantity: 0,
         unit: input.unit
       })
       .select(
-        "id, warehouse_id, sku_id, item_type, quantity_on_hand, reserved_quantity, safety_stock_quantity, unit"
+        "id, warehouse_id, sku_id, product_sku_id, material_id, item_type, quantity_on_hand, reserved_quantity, safety_stock_quantity, unit"
       )
       .single(),
     input.action ?? "新增当前库存"
@@ -1609,11 +2040,13 @@ function buildOtherOutboundNotes(input: {
 export async function createOtherInbound(input: OtherInventoryMovementInput) {
   const quantity = validateOtherMovementInput(input);
   const sku = await getInventorySkuOptionById(input.skuId);
-  const itemType = getInventoryItemTypeBySkuType(sku.sku_type);
+  const identity = getInventoryIdentityFromOption(sku);
   const transactionType = getInboundTransactionTypeBySkuType(sku.sku_type);
   const existing = await getRawInventoryItemByWarehouseAndSku({
     warehouseId: input.warehouseId,
-    skuId: input.skuId
+    skuId: identity.skuId,
+    productSkuId: identity.productSkuId,
+    materialId: identity.materialId
   });
   const beforeQuantity = roundQuantity(Number(existing?.quantity_on_hand ?? 0));
   const afterQuantity = roundQuantity(beforeQuantity + quantity);
@@ -1629,8 +2062,10 @@ export async function createOtherInbound(input: OtherInventoryMovementInput) {
   } else {
     changedItem = await insertInventoryItemWithQuantity({
       warehouseId: input.warehouseId,
-      skuId: input.skuId,
-      itemType,
+      skuId: identity.skuId,
+      productSkuId: identity.productSkuId,
+      materialId: identity.materialId,
+      itemType: identity.itemType,
       quantity: afterQuantity,
       unit: sku.unit
     });
@@ -1639,7 +2074,10 @@ export async function createOtherInbound(input: OtherInventoryMovementInput) {
   try {
     await createInventoryTransaction({
       warehouseId: input.warehouseId,
-      skuId: input.skuId,
+      skuId: identity.skuId,
+      productSkuId: identity.productSkuId,
+      materialId: identity.materialId,
+      itemType: identity.itemType,
       transactionType,
       quantity,
       notes: buildOtherInboundNotes({
@@ -1679,9 +2117,12 @@ export async function createOtherInbound(input: OtherInventoryMovementInput) {
 export async function createOtherOutbound(input: OtherInventoryMovementInput) {
   const quantity = validateOtherMovementInput(input);
   const sku = await getInventorySkuOptionById(input.skuId);
+  const identity = getInventoryIdentityFromOption(sku);
   const existing = await getRawInventoryItemByWarehouseAndSku({
     warehouseId: input.warehouseId,
-    skuId: input.skuId,
+    skuId: identity.skuId,
+    productSkuId: identity.productSkuId,
+    materialId: identity.materialId,
     action: "读取出库仓库存"
   });
 
@@ -1711,7 +2152,10 @@ export async function createOtherOutbound(input: OtherInventoryMovementInput) {
   try {
     await createInventoryTransaction({
       warehouseId: input.warehouseId,
-      skuId: input.skuId,
+      skuId: identity.skuId,
+      productSkuId: identity.productSkuId,
+      materialId: identity.materialId,
+      itemType: identity.itemType,
       transactionType: getOutboundTransactionTypeBySkuType(sku.sku_type),
       quantity,
       notes: buildOtherOutboundNotes({
@@ -1761,15 +2205,18 @@ export async function adjustInventoryByWarehouseSku(
     throw new Error("请选择调整原因。");
   }
 
-  const [sku, warehouses, existingRow, existingRaw] = await Promise.all([
+  const [sku, warehouses, existingRow] = await Promise.all([
     getInventorySkuOptionById(input.skuId),
     getWarehousesForFilter(),
-    getInventoryItemByWarehouseAndSku(input.warehouseId, input.skuId),
-    getRawInventoryItemByWarehouseAndSku({
-      warehouseId: input.warehouseId,
-      skuId: input.skuId
-    })
+    getInventoryItemByWarehouseAndSku(input.warehouseId, input.skuId)
   ]);
+  const identity = getInventoryIdentityFromOption(sku);
+  const existingRaw = await getRawInventoryItemByWarehouseAndSku({
+    warehouseId: input.warehouseId,
+    skuId: identity.skuId,
+    productSkuId: identity.productSkuId,
+    materialId: identity.materialId
+  });
   const warehouse = warehouses.find((item) => item.id === input.warehouseId);
 
   if (!warehouse) {
@@ -1802,8 +2249,10 @@ export async function adjustInventoryByWarehouseSku(
   } else {
     changedItem = await insertInventoryItemWithQuantity({
       warehouseId: input.warehouseId,
-      skuId: input.skuId,
-      itemType: getInventoryItemTypeBySkuType(sku.sku_type),
+      skuId: identity.skuId,
+      productSkuId: identity.productSkuId,
+      materialId: identity.materialId,
+      itemType: identity.itemType,
       quantity: nextQuantity,
       unit: sku.unit
     });
@@ -2016,6 +2465,7 @@ async function validateOtherMovementImportRows(input: {
       const remark = getCsvRowValue(row, remarkField);
       const warehouse = warehouseCode ? warehouseByCode.get(warehouseCode) : null;
       const sku = skuCode ? skuByCode.get(skuCode) : null;
+      const identity = sku ? getInventoryIdentityFromOption(sku) : null;
       const quantity = Number(quantityText);
 
       if (!warehouseCode) {
@@ -2050,7 +2500,9 @@ async function validateOtherMovementImportRows(input: {
             ? {
                 warehouseId: warehouse.id,
                 warehouseCode,
-                skuId: sku.id,
+                skuId: identity?.skuId ?? sku.id,
+                productSkuId: identity?.productSkuId ?? null,
+                materialId: identity?.materialId ?? null,
                 skuCode,
                 skuName: sku.sku_name,
                 skuType: sku.sku_type,
@@ -2061,7 +2513,10 @@ async function validateOtherMovementImportRows(input: {
               }
             : undefined,
         errors,
-        groupKey: warehouse && sku ? `${warehouse.id}:${sku.id}` : undefined
+        groupKey:
+          warehouse && identity
+            ? `${warehouse.id}:${identity.materialId ?? identity.productSkuId ?? identity.skuId}`
+            : undefined
       };
     }
   );
@@ -2099,18 +2554,19 @@ async function appendOtherOutboundStockValidation(
     Pick<
       InventoryItem,
       "warehouse_id" | "sku_id" | "quantity_on_hand" | "reserved_quantity"
+      | "product_sku_id" | "material_id"
     >
   >(
     () =>
       supabase
         .from("inventory_items")
-        .select("warehouse_id, sku_id, quantity_on_hand, reserved_quantity"),
+        .select("warehouse_id, sku_id, product_sku_id, material_id, quantity_on_hand, reserved_quantity"),
     "校验其他出库库存"
   );
   const availableByGroup = new Map<string, number>();
 
   for (const item of inventoryRows) {
-    const key = `${item.warehouse_id}:${item.sku_id}`;
+    const key = `${item.warehouse_id}:${item.material_id ?? item.product_sku_id ?? item.sku_id}`;
     availableByGroup.set(
       key,
       roundQuantity(
@@ -2244,6 +2700,7 @@ export async function validateInventoryAdjustmentImportRows(
       const remark = getCsvRowValue(row, remarkField);
       const warehouse = warehouseCode ? warehouseByCode.get(warehouseCode) : null;
       const sku = skuCode ? skuByCode.get(skuCode) : null;
+      const identity = sku ? getInventoryIdentityFromOption(sku) : null;
       const adjustmentMode = modeText
         ? parseInventoryAdjustmentMode(modeText)
         : null;
@@ -2256,7 +2713,10 @@ export async function validateInventoryAdjustmentImportRows(
       const targetQuantity = targetQuantityText
         ? Number(targetQuantityText)
         : undefined;
-      const groupKey = warehouse && sku ? `${warehouse.id}:${sku.id}` : undefined;
+      const groupKey =
+        warehouse && identity
+          ? `${warehouse.id}:${identity.materialId ?? identity.productSkuId ?? identity.skuId}`
+          : undefined;
 
       if (groupKey) {
         groupCount.set(groupKey, (groupCount.get(groupKey) ?? 0) + 1);
@@ -2315,7 +2775,9 @@ export async function validateInventoryAdjustmentImportRows(
             ? {
                 warehouseId: warehouse.id,
                 warehouseCode,
-                skuId: sku.id,
+                skuId: identity?.skuId ?? sku.id,
+                productSkuId: identity?.productSkuId ?? null,
+                materialId: identity?.materialId ?? null,
                 skuCode,
                 skuName: sku.sku_name,
                 skuType: sku.sku_type,
@@ -2360,6 +2822,8 @@ export async function bulkCreateOtherInbound(
   const payload = rows.map((row) => ({
     warehouse_id: row.warehouseId,
     sku_id: row.skuId,
+    product_sku_id: row.productSkuId ?? null,
+    material_id: row.materialId ?? null,
     quantity: row.quantity,
     reason: row.reason,
     remark: row.remark ?? "",
@@ -2391,6 +2855,8 @@ export async function bulkCreateOtherOutbound(
   const payload = rows.map((row) => ({
     warehouse_id: row.warehouseId,
     sku_id: row.skuId,
+    product_sku_id: row.productSkuId ?? null,
+    material_id: row.materialId ?? null,
     quantity: row.quantity,
     reason: row.reason,
     remark: row.remark ?? "",
@@ -2422,6 +2888,8 @@ export async function bulkAdjustInventory(
   const payload = rows.map((row) => ({
     warehouse_id: row.warehouseId,
     sku_id: row.skuId,
+    product_sku_id: row.productSkuId ?? null,
+    material_id: row.materialId ?? null,
     adjustment_mode: row.adjustmentMode,
     adjustment_quantity: row.adjustmentQuantity ?? null,
     target_quantity: row.targetQuantity ?? null,
@@ -2604,6 +3072,9 @@ export async function createAdjustmentTransaction(
   await createInventoryTransaction({
     warehouseId: input.inventoryItem.warehouse_id,
     skuId: input.inventoryItem.sku_id,
+    productSkuId: input.inventoryItem.product_sku_id,
+    materialId: input.inventoryItem.material_id,
+    itemType: input.inventoryItem.item_type,
     transactionType: "adjustment",
     quantity: roundQuantity(Math.abs(input.signedDifference)),
     notes: noteParts.join("\n")
@@ -2746,13 +3217,15 @@ export async function receivePurchaseOrderItems(
 
     if (receiveQuantity > remainingQuantity) {
       throw new Error(
-        `${orderItem.sku?.sku_code ?? "采购明细"} 本次入库数量不能超过待入库数量。`
+        `${orderItem.material?.material_code ?? orderItem.sku?.sku_code ?? "采购明细"} 本次入库数量不能超过待入库数量。`
       );
     }
 
     await createInventoryTransaction({
       warehouseId: input.warehouseId,
       skuId: orderItem.sku_id,
+      materialId: orderItem.material_id,
+      itemType: "material",
       transactionType: "material_in",
       quantity: receiveQuantity,
       purchaseOrderId: order.id,
@@ -2762,6 +3235,7 @@ export async function receivePurchaseOrderItems(
     await upsertInventoryItem({
       warehouseId: input.warehouseId,
       skuId: orderItem.sku_id,
+      materialId: orderItem.material_id,
       itemType: "material",
       quantity: receiveQuantity,
       unit: orderItem.unit
@@ -2909,6 +3383,8 @@ export async function receiveProductionOrder(input: ReceiveProductionOrderInput)
   await createInventoryTransaction({
     warehouseId: input.warehouseId,
     skuId: order.sku_id,
+    productSkuId: order.sku_id,
+    itemType: "finished_product",
     transactionType: "product_in",
     quantity: receiveQuantity,
     productionOrderId: order.id,
@@ -2919,6 +3395,7 @@ export async function receiveProductionOrder(input: ReceiveProductionOrderInput)
   await upsertInventoryItem({
     warehouseId: input.warehouseId,
     skuId: order.sku_id,
+    productSkuId: order.sku_id,
     itemType: "finished_product",
     quantity: receiveQuantity,
     unit: order.sku?.unit ?? "pcs"
@@ -2952,16 +3429,18 @@ export async function getFinishedGoodsInventory(
 ): Promise<Map<string, number>> {
   const supabase = getSupabaseClient();
   const data = await fetchAllSupabaseRows<
-    Pick<InventoryItem, "sku_id" | "quantity_on_hand" | "reserved_quantity">
+    Pick<InventoryItem, "sku_id" | "product_sku_id" | "quantity_on_hand" | "reserved_quantity">
   >(
     () => {
       let query = supabase
         .from("inventory_items")
-        .select("sku_id, quantity_on_hand, reserved_quantity, item_type, warehouse_id")
-        .eq("item_type", "finished_product");
+        .select("sku_id, product_sku_id, quantity_on_hand, reserved_quantity, item_type, warehouse_id")
+        .in("item_type", ["finished_product", "finished_good", "product_sku"]);
 
       if (skuIds && skuIds.length > 0) {
-        query = query.in("sku_id", skuIds);
+        query = query.or(
+          `product_sku_id.in.(${skuIds.join(",")}),sku_id.in.(${skuIds.join(",")})`
+        );
       }
 
       if (warehouseId) {
@@ -2976,13 +3455,14 @@ export async function getFinishedGoodsInventory(
   const inventoryBySku = new Map<string, number>();
 
   for (const item of data) {
-    const current = inventoryBySku.get(item.sku_id) ?? 0;
+    const skuId = item.product_sku_id ?? item.sku_id;
+    const current = inventoryBySku.get(skuId) ?? 0;
     const availableQuantity = Math.max(
       0,
       Number(item.quantity_on_hand) - Number(item.reserved_quantity)
     );
 
-    inventoryBySku.set(item.sku_id, roundQuantity(current + availableQuantity));
+    inventoryBySku.set(skuId, roundQuantity(current + availableQuantity));
   }
 
   return inventoryBySku;
@@ -2996,7 +3476,7 @@ export async function getFbaOutboundQuantity(
     () => {
       let query = supabase
         .from("inventory_transactions")
-        .select("replenishment_request_id, sku_id, quantity")
+        .select("replenishment_request_id, sku_id, product_sku_id, material_id, quantity")
         .eq("transaction_type", "product_out")
         .not("replenishment_request_id", "is", null);
 
@@ -3134,6 +3614,8 @@ export async function createFbaOutboundTransaction(input: {
   await createInventoryTransaction({
     warehouseId: input.warehouseId,
     skuId: input.request.sku_id,
+    productSkuId: input.request.sku_id,
+    itemType: "finished_product",
     transactionType: "product_out",
     quantity: input.quantity,
     replenishmentRequestId: input.request.id,
@@ -3151,10 +3633,10 @@ export async function updateInventoryAfterFbaOutbound(input: {
     supabase
       .from("inventory_items")
       .select(
-        "id, warehouse_id, sku_id, item_type, quantity_on_hand, reserved_quantity, safety_stock_quantity, unit"
+        "id, warehouse_id, sku_id, product_sku_id, material_id, item_type, quantity_on_hand, reserved_quantity, safety_stock_quantity, unit"
       )
       .eq("warehouse_id", input.warehouseId)
-      .eq("sku_id", input.skuId)
+      .or(`product_sku_id.eq.${input.skuId},sku_id.eq.${input.skuId}`)
       .maybeSingle(),
     "读取出库仓库存"
   );

@@ -20,7 +20,8 @@ export type PurchaseSupplierSummary = {
 export type ShortageMaterialRequirement = {
   id: string;
   production_order_id: string;
-  material_sku_id: string;
+  material_sku_id: string | null;
+  material_id: string | null;
   required_quantity: number;
   available_quantity: number;
   shortage_quantity: number;
@@ -41,6 +42,16 @@ export type ShortageMaterialRequirement = {
     sku_code: string;
     sku_name: string;
     unit: string;
+    specs: string | null;
+    default_supplier_id: string | null;
+    default_supplier: PurchaseSupplierSummary | null;
+  } | null;
+  material: {
+    id: string;
+    material_code: string;
+    material_name: string;
+    unit: string;
+    specs: string | null;
     default_supplier_id: string | null;
     default_supplier: PurchaseSupplierSummary | null;
   } | null;
@@ -49,7 +60,8 @@ export type ShortageMaterialRequirement = {
 export type PurchaseOrderItem = {
   id: string;
   purchase_order_id: string;
-  sku_id: string;
+  sku_id: string | null;
+  material_id: string | null;
   material_requirement_id: string | null;
   ordered_quantity: number;
   received_quantity: number;
@@ -65,6 +77,13 @@ export type PurchaseOrderItem = {
     unit: string;
     specs: string | null;
   } | null;
+  material: {
+    id: string;
+    material_code: string;
+    material_name: string;
+    unit: string;
+    specs: string | null;
+  } | null;
   material_requirement: {
     id: string;
     shortage_quantity: number;
@@ -76,14 +95,15 @@ export type PurchaseOrderItem = {
   } | null;
 };
 
-export type MaterialSkuOption = {
+export type PurchaseMaterialOption = {
   id: string;
-  sku_code: string;
-  sku_name: string;
-  sku_type: string;
+  material_code: string;
+  material_name: string;
   unit: string;
+  specs: string | null;
   default_supplier_id: string | null;
   default_supplier: PurchaseSupplierSummary | null;
+  legacy_sku_id: string | null;
 };
 
 export type PurchaseProfileOption = {
@@ -134,7 +154,8 @@ export type CreatePurchaseOrderInput = {
   expectedArrivalDate?: string;
   notes?: string;
   items: Array<{
-    skuId: string;
+    materialId?: string | null;
+    skuId?: string | null;
     materialRequirementId: string;
     orderedQuantity: number;
     unit: string;
@@ -144,7 +165,8 @@ export type CreatePurchaseOrderInput = {
 };
 
 export type ManualPurchaseOrderItemInput = {
-  skuId: string;
+  materialId: string;
+  skuId?: string | null;
   orderedQuantity: number;
   unit: string;
   unitPrice?: number | null;
@@ -181,7 +203,7 @@ type MaybeRelation<T> = T | T[] | null;
 
 type RawShortageMaterialRequirement = Omit<
   ShortageMaterialRequirement,
-  "production_order" | "material_sku"
+  "production_order" | "material_sku" | "material"
 > & {
   production_order: MaybeRelation<
     Omit<NonNullable<ShortageMaterialRequirement["production_order"]>, "finished_sku"> & {
@@ -197,17 +219,26 @@ type RawShortageMaterialRequirement = Omit<
       default_supplier: MaybeRelation<PurchaseSupplierSummary>;
     }
   >;
+  material: MaybeRelation<
+    Omit<NonNullable<ShortageMaterialRequirement["material"]>, "default_supplier"> & {
+      default_supplier: MaybeRelation<PurchaseSupplierSummary>;
+    }
+  >;
 };
 
-type RawMaterialSkuOption = Omit<MaterialSkuOption, "default_supplier"> & {
+type RawPurchaseMaterialOption = Omit<
+  PurchaseMaterialOption,
+  "default_supplier" | "legacy_sku_id"
+> & {
   default_supplier: MaybeRelation<PurchaseSupplierSummary>;
 };
 
 type RawPurchaseOrderItem = Omit<
   PurchaseOrderItem,
-  "sku" | "material_requirement"
+  "sku" | "material" | "material_requirement"
 > & {
   sku: MaybeRelation<NonNullable<PurchaseOrderItem["sku"]>>;
+  material: MaybeRelation<NonNullable<PurchaseOrderItem["material"]>>;
   material_requirement: MaybeRelation<
     Omit<
       NonNullable<PurchaseOrderItem["material_requirement"]>,
@@ -312,6 +343,7 @@ function normalizeShortageRequirement(
 ): ShortageMaterialRequirement {
   const productionOrder = singleRelation(row.production_order);
   const materialSku = singleRelation(row.material_sku);
+  const material = singleRelation(row.material);
 
   return {
     ...row,
@@ -326,14 +358,24 @@ function normalizeShortageRequirement(
           ...materialSku,
           default_supplier: singleRelation(materialSku.default_supplier)
         }
+      : null,
+    material: material
+      ? {
+          ...material,
+          default_supplier: singleRelation(material.default_supplier)
+        }
       : null
   };
 }
 
-function normalizeMaterialSkuOption(row: RawMaterialSkuOption): MaterialSkuOption {
+function normalizePurchaseMaterialOption(
+  row: RawPurchaseMaterialOption,
+  legacySkuId: string | null
+): PurchaseMaterialOption {
   return {
     ...row,
-    default_supplier: singleRelation(row.default_supplier)
+    default_supplier: singleRelation(row.default_supplier),
+    legacy_sku_id: legacySkuId
   };
 }
 
@@ -343,6 +385,7 @@ function normalizePurchaseOrderItem(row: RawPurchaseOrderItem): PurchaseOrderIte
   return {
     ...row,
     sku: singleRelation(row.sku),
+    material: singleRelation(row.material),
     material_requirement: materialRequirement
       ? {
           ...materialRequirement,
@@ -401,6 +444,7 @@ function getPurchaseOrderSelect() {
       id,
       purchase_order_id,
       sku_id,
+      material_id,
       material_requirement_id,
       ordered_quantity,
       received_quantity,
@@ -413,6 +457,13 @@ function getPurchaseOrderSelect() {
         id,
         sku_code,
         sku_name,
+        unit,
+        specs
+      ),
+      material:materials!purchase_order_items_material_id_fkey (
+        id,
+        material_code,
+        material_name,
         unit,
         specs
       ),
@@ -441,6 +492,7 @@ export async function getShortageMaterialRequirements(): Promise<
           id,
           production_order_id,
           material_sku_id,
+          material_id,
           required_quantity,
           available_quantity,
           shortage_quantity,
@@ -456,11 +508,28 @@ export async function getShortageMaterialRequirements(): Promise<
               sku_name
             )
           ),
+          material:materials!material_requirements_material_id_fkey (
+            id,
+            material_code,
+            material_name,
+            unit,
+            specs,
+            default_supplier_id,
+            default_supplier:suppliers!materials_default_supplier_id_fkey (
+              id,
+              supplier_code,
+              name,
+              contact_name,
+              phone,
+              status
+            )
+          ),
           material_sku:skus!material_requirements_material_sku_id_fkey (
             id,
             sku_code,
             sku_name,
             unit,
+            specs,
             default_supplier_id,
             default_supplier:suppliers!skus_default_supplier_id_fkey (
               id,
@@ -522,21 +591,23 @@ export async function getPurchaseOrderDetail(
   return normalizePurchaseOrder(data as unknown as RawPurchaseOrder);
 }
 
-export async function getMaterialSkuOptions(): Promise<MaterialSkuOption[]> {
+export async function getPurchaseMaterialOptions(): Promise<
+  PurchaseMaterialOption[]
+> {
   const supabase = getSupabaseClient();
-  const data = await fetchAllSupabaseRows<RawMaterialSkuOption>(
+  const data = await fetchAllSupabaseRows<RawPurchaseMaterialOption>(
     () =>
       supabase
-      .from("skus")
+      .from("materials")
       .select(
         `
           id,
-          sku_code,
-          sku_name,
-          sku_type,
+          material_code,
+          material_name,
           unit,
+          specs,
           default_supplier_id,
-          default_supplier:suppliers!skus_default_supplier_id_fkey (
+          default_supplier:suppliers!materials_default_supplier_id_fkey (
             id,
             supplier_code,
             name,
@@ -546,12 +617,13 @@ export async function getMaterialSkuOptions(): Promise<MaterialSkuOption[]> {
           )
         `
       )
-      .eq("sku_type", "material")
-      .order("sku_code", { ascending: true }),
-    "读取原材料 SKU 列表"
+      .eq("status", "active")
+      .order("material_code", { ascending: true }),
+    "读取辅料列表"
   );
 
-  return data.map(normalizeMaterialSkuOption);
+  const materialCodes = data.map((material) => material.material_code);
+  return data.map((material) => normalizePurchaseMaterialOption(material, null));
 }
 
 export async function getPurchaseProfileOptions(): Promise<PurchaseProfileOption[]> {
@@ -611,8 +683,8 @@ export async function createPurchaseOrder(
   }
 
   for (const item of input.items) {
-    if (!item.skuId || !item.materialRequirementId) {
-      throw new Error("采购明细缺少原材料 SKU 或物料需求 ID。");
+    if ((!item.materialId && !item.skuId) || !item.materialRequirementId) {
+      throw new Error("采购明细缺少辅料或物料需求 ID。");
     }
 
     if (Number(item.orderedQuantity) <= 0) {
@@ -651,7 +723,8 @@ export async function createPurchaseOrder(
   const insertedOrder = order as InsertedPurchaseOrder;
   const itemRows = input.items.map((item) => ({
     purchase_order_id: insertedOrder.id,
-    sku_id: item.skuId,
+    sku_id: item.materialId ? null : item.skuId || null,
+    material_id: item.materialId || null,
     material_requirement_id: item.materialRequirementId,
     ordered_quantity: item.orderedQuantity,
     received_quantity: 0,
@@ -693,8 +766,8 @@ function validateManualPurchaseItems(items: ManualPurchaseOrderItemInput[]) {
   }
 
   for (const item of items) {
-    if (!item.skuId) {
-      throw new Error("采购明细缺少原材料 SKU。");
+    if (!item.materialId) {
+      throw new Error("采购明细缺少辅料。");
     }
 
     if (Number(item.orderedQuantity) <= 0) {
@@ -745,7 +818,8 @@ export async function createManualPurchaseOrder(
   const insertedOrder = order as InsertedPurchaseOrder;
   const itemRows = input.items.map((item) => ({
     purchase_order_id: insertedOrder.id,
-    sku_id: item.skuId,
+    sku_id: null,
+    material_id: item.materialId,
     material_requirement_id: null,
     ordered_quantity: item.orderedQuantity,
     received_quantity: 0,

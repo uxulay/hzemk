@@ -776,8 +776,8 @@ export default function InventoryInboundPage() {
               <table className="dataTable">
                 <thead>
                   <tr>
-                    <th>原材料 SKU</th>
-                    <th>原材料名称</th>
+                    <th>辅料编码</th>
+                    <th>辅料名称</th>
                     <th>采购数量</th>
                     <th>已入库数量</th>
                     <th>待入库数量</th>

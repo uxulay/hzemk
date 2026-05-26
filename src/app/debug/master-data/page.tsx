@@ -2,12 +2,13 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import {
-  getMaterialSkus,
+  getMaterials,
   getProducts,
   getRoles,
   getSkus,
   getSuppliers,
   getWarehouses,
+  type Material,
   type Product,
   type Role,
   type Sku,
@@ -19,7 +20,7 @@ type MasterDataState = {
   roles: Role[];
   products: Product[];
   finishedSkus: Sku[];
-  materialSkus: Sku[];
+  materials: Material[];
   suppliers: Supplier[];
   warehouses: Warehouse[];
 };
@@ -28,7 +29,7 @@ const emptyMasterData: MasterDataState = {
   roles: [],
   products: [],
   finishedSkus: [],
-  materialSkus: [],
+  materials: [],
   suppliers: [],
   warehouses: []
 };
@@ -59,14 +60,14 @@ export default function DebugMasterDataPage() {
           roles,
           products,
           finishedSkus,
-          materialSkus,
+          materials,
           suppliers,
           warehouses
         ] = await Promise.all([
           getRoles(),
           getProducts(),
           getSkus(),
-          getMaterialSkus(),
+          getMaterials(),
           getSuppliers(),
           getWarehouses()
         ]);
@@ -76,7 +77,7 @@ export default function DebugMasterDataPage() {
             roles,
             products,
             finishedSkus,
-            materialSkus,
+            materials,
             suppliers,
             warehouses
           });
@@ -154,13 +155,13 @@ export default function DebugMasterDataPage() {
             )}
           />
           <DataSection
-            title="原材料 SKU 列表"
-            items={masterData.materialSkus}
-            renderItem={(sku) => (
+            title="辅料列表"
+            items={masterData.materials}
+            renderItem={(material) => (
               <>
-                <strong>{sku.sku_name}</strong>
+                <strong>{material.material_name}</strong>
                 <span>
-                  {sku.sku_code} / {sku.unit}
+                  {material.material_code} / {material.unit}
                 </span>
               </>
             )}

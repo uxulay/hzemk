@@ -195,9 +195,8 @@ export async function getSuppliers(): Promise<SupplierListRow[]> {
     fetchAllSupabaseRows<SupplierDefaultMaterialLink>(
       () =>
         supabase
-        .from("skus")
+        .from("materials")
         .select("id, default_supplier_id")
-        .eq("sku_type", "material")
         .not("default_supplier_id", "is", null),
       "统计供应商关联辅料数量"
     )
@@ -228,9 +227,8 @@ export async function getSupplierStats(): Promise<SupplierStats> {
     fetchAllSupabaseRows<SupplierDefaultMaterialLink>(
       () =>
         supabase
-        .from("skus")
+        .from("materials")
         .select("id, default_supplier_id")
-        .eq("sku_type", "material")
         .not("default_supplier_id", "is", null),
       "统计已关联辅料的供应商数量"
     )
@@ -392,16 +390,37 @@ export async function getSupplierDefaultMaterials(
   }
 
   const supabase = getSupabaseClient();
-  return fetchAllSupabaseRows<SupplierDefaultMaterialRow>(
+  const rows = await fetchAllSupabaseRows<{
+    id: string;
+    default_supplier_id: string | null;
+    material_code: string;
+    material_name: string;
+    unit: string;
+    specs: string | null;
+    status: string;
+    created_at: string;
+    updated_at: string;
+  }>(
     () =>
       supabase
-      .from("skus")
+      .from("materials")
       .select(
-        "id, default_supplier_id, sku_code, sku_name, unit, specs, status, created_at, updated_at"
+        "id, default_supplier_id, material_code, material_name, unit, specs, status, created_at, updated_at"
       )
-      .eq("sku_type", "material")
       .eq("default_supplier_id", supplierId)
-      .order("sku_code", { ascending: true }),
+      .order("material_code", { ascending: true }),
     "读取供应商关联辅料"
   );
+
+  return rows.map((row) => ({
+    id: row.id,
+    default_supplier_id: row.default_supplier_id,
+    sku_code: row.material_code,
+    sku_name: row.material_name,
+    unit: row.unit,
+    specs: row.specs,
+    status: row.status,
+    created_at: row.created_at,
+    updated_at: row.updated_at
+  }));
 }

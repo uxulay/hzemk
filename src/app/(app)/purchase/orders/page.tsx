@@ -12,14 +12,14 @@ import {
   createManualPurchaseOrder,
   createPurchaseOrderNo,
   getExistingPurchaseOrderNos,
-  getMaterialSkuOptions,
+  getPurchaseMaterialOptions,
   getPurchaseProfileOptions,
   getPurchaseOrderDetail,
   getPurchaseOrders,
   getShortageMaterialRequirements,
   updatePurchaseOrder,
   updatePurchaseOrderStatus,
-  type MaterialSkuOption,
+  type PurchaseMaterialOption,
   type PurchaseOrderItem,
   type PurchaseOrderSource,
   type PurchaseProfileOption,
@@ -60,9 +60,10 @@ const purchaseImportFields: CsvTemplateField[] = [
     example: "2026-06-08"
   },
   {
-    key: "material_sku_code",
-    label: "原材料 SKU 编码",
+    key: "material_code",
+    label: "辅料编码",
     required: true,
+    aliases: ["辅料编码", "material_sku_code", "sku_code"],
     example: "MAT-001"
   },
   { key: "quantity", label: "采购数量", required: true, example: "100" },
@@ -76,7 +77,7 @@ const purchaseImportSampleRows = [
     supplier_code: "SUP-001",
     order_date: "2026-06-01",
     expected_arrival_date: "2026-06-08",
-    material_sku_code: "MAT-001",
+    material_code: "MAT-001",
     quantity: "100",
     unit_price: "1.5",
     remark: "同供应商同预计到货日会合并为一张采购单"
@@ -85,9 +86,11 @@ const purchaseImportSampleRows = [
 
 type DraftItem = {
   materialRequirementId: string;
+  materialId: string | null;
   skuId: string;
-  skuCode: string;
-  skuName: string;
+  materialCode: string;
+  materialName: string;
+  specs: string | null;
   productionOrderNo: string;
   defaultSupplierId: string | null;
   defaultSupplierLabel: string;
@@ -100,9 +103,11 @@ type DraftItem = {
 type ManualItem = {
   localId: string;
   itemId?: string;
+  materialId: string;
   skuId: string;
-  skuCode: string;
-  skuName: string;
+  materialCode: string;
+  materialName: string;
+  specs: string | null;
   unit: string;
   quantity: string;
   unitPrice: string;
@@ -127,9 +132,10 @@ type PurchaseImportInput = {
   supplierCode: string;
   orderDate: string;
   expectedArrivalDate: string;
-  skuId: string;
-  skuCode: string;
-  skuName: string;
+  materialId: string;
+  skuId: string | null;
+  materialCode: string;
+  materialName: string;
   unit: string;
   quantity: number;
   unitPrice: number;
@@ -234,9 +240,11 @@ function isDateText(value: string) {
 function getManualEmptyItem(): ManualItem {
   return {
     localId: crypto.randomUUID(),
+    materialId: "",
     skuId: "",
-    skuCode: "",
-    skuName: "",
+    materialCode: "",
+    materialName: "",
+    specs: null,
     unit: "",
     quantity: "",
     unitPrice: "0",
@@ -256,8 +264,8 @@ function getEmptyManualForm(): ManualFormState {
   };
 }
 
-function getMaterialSkuLabel(sku: MaterialSkuOption) {
-  return `${sku.sku_code} / ${sku.sku_name}`;
+function getPurchaseMaterialLabel(material: PurchaseMaterialOption) {
+  return `${material.material_code} / ${material.material_name}`;
 }
 
 function getSupplierOptionLabel(supplier: Supplier) {
@@ -267,62 +275,69 @@ function getSupplierOptionLabel(supplier: Supplier) {
 }
 
 function getMaterialDefaultSupplierLabel(
-  sku: Pick<MaterialSkuOption, "default_supplier">
+  material: Pick<PurchaseMaterialOption, "default_supplier">
 ) {
-  if (!sku.default_supplier) {
+  if (!material.default_supplier) {
     return "未设置";
   }
 
   const statusText =
-    sku.default_supplier.status === "inactive" ? " / 停用" : "";
+    material.default_supplier.status === "inactive" ? " / 停用" : "";
 
-  return `${sku.default_supplier.supplier_code} / ${sku.default_supplier.name}${statusText}`;
+  return `${material.default_supplier.supplier_code} / ${material.default_supplier.name}${statusText}`;
 }
 
 function getDefaultSupplierSummary(
-  items: Array<{ skuId: string }>,
-  materialSkus: MaterialSkuOption[]
+  items: Array<{ materialId: string }>,
+  materials: PurchaseMaterialOption[]
 ) {
-  const selectedSkus = items
-    .map((item) => materialSkus.find((sku) => sku.id === item.skuId))
-    .filter((sku): sku is MaterialSkuOption => Boolean(sku));
+  const selectedMaterials = items
+    .map((item) => materials.find((material) => material.id === item.materialId))
+    .filter((material): material is PurchaseMaterialOption => Boolean(material));
   const supplierIds = Array.from(
     new Set(
-      selectedSkus
-        .map((sku) => sku.default_supplier_id)
+      selectedMaterials
+        .map((material) => material.default_supplier_id)
         .filter((supplierId): supplierId is string => Boolean(supplierId))
     )
   );
-  const missingCount = selectedSkus.filter(
-    (sku) => !sku.default_supplier_id
+  const missingCount = selectedMaterials.filter(
+    (material) => !material.default_supplier_id
   ).length;
 
   return {
-    selectedCount: selectedSkus.length,
+    selectedCount: selectedMaterials.length,
     supplierIds,
     missingCount
   };
 }
 
-function MaterialSkuSearchSelect({
-  skus,
+function MaterialSearchSelect({
+  materials,
   value,
   disabled,
   onChange
 }: {
-  skus: MaterialSkuOption[];
+  materials: PurchaseMaterialOption[];
   value: string;
   disabled: boolean;
-  onChange: (skuId: string) => void;
+  onChange: (materialId: string) => void;
 }) {
   const [keyword, setKeyword] = useState("");
-  const selectedSku = skus.find((sku) => sku.id === value);
+  const selectedMaterial = materials.find((material) => material.id === value);
   const normalizedKeyword = keyword.trim().toLowerCase();
-  const filteredSkus = normalizedKeyword
-    ? skus.filter((sku) =>
-        getMaterialSkuLabel(sku).toLowerCase().includes(normalizedKeyword)
+  const filteredMaterials = normalizedKeyword
+    ? materials.filter((material) =>
+        [
+          material.material_code,
+          material.material_name,
+          material.specs ?? ""
+        ]
+          .join(" / ")
+          .toLowerCase()
+          .includes(normalizedKeyword)
       )
-    : skus.slice(0, 8);
+    : materials.slice(0, 8);
 
   return (
     <div className="tableSearchPicker">
@@ -331,27 +346,31 @@ function MaterialSkuSearchSelect({
         onChange={(event) => setKeyword(event.target.value)}
         disabled={disabled}
         placeholder={
-          selectedSku ? `当前：${getMaterialSkuLabel(selectedSku)}` : "搜索原材料"
+          selectedMaterial
+            ? `当前：${getPurchaseMaterialLabel(selectedMaterial)}`
+            : "搜索辅料"
         }
       />
-      {selectedSku ? <strong>{getMaterialSkuLabel(selectedSku)}</strong> : null}
+      {selectedMaterial ? (
+        <strong>{getPurchaseMaterialLabel(selectedMaterial)}</strong>
+      ) : null}
       <div className="searchPickerList">
-        {filteredSkus.length === 0 ? (
-          <p className="tableHint">没有匹配的原材料。</p>
+        {filteredMaterials.length === 0 ? (
+          <p className="tableHint">没有匹配的辅料。</p>
         ) : (
-          filteredSkus.map((sku) => (
+          filteredMaterials.map((material) => (
             <button
               type="button"
-              key={sku.id}
-              className={sku.id === value ? "active" : undefined}
+              key={material.id}
+              className={material.id === value ? "active" : undefined}
               onClick={() => {
-                onChange(sku.id);
+                onChange(material.id);
                 setKeyword("");
               }}
               disabled={disabled}
             >
-              {getMaterialSkuLabel(sku)}
-              <span>默认供应商：{getMaterialDefaultSupplierLabel(sku)}</span>
+              {getPurchaseMaterialLabel(material)}
+              <span>默认供应商：{getMaterialDefaultSupplierLabel(material)}</span>
             </button>
           ))
         )}
@@ -370,6 +389,18 @@ function escapeCsvCell(value: string | number | null | undefined) {
   return text;
 }
 
+function getImportValue(row: Record<string, string>, keys: string[]) {
+  for (const key of keys) {
+    const value = row[key]?.trim();
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return "";
+}
+
 function downloadPurchaseOrderCsv(order: PurchaseOrder) {
   if (order.items.length === 0) {
     throw new Error("这张采购单没有明细，暂时不能导出。");
@@ -383,8 +414,9 @@ function downloadPurchaseOrderCsv(order: PurchaseOrder) {
     "邮箱",
     "下单日期",
     "预计到货日期",
-    "原材料编码",
-    "原材料名称",
+    "辅料编码",
+    "辅料名称",
+    "规格",
     "单位",
     "采购数量",
     "单价",
@@ -402,8 +434,9 @@ function downloadPurchaseOrderCsv(order: PurchaseOrder) {
       order.supplier?.email ?? "",
       formatDate(order.ordered_at),
       formatDate(order.expected_arrival_date),
-      item.sku?.sku_code ?? "",
-      item.sku?.sku_name ?? "",
+      item.material?.material_code ?? item.sku?.sku_code ?? "",
+      item.material?.material_name ?? item.sku?.sku_name ?? "",
+      item.material?.specs ?? item.sku?.specs ?? "",
       item.unit,
       Number(item.ordered_quantity),
       Number(item.unit_price ?? 0),
@@ -433,16 +466,28 @@ function downloadPurchaseOrderCsv(order: PurchaseOrder) {
 }
 
 function getDraftItem(requirement: ShortageMaterialRequirement): DraftItem {
+  const defaultSupplierId =
+    requirement.material?.default_supplier_id ??
+    requirement.material_sku?.default_supplier_id ??
+    null;
+  const defaultSupplierLabel = requirement.material
+    ? getMaterialDefaultSupplierLabel(requirement.material)
+    : requirement.material_sku
+      ? getMaterialDefaultSupplierLabel(requirement.material_sku)
+      : "未设置";
+
   return {
     materialRequirementId: requirement.id,
-    skuId: requirement.material_sku_id,
-    skuCode: requirement.material_sku?.sku_code ?? "-",
-    skuName: requirement.material_sku?.sku_name ?? "-",
+    materialId: requirement.material_id,
+    skuId: requirement.material_id ? "" : requirement.material_sku_id ?? "",
+    materialCode:
+      requirement.material?.material_code ?? requirement.material_sku?.sku_code ?? "-",
+    materialName:
+      requirement.material?.material_name ?? requirement.material_sku?.sku_name ?? "-",
+    specs: requirement.material?.specs ?? requirement.material_sku?.specs ?? null,
     productionOrderNo: requirement.production_order?.production_order_no ?? "-",
-    defaultSupplierId: requirement.material_sku?.default_supplier_id ?? null,
-    defaultSupplierLabel: requirement.material_sku
-      ? getMaterialDefaultSupplierLabel(requirement.material_sku)
-      : "未设置",
+    defaultSupplierId,
+    defaultSupplierLabel,
     orderedQuantity: String(Number(requirement.shortage_quantity)),
     shortageQuantity: Number(requirement.shortage_quantity),
     unit: requirement.unit,
@@ -455,7 +500,7 @@ export default function PurchaseOrdersPage() {
   const [shortages, setShortages] = useState<ShortageMaterialRequirement[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [materialSkus, setMaterialSkus] = useState<MaterialSkuOption[]>([]);
+  const [materials, setMaterials] = useState<PurchaseMaterialOption[]>([]);
   const [purchaseProfiles, setPurchaseProfiles] = useState<
     PurchaseProfileOption[]
   >([]);
@@ -569,20 +614,20 @@ export default function PurchaseOrdersPage() {
         shortageData,
         orderData,
         supplierData,
-        materialSkuData,
+        materialData,
         purchaseProfileData
       ] = await Promise.all([
         getShortageMaterialRequirements(),
         getPurchaseOrders(),
         getSuppliers(),
-        getMaterialSkuOptions(),
+        getPurchaseMaterialOptions(),
         getPurchaseProfileOptions()
       ]);
 
       setShortages(shortageData);
       setPurchaseOrders(orderData);
       setSuppliers(supplierData);
-      setMaterialSkus(materialSkuData);
+      setMaterials(materialData);
       setPurchaseProfiles(purchaseProfileData);
       setSelectedRequirementIds((current) =>
         current.filter((id) => shortageData.some((item) => item.id === id))
@@ -592,7 +637,7 @@ export default function PurchaseOrdersPage() {
       setShortages([]);
       setPurchaseOrders([]);
       setSuppliers([]);
-      setMaterialSkus([]);
+      setMaterials([]);
       setPurchaseProfiles([]);
     } finally {
       setLoading(false);
@@ -716,9 +761,11 @@ export default function PurchaseOrdersPage() {
         items: order.items.map((item) => ({
           localId: item.id,
           itemId: item.id,
-          skuId: item.sku_id,
-          skuCode: item.sku?.sku_code ?? "",
-          skuName: item.sku?.sku_name ?? "",
+          materialId: item.material_id ?? "",
+          skuId: item.sku_id ?? "",
+          materialCode: item.material?.material_code ?? item.sku?.sku_code ?? "",
+          materialName: item.material?.material_name ?? item.sku?.sku_name ?? "",
+          specs: item.material?.specs ?? item.sku?.specs ?? null,
           unit: item.unit,
           quantity: String(Number(item.ordered_quantity)),
           unitPrice: String(Number(item.unit_price ?? 0)),
@@ -761,15 +808,17 @@ export default function PurchaseOrdersPage() {
           return item;
         }
 
-        if (field === "skuId") {
-          const sku = materialSkus.find((option) => option.id === value);
+        if (field === "materialId") {
+          const material = materials.find((option) => option.id === value);
 
           return {
             ...item,
-            skuId: value,
-            skuCode: sku?.sku_code ?? "",
-            skuName: sku?.sku_name ?? "",
-            unit: sku?.unit ?? ""
+            materialId: value,
+            skuId: material?.legacy_sku_id ?? "",
+            materialCode: material?.material_code ?? "",
+            materialName: material?.material_name ?? "",
+            specs: material?.specs ?? null,
+            unit: material?.unit ?? ""
           };
         }
 
@@ -779,14 +828,14 @@ export default function PurchaseOrdersPage() {
         };
       });
 
-      if (field !== "skuId" || current.mode !== "create") {
+      if (field !== "materialId" || current.mode !== "create") {
         return {
           ...current,
           items: nextItems
         };
       }
 
-      const supplierDecision = getDefaultSupplierSummary(nextItems, materialSkus);
+      const supplierDecision = getDefaultSupplierSummary(nextItems, materials);
       const nextSupplierId =
         supplierDecision.selectedCount > 0 &&
         supplierDecision.supplierIds.length === 1 &&
@@ -839,7 +888,7 @@ export default function PurchaseOrdersPage() {
         };
       }
 
-      const supplierDecision = getDefaultSupplierSummary(nextItems, materialSkus);
+      const supplierDecision = getDefaultSupplierSummary(nextItems, materials);
       const nextSupplierId =
         supplierDecision.selectedCount > 0 &&
         supplierDecision.supplierIds.length === 1 &&
@@ -877,6 +926,7 @@ export default function PurchaseOrdersPage() {
       const supplierDecision = getDraftSupplierDecision(draftItems);
       const toPurchaseInputItems = (items: DraftItem[]) =>
         items.map((item) => ({
+          materialId: item.materialId,
           skuId: item.skuId,
           materialRequirementId: item.materialRequirementId,
           orderedQuantity: Number(item.orderedQuantity),
@@ -961,6 +1011,7 @@ export default function PurchaseOrdersPage() {
       setSuccessMessage("");
 
       const items = manualForm.items.map((item) => ({
+        materialId: item.materialId,
         skuId: item.skuId,
         orderedQuantity: Number(item.quantity),
         unit: item.unit,
@@ -1149,7 +1200,9 @@ export default function PurchaseOrdersPage() {
     const supplierByCode = new Map(
       suppliers.map((supplier) => [supplier.supplier_code, supplier])
     );
-    const skuByCode = new Map(materialSkus.map((sku) => [sku.sku_code, sku]));
+    const materialByCode = new Map(
+      materials.map((material) => [material.material_code, material])
+    );
     const providedOrderNos = rows
       .map((row) => row.purchase_order_no?.trim() ?? "")
       .filter(Boolean);
@@ -1163,8 +1216,13 @@ export default function PurchaseOrdersPage() {
       const supplierCode = row.supplier_code?.trim() ?? "";
       const expectedArrivalDate = row.expected_arrival_date?.trim() ?? "";
       const groupKey = orderNo || `auto:${supplierCode}:${expectedArrivalDate}`;
-      const skuCode = row.material_sku_code?.trim() ?? "";
-      const key = `${groupKey}:${skuCode}`;
+      const materialCode = getImportValue(row, [
+        "material_code",
+        "辅料编码",
+        "material_sku_code",
+        "sku_code"
+      ]);
+      const key = `${groupKey}:${materialCode}`;
 
       duplicateKeyCount.set(key, (duplicateKeyCount.get(key) ?? 0) + 1);
     });
@@ -1176,11 +1234,16 @@ export default function PurchaseOrdersPage() {
       const supplierCode = row.supplier_code?.trim() ?? "";
       const orderDate = row.order_date?.trim() || getTodayInputValue();
       const expectedArrivalDate = row.expected_arrival_date?.trim() ?? "";
-      const skuCode = row.material_sku_code?.trim() ?? "";
+      const materialCode = getImportValue(row, [
+        "material_code",
+        "辅料编码",
+        "material_sku_code",
+        "sku_code"
+      ]);
       const quantity = Number(row.quantity);
       const unitPrice = row.unit_price ? Number(row.unit_price) : 0;
       const supplier = supplierByCode.get(supplierCode);
-      const sku = skuByCode.get(skuCode);
+      const material = materialByCode.get(materialCode);
       const groupKey =
         purchaseOrderNo || `auto:${supplierCode}:${expectedArrivalDate}`;
 
@@ -1202,10 +1265,10 @@ export default function PurchaseOrdersPage() {
         errors.push("expected_arrival_date 必须是 YYYY-MM-DD。");
       }
 
-      if (!skuCode) {
-        errors.push("material_sku_code 必填。");
-      } else if (!sku) {
-        errors.push("原材料 SKU 编码不存在，或不是 material 类型。");
+      if (!materialCode) {
+        errors.push("material_code 必填。");
+      } else if (!material) {
+        errors.push("辅料编码不存在，或辅料已停用。");
       }
 
       if (!Number.isFinite(quantity) || quantity <= 0) {
@@ -1216,8 +1279,8 @@ export default function PurchaseOrdersPage() {
         errors.push("unit_price 不能小于 0。");
       }
 
-      if (duplicateKeyCount.get(`${groupKey}:${skuCode}`)! > 1) {
-        notes.push("同一采购单内存在重复原材料，请检查。");
+      if (duplicateKeyCount.get(`${groupKey}:${materialCode}`)! > 1) {
+        notes.push("同一采购单内存在重复辅料，请检查。");
       }
 
       return {
@@ -1227,17 +1290,18 @@ export default function PurchaseOrdersPage() {
         errors,
         notes,
         data:
-          supplier && sku
+          supplier && material
             ? {
                 purchaseOrderNo,
                 supplierId: supplier.id,
                 supplierCode,
                 orderDate,
                 expectedArrivalDate,
-                skuId: sku.id,
-                skuCode: sku.sku_code,
-                skuName: sku.sku_name,
-                unit: sku.unit,
+                materialId: material.id,
+                skuId: material.legacy_sku_id,
+                materialCode: material.material_code,
+                materialName: material.material_name,
+                unit: material.unit,
                 quantity,
                 unitPrice,
                 remark: row.remark?.trim() ?? "",
@@ -1284,6 +1348,7 @@ export default function PurchaseOrdersPage() {
           notes: remarks,
           source: "bulk_import",
           items: groupRows.map((row) => ({
+            materialId: row.materialId,
             skuId: row.skuId,
             orderedQuantity: row.quantity,
             unit: row.unit,
@@ -1316,7 +1381,7 @@ export default function PurchaseOrdersPage() {
           <p className="eyebrow">采购管理</p>
           <h2>采购单</h2>
           <p>
-            采购人员可以从缺料物料生成采购单，也可以主动创建常用原材料、包材和辅料采购单。
+            采购人员可以从缺料物料生成采购单，也可以主动创建常用包材和辅料采购单。
           </p>
         </div>
         <div className="pageHeroActions">
@@ -1416,8 +1481,8 @@ export default function PurchaseOrdersPage() {
                   </th>
                   <th>生产任务单号</th>
                   <th>成品 SKU</th>
-                  <th>原材料编码</th>
-                  <th>原材料名称</th>
+                  <th>辅料编码</th>
+                  <th>辅料名称</th>
                   <th>默认供应商</th>
                   <th>单位</th>
                   <th>总需求数量</th>
@@ -1432,7 +1497,11 @@ export default function PurchaseOrdersPage() {
                   <tr className="shortageRow" key={requirement.id}>
                     <td>
                       <input
-                        aria-label={`选择${requirement.material_sku?.sku_code ?? "缺料物料"}`}
+                        aria-label={`选择${
+                          requirement.material?.material_code ??
+                          requirement.material_sku?.sku_code ??
+                          "缺料辅料"
+                        }`}
                         checked={selectedRequirementIds.includes(requirement.id)}
                         onChange={() => toggleRequirement(requirement.id)}
                         type="checkbox"
@@ -1451,11 +1520,21 @@ export default function PurchaseOrdersPage() {
                           "-"}
                       </span>
                     </td>
-                    <td>{requirement.material_sku?.sku_code ?? "-"}</td>
-                    <td>{requirement.material_sku?.sku_name ?? "-"}</td>
                     <td>
-                      {requirement.material_sku
-                        ? getMaterialDefaultSupplierLabel(requirement.material_sku)
+                      {requirement.material?.material_code ??
+                        requirement.material_sku?.sku_code ??
+                        "-"}
+                    </td>
+                    <td>
+                      {requirement.material?.material_name ??
+                        requirement.material_sku?.sku_name ??
+                        "-"}
+                    </td>
+                    <td>
+                      {requirement.material
+                        ? getMaterialDefaultSupplierLabel(requirement.material)
+                        : requirement.material_sku
+                          ? getMaterialDefaultSupplierLabel(requirement.material_sku)
                         : "-"}
                     </td>
                     <td>{requirement.unit}</td>
@@ -1715,8 +1794,8 @@ export default function PurchaseOrdersPage() {
               <thead>
                 <tr>
                   <th>序号</th>
-                  <th>原材料 SKU</th>
-                  <th>原材料名称</th>
+                  <th>辅料编码</th>
+                  <th>辅料名称</th>
                   <th>规格</th>
                   <th>采购数量</th>
                   <th>已到货数量</th>
@@ -1732,9 +1811,11 @@ export default function PurchaseOrdersPage() {
                 {detail.items.map((item, index) => (
                   <tr key={item.id}>
                     <td>{index + 1}</td>
-                    <td>{item.sku?.sku_code ?? "-"}</td>
-                    <td>{item.sku?.sku_name ?? "-"}</td>
-                    <td className="notesCell">{item.sku?.specs ?? "-"}</td>
+                    <td>{item.material?.material_code ?? item.sku?.sku_code ?? "-"}</td>
+                    <td>{item.material?.material_name ?? item.sku?.sku_name ?? "-"}</td>
+                    <td className="notesCell">
+                      {item.material?.specs ?? item.sku?.specs ?? "-"}
+                    </td>
                     <td>{formatQuantity(item.ordered_quantity)}</td>
                     <td>{formatQuantity(item.received_quantity)}</td>
                     <td>{item.unit}</td>
@@ -1885,9 +1966,13 @@ export default function PurchaseOrdersPage() {
                     {imagePreviewOrder.items.map((item, index) => (
                       <tr key={item.id}>
                         <td>{index + 1}</td>
-                        <td>{item.sku?.sku_code ?? "-"}</td>
-                        <td>{item.sku?.sku_name ?? "-"}</td>
-                        <td>{item.sku?.specs ?? "-"}</td>
+                        <td>
+                          {item.material?.material_code ?? item.sku?.sku_code ?? "-"}
+                        </td>
+                        <td>
+                          {item.material?.material_name ?? item.sku?.sku_name ?? "-"}
+                        </td>
+                        <td>{item.material?.specs ?? item.sku?.specs ?? "-"}</td>
                         <td>{item.unit}</td>
                         <td>{formatQuantity(item.ordered_quantity)}</td>
                         <td>{formatMoney(item.unit_price)}</td>
@@ -2060,7 +2145,7 @@ export default function PurchaseOrdersPage() {
             <div className="sectionHeader">
               <div>
                 <p className="eyebrow">采购明细</p>
-                <h3>原材料</h3>
+                <h3>辅料</h3>
               </div>
               {manualForm.mode === "create" ? (
                 <div className="rowActions">
@@ -2075,8 +2160,9 @@ export default function PurchaseOrdersPage() {
               <table className="dataTable">
                 <thead>
                   <tr>
-                    <th>原材料 SKU</th>
-                    <th>原材料名称</th>
+                    <th>辅料编码</th>
+                    <th>辅料名称</th>
+                    <th>规格</th>
                     <th>默认供应商</th>
                     <th>单位</th>
                     <th>采购数量</th>
@@ -2095,23 +2181,30 @@ export default function PurchaseOrdersPage() {
                       <tr key={item.localId}>
                         <td>
                           {manualForm.mode === "create" ? (
-                            <MaterialSkuSearchSelect
-                              skus={materialSkus}
-                              value={item.skuId}
+                            <MaterialSearchSelect
+                              materials={materials}
+                              value={item.materialId}
                               disabled={submitting}
-                              onChange={(skuId) =>
-                                updateManualItem(item.localId, "skuId", skuId)
+                              onChange={(materialId) =>
+                                updateManualItem(
+                                  item.localId,
+                                  "materialId",
+                                  materialId
+                                )
                               }
                             />
                           ) : (
-                            <strong>{item.skuCode}</strong>
+                            <strong>{item.materialCode}</strong>
                           )}
                         </td>
-                        <td>{item.skuName || "-"}</td>
+                        <td>{item.materialName || "-"}</td>
+                        <td>{item.specs || "-"}</td>
                         <td>
-                          {item.skuId
+                          {item.materialId
                             ? getMaterialDefaultSupplierLabel(
-                                materialSkus.find((sku) => sku.id === item.skuId) ??
+                                materials.find(
+                                  (material) => material.id === item.materialId
+                                ) ??
                                   {
                                     default_supplier: null
                                   }
@@ -2319,8 +2412,9 @@ export default function PurchaseOrdersPage() {
               <table className="dataTable">
                 <thead>
                   <tr>
-                    <th>原材料 SKU</th>
-                    <th>原材料名称</th>
+                    <th>辅料编码</th>
+                    <th>辅料名称</th>
+                    <th>规格</th>
                     <th>默认供应商</th>
                     <th>采购数量</th>
                     <th>单位</th>
@@ -2338,10 +2432,11 @@ export default function PurchaseOrdersPage() {
                     return (
                       <tr key={item.materialRequirementId}>
                         <td>
-                          <strong>{item.skuCode}</strong>
+                          <strong>{item.materialCode}</strong>
                           <span>{item.productionOrderNo}</span>
                         </td>
-                        <td>{item.skuName}</td>
+                        <td>{item.materialName}</td>
+                        <td>{item.specs ?? "-"}</td>
                         <td>{item.defaultSupplierLabel}</td>
                         <td>
                           <input

@@ -4,7 +4,7 @@ import type { BrandSummary } from "@/lib/brand-utils";
 
 export type SkuStatus = "active" | "inactive";
 
-export type SkuEditableType = "finished_good" | "material";
+export type SkuEditableType = "finished_good" | "semi_finished";
 
 export type SkuProductOption = {
   id: string;
@@ -255,8 +255,8 @@ function assertSkuStatus(status: string): asserts status is SkuStatus {
 }
 
 function assertSkuEditableType(skuType: string): asserts skuType is SkuEditableType {
-  if (!["finished_good", "material"].includes(skuType)) {
-    throw new Error("SKU 类型只能是 finished_good 或 material。");
+  if (!["finished_good", "semi_finished"].includes(skuType)) {
+    throw new Error("SKU 类型只能是 finished_good 或 semi_finished。辅料请到“辅料管理”维护。");
   }
 }
 
@@ -546,7 +546,7 @@ export async function getSkusPage(
     productIdsByBrand = await getProductIdsByBrand(null);
   }
 
-  if (supplierId && skuType && skuType !== "material") {
+  if (skuType === "material" || supplierId) {
     return {
       rows: [],
       total: 0,
@@ -570,6 +570,8 @@ export async function getSkusPage(
 
   if (skuType) {
     query = query.eq("sku_type", skuType);
+  } else {
+    query = query.in("sku_type", ["finished_good", "finished_product", "semi_finished"]);
   }
 
   if (status) {
@@ -588,17 +590,6 @@ export async function getSkusPage(
         : query.is("product_id", null);
   } else if (productIdsByBrand) {
     query = query.in("product_id", productIdsByBrand);
-  }
-
-  if (supplierId) {
-    if (!skuType) {
-      query = query.eq("sku_type", "material");
-    }
-
-    query =
-      supplierId === "none"
-        ? query.is("default_supplier_id", null)
-        : query.eq("default_supplier_id", supplierId);
   }
 
   const skuResult = await withTimeout(query, "分页读取 SKU 列表");
@@ -633,6 +624,7 @@ export async function getSkus(): Promise<SkuListRow[]> {
         supabase
         .from("skus")
         .select(getSkuSelect())
+        .in("sku_type", ["finished_good", "finished_product", "semi_finished"])
         .order("sku_code", { ascending: true }),
       "读取 SKU 列表"
     ),
@@ -684,9 +676,6 @@ export async function createSku(input: CreateSkuInput): Promise<SkuRow> {
   const skuName = input.skuName.trim();
   const unit = input.unit.trim();
   const productId = normalizeOptionalId(input.productId);
-  const defaultSupplierId =
-    input.skuType === "material" ? normalizeOptionalId(input.defaultSupplierId) : null;
-
   if (!skuCode) {
     throw new Error("请填写 SKU 编码。");
   }
@@ -710,7 +699,7 @@ export async function createSku(input: CreateSkuInput): Promise<SkuRow> {
         sku_code: skuCode,
         sku_name: skuName,
         sku_type: input.skuType,
-        default_supplier_id: defaultSupplierId,
+        default_supplier_id: null,
         unit,
         specs: normalizeOptionalText(input.specs),
         status: input.status
@@ -731,9 +720,6 @@ export async function updateSku(input: UpdateSkuInput): Promise<void> {
   const skuName = input.skuName.trim();
   const unit = input.unit.trim();
   const productId = normalizeOptionalId(input.productId);
-  const defaultSupplierId =
-    input.skuType === "material" ? normalizeOptionalId(input.defaultSupplierId) : null;
-
   if (!input.skuId) {
     throw new Error("缺少 SKU ID。");
   }
@@ -753,7 +739,7 @@ export async function updateSku(input: UpdateSkuInput): Promise<void> {
       .update({
         sku_name: skuName,
         product_id: productId,
-        default_supplier_id: defaultSupplierId,
+        default_supplier_id: null,
         unit,
         specs: normalizeOptionalText(input.specs),
         status: input.status
@@ -877,7 +863,7 @@ async function getMaterialSkuBomItems(
       )
       .eq("component_sku_id", skuId)
       .order("created_at", { ascending: false }),
-    "读取原材料 SKU 的 BOM 关联"
+    "读取旧辅料 SKU 的 BOM 关联"
   );
 
   return data.map(normalizeBomItemUsage);
@@ -897,15 +883,6 @@ export async function getSkuBomUsage(input: {
       skuType: input.skuType,
       finishedBomHeaders: await getFinishedSkuBomHeaders(input.skuId),
       materialBomItems: []
-    };
-  }
-
-  if (input.skuType === "material") {
-    return {
-      skuId: input.skuId,
-      skuType: input.skuType,
-      finishedBomHeaders: [],
-      materialBomItems: await getMaterialSkuBomItems(input.skuId)
     };
   }
 

@@ -12,6 +12,7 @@ grant select on public.profiles to anon, authenticated;
 grant select on public.brands to anon, authenticated;
 grant select on public.products to anon, authenticated;
 grant select on public.skus to anon, authenticated;
+grant select on public.materials to anon, authenticated;
 grant select on public.suppliers to anon, authenticated;
 grant select on public.warehouses to anon, authenticated;
 grant select on public.bom_headers to anon, authenticated;
@@ -60,6 +61,14 @@ alter table public.skus enable row level security;
 drop policy if exists "dev allow read skus" on public.skus;
 create policy "dev allow read skus"
 on public.skus
+for select
+to anon, authenticated
+using (true);
+
+alter table public.materials enable row level security;
+drop policy if exists "dev allow read materials" on public.materials;
+create policy "dev allow read materials"
+on public.materials
 for select
 to anon, authenticated
 using (true);

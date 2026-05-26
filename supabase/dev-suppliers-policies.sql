@@ -7,20 +7,23 @@ begin;
 
 grant usage on schema public to anon, authenticated;
 
--- 页面展示需要读取供应商和采购单。
+-- 页面展示需要读取供应商、采购单和默认供应辅料。
 grant select on public.suppliers to anon, authenticated;
 grant select on public.purchase_orders to anon, authenticated;
+grant select on public.materials to anon, authenticated;
 
 -- 供应商管理页面需要新增、编辑、启用/停用供应商。
 grant insert, update on public.suppliers to anon, authenticated;
 
 alter table public.suppliers enable row level security;
 alter table public.purchase_orders enable row level security;
+alter table public.materials enable row level security;
 
 drop policy if exists "dev suppliers read suppliers" on public.suppliers;
 drop policy if exists "dev suppliers create suppliers" on public.suppliers;
 drop policy if exists "dev suppliers update suppliers" on public.suppliers;
 drop policy if exists "dev suppliers read purchase_orders" on public.purchase_orders;
+drop policy if exists "dev suppliers read materials" on public.materials;
 
 create policy "dev suppliers read suppliers"
 on public.suppliers
@@ -43,6 +46,12 @@ with check (true);
 
 create policy "dev suppliers read purchase_orders"
 on public.purchase_orders
+for select
+to anon, authenticated
+using (true);
+
+create policy "dev suppliers read materials"
+on public.materials
 for select
 to anon, authenticated
 using (true);

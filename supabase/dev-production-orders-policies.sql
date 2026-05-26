@@ -14,6 +14,7 @@ grant select on public.skus to anon, authenticated;
 grant select on public.products to anon, authenticated;
 grant select on public.profiles to anon, authenticated;
 grant select on public.material_requirements to anon, authenticated;
+grant select on public.materials to anon, authenticated;
 grant select on public.inventory_transactions to anon, authenticated;
 grant select on public.warehouses to anon, authenticated;
 
@@ -26,6 +27,7 @@ alter table public.skus enable row level security;
 alter table public.products enable row level security;
 alter table public.profiles enable row level security;
 alter table public.material_requirements enable row level security;
+alter table public.materials enable row level security;
 alter table public.inventory_transactions enable row level security;
 alter table public.warehouses enable row level security;
 
@@ -36,6 +38,7 @@ drop policy if exists "dev production orders read skus" on public.skus;
 drop policy if exists "dev production orders read products" on public.products;
 drop policy if exists "dev production orders read profiles" on public.profiles;
 drop policy if exists "dev production orders read material_requirements" on public.material_requirements;
+drop policy if exists "dev production orders read materials" on public.materials;
 drop policy if exists "dev production orders read inventory_transactions" on public.inventory_transactions;
 drop policy if exists "dev production orders read warehouses" on public.warehouses;
 
@@ -78,6 +81,12 @@ using (true);
 
 create policy "dev production orders read material_requirements"
 on public.material_requirements
+for select
+to anon, authenticated
+using (true);
+
+create policy "dev production orders read materials"
+on public.materials
 for select
 to anon, authenticated
 using (true);

@@ -10,6 +10,7 @@ grant usage on schema public to anon, authenticated;
 -- 页面展示和自动计算需要读取这些表。
 grant select on public.material_requirements to anon, authenticated;
 grant select on public.production_orders to anon, authenticated;
+grant select on public.materials to anon, authenticated;
 grant select on public.skus to anon, authenticated;
 grant select on public.bom_headers to anon, authenticated;
 grant select on public.bom_items to anon, authenticated;
@@ -20,6 +21,7 @@ grant insert, update on public.material_requirements to anon, authenticated;
 
 alter table public.material_requirements enable row level security;
 alter table public.production_orders enable row level security;
+alter table public.materials enable row level security;
 alter table public.skus enable row level security;
 alter table public.bom_headers enable row level security;
 alter table public.bom_items enable row level security;
@@ -29,6 +31,7 @@ drop policy if exists "dev allow read material_requirements" on public.material_
 drop policy if exists "dev allow create material_requirements" on public.material_requirements;
 drop policy if exists "dev allow update material_requirements" on public.material_requirements;
 drop policy if exists "dev allow read production_orders" on public.production_orders;
+drop policy if exists "dev allow read materials" on public.materials;
 drop policy if exists "dev allow read skus" on public.skus;
 drop policy if exists "dev allow read bom_headers" on public.bom_headers;
 drop policy if exists "dev allow read bom_items" on public.bom_items;
@@ -55,6 +58,12 @@ with check (true);
 
 create policy "dev allow read production_orders"
 on public.production_orders
+for select
+to anon, authenticated
+using (true);
+
+create policy "dev allow read materials"
+on public.materials
 for select
 to anon, authenticated
 using (true);

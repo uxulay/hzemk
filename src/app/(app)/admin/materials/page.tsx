@@ -32,20 +32,24 @@ import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
 type MaterialFormState = {
   skuCode: string;
   skuName: string;
+  category: string;
   unit: string;
   specs: string;
   defaultSupplierId: string;
   status: MaterialStatus;
+  notes: string;
 };
 
 type MaterialEditFormState = {
   materialId: string;
   skuCode: string;
   skuName: string;
+  category: string;
   unit: string;
   specs: string;
   defaultSupplierId: string;
   status: MaterialStatus;
+  notes: string;
 };
 
 type MaterialStats = {
@@ -59,10 +63,12 @@ type MaterialStats = {
 const initialMaterialForm: MaterialFormState = {
   skuCode: "",
   skuName: "",
+  category: "",
   unit: "pcs",
   specs: "",
   defaultSupplierId: "",
-  status: "active"
+  status: "active",
+  notes: ""
 };
 
 const initialStats: MaterialStats = {
@@ -79,8 +85,8 @@ const materialStatusLabels: Record<string, string> = {
 };
 
 const transactionTypeLabels: Record<string, string> = {
-  material_in: "原材料入库",
-  material_out: "原材料出库",
+  material_in: "辅料入库",
+  material_out: "辅料出库",
   product_in: "成品入库",
   product_out: "成品出库",
   adjustment: "库存调整"
@@ -94,14 +100,20 @@ const materialImportFields: CsvTemplateField[] = [
     label: "辅料编码",
     required: true,
     example: "MAT-001",
-    aliases: ["sku_code"]
+    aliases: ["material_code", "sku_code"]
   },
   {
     key: "辅料名称",
     label: "辅料名称",
     required: true,
     example: "黑色扎带",
-    aliases: ["sku_name", "name"]
+    aliases: ["material_name", "sku_name", "name"]
+  },
+  {
+    key: "分类",
+    label: "分类",
+    example: "包装辅料",
+    aliases: ["category"]
   },
   {
     key: "单位",
@@ -112,7 +124,7 @@ const materialImportFields: CsvTemplateField[] = [
   {
     key: "规格",
     label: "规格",
-    example: "分类: 包装辅料；规格 4x200mm",
+    example: "4x200mm",
     aliases: ["specs", "remark"]
   },
   {
@@ -132,6 +144,12 @@ const materialImportFields: CsvTemplateField[] = [
     label: "状态",
     example: "active",
     aliases: ["status"]
+  },
+  {
+    key: "备注",
+    label: "备注",
+    example: "常用包装耗材",
+    aliases: ["notes"]
   }
 ];
 
@@ -139,20 +157,24 @@ const materialImportSampleRows = [
   {
     辅料编码: "MAT-001",
     辅料名称: "黑色扎带",
+    分类: "包装辅料",
     单位: "pcs",
-    规格: "分类: 包装辅料；规格 4x200mm",
+    规格: "4x200mm",
     默认供应商编码: "SUP-001",
     默认供应商名称: "",
-    状态: "active"
+    状态: "active",
+    备注: "常用包装耗材"
   },
   {
     辅料编码: "MAT-002",
     辅料名称: "牛皮纸箱",
+    分类: "纸箱",
     单位: "box",
-    规格: "分类: 包装辅料；30x20x15cm",
+    规格: "30x20x15cm",
     默认供应商编码: "",
     默认供应商名称: "深圳某某包装有限公司",
-    状态: "active"
+    状态: "active",
+    备注: ""
   }
 ];
 
@@ -214,11 +236,8 @@ function formatMoney(value: number | null | undefined) {
   });
 }
 
-function getMaterialCategory(specs: string | null | undefined) {
-  const text = specs ?? "";
-  const match = text.match(/(?:分类|category)[:：]\s*([^；;,\n]+)/i);
-
-  return match?.[1]?.trim() || "-";
+function getMaterialCategory(material: Pick<MaterialListRow, "category">) {
+  return material.category?.trim() || "-";
 }
 
 function getMaterialSupplierLabel(material: Pick<MaterialListRow, "default_supplier">) {
@@ -330,7 +349,9 @@ export default function AdminMaterialsPage() {
         !keyword ||
         material.sku_code.toLowerCase().includes(keyword) ||
         material.sku_name.toLowerCase().includes(keyword) ||
-        (material.specs ?? "").toLowerCase().includes(keyword);
+        (material.category ?? "").toLowerCase().includes(keyword) ||
+        (material.specs ?? "").toLowerCase().includes(keyword) ||
+        (material.notes ?? "").toLowerCase().includes(keyword);
       const matchesStatus =
         statusFilter === "all" || material.status === statusFilter;
       const matchesUnit = unitFilter === "all" || material.unit === unitFilter;
@@ -449,10 +470,12 @@ export default function AdminMaterialsPage() {
       materialId: material.id,
       skuCode: material.sku_code,
       skuName: material.sku_name,
+      category: material.category ?? "",
       unit: material.unit,
       specs: material.specs ?? "",
       defaultSupplierId: material.default_supplier_id ?? "",
-      status: toEditableStatus(material.status)
+      status: toEditableStatus(material.status),
+      notes: material.notes ?? ""
     });
     setErrorMessage("");
     setSuccessMessage("");
@@ -626,8 +649,8 @@ export default function AdminMaterialsPage() {
           <p className="eyebrow">基础资料</p>
           <h2>辅料管理</h2>
           <p>
-            专门维护原材料和辅料基础资料。数据仍然写在 skus 表里，
-            页面固定只管理 sku_type = material 的记录。
+            专门维护辅料基础资料。阶段一开始读取独立 materials 表，
+            旧 skus 里的原辅料数据仍保留不动。
           </p>
         </div>
         <span className="statusPill">Supabase 数据</span>
@@ -723,6 +746,21 @@ export default function AdminMaterialsPage() {
           </label>
 
           <label>
+            分类
+            <input
+              value={materialForm.category}
+              onChange={(event) =>
+                setMaterialForm((current) => ({
+                  ...current,
+                  category: event.target.value
+                }))
+              }
+              disabled={creating}
+              placeholder="例如 包装辅料"
+            />
+          </label>
+
+          <label>
             单位
             <input
               list="material-unit-options"
@@ -780,7 +818,22 @@ export default function AdminMaterialsPage() {
                 }))
               }
               disabled={creating}
-              placeholder="可填写规格；如需临时分类，可写：分类: 包装辅料"
+              placeholder="例如 4x200mm、30x20x15cm"
+            />
+          </label>
+
+          <label className="fullField">
+            备注
+            <textarea
+              value={materialForm.notes}
+              onChange={(event) =>
+                setMaterialForm((current) => ({
+                  ...current,
+                  notes: event.target.value
+                }))
+              }
+              disabled={creating}
+              placeholder="可填写采购、替代料或使用注意事项"
             />
           </label>
 
@@ -805,7 +858,7 @@ export default function AdminMaterialsPage() {
               辅料编码
               <input value={editForm.skuCode} disabled />
               <span className="fieldHint">
-                编码已锁定，避免影响 BOM、采购、库存和流水记录。
+                编码已锁定，避免后续对接 BOM、采购、库存时产生历史混乱。
               </span>
             </label>
 
@@ -825,6 +878,25 @@ export default function AdminMaterialsPage() {
                 }
                 disabled={updating}
                 required
+              />
+            </label>
+
+            <label>
+              分类
+              <input
+                value={editForm.category}
+                onChange={(event) =>
+                  setEditForm((current) =>
+                    current
+                      ? {
+                          ...current,
+                          category: event.target.value
+                        }
+                      : current
+                  )
+                }
+                disabled={updating}
+                placeholder="例如 包装辅料"
               />
             </label>
 
@@ -901,7 +973,26 @@ export default function AdminMaterialsPage() {
                   )
                 }
                 disabled={updating}
-                placeholder="可填写规格；如需临时分类，可写：分类: 包装辅料"
+                placeholder="例如 4x200mm、30x20x15cm"
+              />
+            </label>
+
+            <label className="fullField">
+              备注
+              <textarea
+                value={editForm.notes}
+                onChange={(event) =>
+                  setEditForm((current) =>
+                    current
+                      ? {
+                          ...current,
+                          notes: event.target.value
+                        }
+                      : current
+                  )
+                }
+                disabled={updating}
+                placeholder="可填写采购、替代料或使用注意事项"
               />
             </label>
 
@@ -922,7 +1013,7 @@ export default function AdminMaterialsPage() {
         <div className="sectionHeader">
           <div>
             <p className="eyebrow">辅料列表</p>
-            <h3>原材料 / 辅料基础资料</h3>
+            <h3>辅料基础资料</h3>
           </div>
           <div className="rowActions">
             {canManageMaterials ? (
@@ -961,11 +1052,11 @@ export default function AdminMaterialsPage() {
 
         <div className="listToolbar skuToolbar">
           <label>
-            搜索辅料编码 / 名称 / 规格
+            搜索辅料编码 / 名称 / 分类 / 规格 / 备注
             <input
               value={searchKeyword}
               onChange={(event) => setSearchKeyword(event.target.value)}
-              placeholder="输入辅料编码、名称或规格"
+              placeholder="输入辅料编码、名称、分类、规格或备注"
             />
           </label>
 
@@ -1065,6 +1156,7 @@ export default function AdminMaterialsPage() {
                   <th>当前库存</th>
                   <th>安全库存</th>
                   <th>BOM 引用</th>
+                  <th>需求引用</th>
                   <th>采购引用</th>
                   <th>操作</th>
                 </tr>
@@ -1090,7 +1182,7 @@ export default function AdminMaterialsPage() {
                         <strong>{material.sku_code}</strong>
                       </td>
                       <td>{material.sku_name}</td>
-                      <td>{getMaterialCategory(material.specs)}</td>
+                      <td>{getMaterialCategory(material)}</td>
                       <td>{material.unit}</td>
                       <td className="notesCell">{material.specs ?? "-"}</td>
                       <td>{getMaterialSupplierLabel(material)}</td>
@@ -1116,6 +1208,7 @@ export default function AdminMaterialsPage() {
                         {isLowStock(material) ? <span>低于安全库存</span> : null}
                       </td>
                       <td>{material.bom_usage_count}</td>
+                      <td>{material.material_requirement_usage_count}</td>
                       <td>{material.purchase_usage_count}</td>
                       <td>
                         <div className="rowActions skuRowActions">
@@ -1207,6 +1300,10 @@ export default function AdminMaterialsPage() {
                   <strong>{materialDetail.material.sku_name}</strong>
                 </div>
                 <div className="detailItem">
+                  <span>分类</span>
+                  <strong>{materialDetail.material.category ?? "-"}</strong>
+                </div>
+                <div className="detailItem">
                   <span>单位</span>
                   <strong>{materialDetail.material.unit}</strong>
                 </div>
@@ -1249,12 +1346,22 @@ export default function AdminMaterialsPage() {
                   <strong>{materialDetail.material.bom_usage_count}</strong>
                 </div>
                 <div className="detailItem">
+                  <span>物料需求引用次数</span>
+                  <strong>
+                    {materialDetail.material.material_requirement_usage_count}
+                  </strong>
+                </div>
+                <div className="detailItem">
                   <span>采购引用次数</span>
                   <strong>{materialDetail.material.purchase_usage_count}</strong>
                 </div>
                 <div className="detailItem fullDetailItem">
                   <span>规格</span>
                   <strong>{materialDetail.material.specs ?? "-"}</strong>
+                </div>
+                <div className="detailItem fullDetailItem">
+                  <span>备注</span>
+                  <strong>{materialDetail.material.notes ?? "-"}</strong>
                 </div>
               </div>
 
@@ -1470,7 +1577,7 @@ export default function AdminMaterialsPage() {
       <BulkImportDialog<MaterialImportInput>
         open={importOpen}
         title="辅料批量导入"
-        description="辅料会写入现有 skus 表，并固定写入 sku_type = material；默认供应商按供应商编码优先匹配，匹配不到会在预览里报错，不会自动创建供应商。"
+        description="辅料会写入新的 materials 表；默认供应商按供应商编码优先匹配，匹配不到会在预览里报错，不会自动创建供应商。"
         templateFileName="materials-import-template.csv"
         fields={materialImportFields}
         sampleRows={materialImportSampleRows}
@@ -1484,7 +1591,7 @@ export default function AdminMaterialsPage() {
         title="确认删除辅料"
         description={
           <p>
-            删除前会检查 BOM、物料需求、采购单、当前库存和库存流水。只要已有引用，就不能物理删除，建议改为停用。
+            阶段一暂不做辅料物理删除。请先使用停用，等 BOM、采购和库存引用迁移完成后再统一处理删除规则。
           </p>
         }
         confirmLabel="确认删除"

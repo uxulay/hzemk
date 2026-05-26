@@ -61,6 +61,26 @@ function formatPercent(value: number | null | undefined) {
   })}%`;
 }
 
+function getMaterialCode(requirement: MaterialRequirementRow) {
+  return (
+    requirement.material?.material_code ??
+    requirement.material_sku?.sku_code ??
+    "-"
+  );
+}
+
+function getMaterialName(requirement: MaterialRequirementRow) {
+  return (
+    requirement.material?.material_name ??
+    requirement.material_sku?.sku_name ??
+    "-"
+  );
+}
+
+function getMaterialSpecs(requirement: MaterialRequirementRow) {
+  return requirement.material?.specs ?? requirement.material_sku?.specs ?? "-";
+}
+
 export default function MaterialRequirementsPage() {
   const [requirements, setRequirements] = useState<MaterialRequirementRow[]>([]);
   const [statusFilter, setStatusFilter] =
@@ -175,8 +195,9 @@ export default function MaterialRequirementsPage() {
                   <th>生产任务单号</th>
                   <th>成品 SKU</th>
                   <th>计划生产数量</th>
-                  <th>原材料编码</th>
-                  <th>原材料名称</th>
+                  <th>辅料编码</th>
+                  <th>辅料名称</th>
+                  <th>规格</th>
                   <th>单位</th>
                   <th>BOM 单位用量</th>
                   <th>损耗率</th>
@@ -216,8 +237,9 @@ export default function MaterialRequirementsPage() {
                           requirement.production_order?.planned_quantity
                         )}
                       </td>
-                      <td>{requirement.material_sku?.sku_code ?? "-"}</td>
-                      <td>{requirement.material_sku?.sku_name ?? "-"}</td>
+                      <td>{getMaterialCode(requirement)}</td>
+                      <td>{getMaterialName(requirement)}</td>
+                      <td>{getMaterialSpecs(requirement)}</td>
                       <td>{requirement.unit}</td>
                       <td>{formatQuantity(requirement.bom_item?.quantity_per)}</td>
                       <td>{formatPercent(requirement.bom_item?.loss_rate)}</td>
@@ -287,10 +309,16 @@ export default function MaterialRequirementsPage() {
               </strong>
             </div>
             <div className="detailItem">
-              <span>原材料 SKU</span>
+              <span>辅料</span>
               <strong>
-                {selectedRequirement.material_sku?.sku_code ?? "-"} /{" "}
-                {selectedRequirement.material_sku?.sku_name ?? "-"}
+                {getMaterialCode(selectedRequirement)} /{" "}
+                {getMaterialName(selectedRequirement)}
+              </strong>
+            </div>
+            <div className="detailItem">
+              <span>辅料规格</span>
+              <strong>
+                {getMaterialSpecs(selectedRequirement)}
               </strong>
             </div>
             <div className="detailItem">
