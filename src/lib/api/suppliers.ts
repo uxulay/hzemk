@@ -1,5 +1,6 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { fetchAllSupabaseRows } from "@/lib/supabase/pagination";
+import type { ListPageParams } from "@/lib/api/page-types";
 
 export type SupplierStatus = "active" | "inactive";
 
@@ -52,6 +53,18 @@ export type SupplierStats = {
   inactiveSuppliers: number;
   suppliersWithPurchaseOrders: number;
   suppliersWithDefaultMaterials: number;
+};
+
+export type SupplierListFilters = {
+  status?: string;
+};
+
+export type SupplierPageResult = {
+  rows: SupplierListRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
 };
 
 export type CreateSupplierInput = {
@@ -210,6 +223,104 @@ export async function getSuppliers(): Promise<SupplierListRow[]> {
     purchase_order_count: orderCountBySupplier.get(supplier.id) ?? 0,
     default_material_count: materialCountBySupplier.get(supplier.id) ?? 0
   }));
+}
+
+export async function getSuppliersPage(
+  params: ListPageParams<SupplierListFilters> = {}
+): Promise<SupplierPageResult> {
+  const supabase = getSupabaseClient();
+  const pageSize = Math.min(Math.max(params.pageSize ?? 20, 1), 100);
+  const page = Math.max(params.page ?? 1, 1);
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+  const keyword = params.keyword?.trim() ?? "";
+  const status = params.filters?.status;
+  let query = supabase
+    .from("suppliers")
+    .select(
+      "id, supplier_code, name, contact_name, phone, email, address, status, notes, created_at, updated_at",
+      { count: "exact" }
+    )
+    .order(params.sortBy ?? "supplier_code", {
+      ascending: params.sortDirection !== "desc"
+    })
+    .range(from, to);
+
+  if (keyword) {
+    const escapedKeyword = keyword.replace(/[%_,]/g, " ").trim();
+    query = query.or(
+      `supplier_code.ilike.%${escapedKeyword}%,name.ilike.%${escapedKeyword}%,contact_name.ilike.%${escapedKeyword}%`
+    );
+  }
+
+  if (status && status !== "all") {
+    query = query.eq("status", status);
+  }
+
+  const { data, error, count } = await withTimeout(query, "分页读取供应商列表");
+
+  if (error) {
+    throw formatSupabaseError("分页读取供应商列表", error);
+  }
+
+  const supplierRows = (data ?? []) as SupplierRow[];
+  const supplierIds = supplierRows.map((supplier) => supplier.id);
+  const [purchaseOrderRows, defaultMaterialRows] =
+    supplierIds.length > 0
+      ? await Promise.all([
+          withTimeout(
+            supabase
+              .from("purchase_orders")
+              .select("id, supplier_id")
+              .in("supplier_id", supplierIds),
+            "统计当前页供应商关联采购单数量"
+          ),
+          withTimeout(
+            supabase
+              .from("materials")
+              .select("id, default_supplier_id")
+              .in("default_supplier_id", supplierIds),
+            "统计当前页供应商关联辅料数量"
+          )
+        ])
+      : [
+          { data: [], error: null },
+          { data: [], error: null }
+        ];
+
+  if (purchaseOrderRows.error) {
+    throw formatSupabaseError(
+      "统计当前页供应商关联采购单数量",
+      purchaseOrderRows.error
+    );
+  }
+
+  if (defaultMaterialRows.error) {
+    throw formatSupabaseError(
+      "统计当前页供应商关联辅料数量",
+      defaultMaterialRows.error
+    );
+  }
+
+  const orderCountBySupplier = countPurchaseOrdersBySupplier(
+    (purchaseOrderRows.data ?? []) as SupplierPurchaseOrderLink[]
+  );
+  const materialCountBySupplier = countDefaultMaterialsBySupplier(
+    (defaultMaterialRows.data ?? []) as SupplierDefaultMaterialLink[]
+  );
+  const total = count ?? 0;
+
+  return {
+    rows: supplierRows.map((supplier) => ({
+      ...supplier,
+      purchase_order_count: orderCountBySupplier.get(supplier.id) ?? 0,
+      default_material_count: materialCountBySupplier.get(supplier.id) ?? 0
+    })),
+    total,
+    page,
+    pageSize,
+    totalPages: Math.max(1, Math.ceil(total / pageSize))
+  };
 }
 
 export async function getSupplierStats(): Promise<SupplierStats> {

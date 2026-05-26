@@ -31,7 +31,6 @@ export type BomMaterialOption = {
   unit: string;
   specs: string | null;
   status: string;
-  legacy_component_sku_id: string | null;
 };
 
 export type BomHeaderRow = {
@@ -54,7 +53,6 @@ export type BomListRow = BomHeaderRow & {
 export type BomItemRow = {
   id: string;
   bom_header_id: string;
-  component_sku_id: string | null;
   material_id: string | null;
   quantity_per: number;
   unit: string;
@@ -62,7 +60,6 @@ export type BomItemRow = {
   notes: string | null;
   created_at: string;
   updated_at: string;
-  component_sku: BomSkuOption | null;
   material: BomMaterialOption | null;
 };
 
@@ -110,9 +107,8 @@ type RawBomListRow = RawBomHeaderRow & {
   items: Array<{ id: string }> | null;
 };
 
-type RawBomItemRow = Omit<BomItemRow, "component_sku"> & {
-  component_sku: MaybeRelation<RawBomSkuOption>;
-  material: MaybeRelation<Omit<BomMaterialOption, "legacy_component_sku_id">>;
+type RawBomItemRow = Omit<BomItemRow, "material"> & {
+  material: MaybeRelation<BomMaterialOption>;
 };
 
 type InsertedBomHeader = {
@@ -183,13 +179,11 @@ function normalizeBomListRow(row: RawBomListRow): BomListRow {
 }
 
 function normalizeBomItem(row: RawBomItemRow): BomItemRow {
-  const componentSku = singleRelation(row.component_sku);
   const material = singleRelation(row.material);
 
   return {
     ...row,
-    component_sku: componentSku ? normalizeSkuOption(componentSku) : null,
-    material: material ? { ...material, legacy_component_sku_id: null } : null
+    material
   };
 }
 
@@ -301,15 +295,7 @@ async function getMaterialById(
     throw formatSupabaseError(action, error);
   }
 
-  const material = data as unknown as Omit<
-    BomMaterialOption,
-    "legacy_component_sku_id"
-  >;
-
-  return {
-    ...material,
-    legacy_component_sku_id: null
-  };
+  return data as unknown as BomMaterialOption;
 }
 
 async function ensureBomVersionIsNotDuplicated(
@@ -382,7 +368,6 @@ export async function getBomDetail(bomHeaderId: string): Promise<BomDetail> {
         `
           id,
           bom_header_id,
-          component_sku_id,
           material_id,
           quantity_per,
           unit,
@@ -390,9 +375,6 @@ export async function getBomDetail(bomHeaderId: string): Promise<BomDetail> {
           notes,
           created_at,
           updated_at,
-          component_sku:skus!bom_items_component_sku_id_fkey (
-            ${getSkuSelect()}
-          ),
           material:materials!bom_items_material_id_fkey (
             ${getMaterialSelect()}
           )
@@ -502,7 +484,6 @@ export async function addBomItem(input: AddBomItemInput): Promise<void> {
   const { error } = await withTimeout(
     supabase.from("bom_items").insert({
       bom_header_id: input.bomHeaderId,
-      component_sku_id: null,
       material_id: input.materialId,
       quantity_per: input.quantityPer,
       unit: material.unit,
@@ -605,50 +586,16 @@ export async function getFinishedGoodSkus(): Promise<BomSkuOption[]> {
 
 export async function getBomMaterials(): Promise<BomMaterialOption[]> {
   const supabase = getSupabaseClient();
-  const [materials, legacySkus] = await Promise.all([
-    fetchAllSupabaseRows<Omit<BomMaterialOption, "legacy_component_sku_id">>(
-      () =>
-        supabase
-          .from("materials")
-          .select(getMaterialSelect())
-          .order("material_code", { ascending: true }),
-      "读取辅料列表"
-    ),
-    fetchAllSupabaseRows<Pick<BomSkuOption, "id" | "sku_code">>(
-      () =>
-        supabase
-          .from("skus")
-          .select("id, sku_code")
-          .eq("sku_type", "material"),
-      "读取旧辅料 SKU 兼容数据"
-    )
-  ]);
-  const legacySkuByCode = new Map(
-    legacySkus.map((sku) => [sku.sku_code.toLowerCase(), sku.id])
+  return fetchAllSupabaseRows<BomMaterialOption>(
+    () =>
+      supabase
+        .from("materials")
+        .select(getMaterialSelect())
+        .order("material_code", { ascending: true }),
+    "读取辅料列表"
   );
-
-  return materials.map((material) => ({
-    ...material,
-    legacy_component_sku_id:
-      legacySkuByCode.get(material.material_code.toLowerCase()) ?? null
-  }));
 }
 
 export async function getMaterialSkus(): Promise<BomMaterialOption[]> {
   return getBomMaterials();
-}
-
-export async function getLegacyMaterialSkus(): Promise<BomSkuOption[]> {
-  const supabase = getSupabaseClient();
-  const data = await fetchAllSupabaseRows<RawBomSkuOption>(
-    () =>
-      supabase
-      .from("skus")
-      .select(getSkuSelect())
-      .eq("sku_type", "material")
-      .order("sku_code", { ascending: true }),
-    "读取原材料 SKU 列表"
-  );
-
-  return data.map(normalizeSkuOption);
 }

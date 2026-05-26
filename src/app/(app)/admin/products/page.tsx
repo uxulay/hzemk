@@ -23,7 +23,7 @@ import {
   createProduct,
   getProductSkus,
   getProductStats,
-  getProducts,
+  getProductsPage,
   toggleProductStatus,
   updateProduct,
   type ProductListRow,
@@ -34,7 +34,7 @@ import {
 import { getBrandOptions, type BrandRow } from "@/lib/api/brands";
 import { getBrandCodeName } from "@/lib/brand-utils";
 import { downloadCsvTemplate, type CsvTemplateField } from "@/lib/utils/csv";
-import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
+import { DEFAULT_PAGE_SIZE } from "@/lib/utils/pagination";
 
 const productStatusLabels: Record<string, string> = {
   active: "启用",
@@ -175,6 +175,7 @@ export default function AdminProductsPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
   const [page, setPage] = useState(1);
+  const [productTotal, setProductTotal] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [productToDelete, setProductToDelete] =
@@ -188,57 +189,41 @@ export default function AdminProductsPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
-  const filteredProducts = useMemo(() => {
-    const keyword = searchKeyword.trim().toLowerCase();
-
-    return products.filter((product) => {
-      const matchesKeyword =
-        !keyword ||
-        product.name.toLowerCase().includes(keyword) ||
-        product.product_code.toLowerCase().includes(keyword) ||
-        (product.brand?.name ?? "").toLowerCase().includes(keyword) ||
-        (product.brand?.brand_code ?? "").toLowerCase().includes(keyword);
-      const matchesBrand =
-        brandFilter === "all" ||
-        (brandFilter === "none"
-          ? !product.brand_id
-          : product.brand_id === brandFilter);
-      const matchesStatus =
-        statusFilter === "all" || product.status === statusFilter;
-
-      return matchesKeyword && matchesBrand && matchesStatus;
-    });
-  }, [brandFilter, products, searchKeyword, statusFilter]);
-
   const selectedProducts = useMemo(
     () => products.filter((product) => selectedProductIds.includes(product.id)),
     [products, selectedProductIds]
   );
-  const paginatedProducts = useMemo(
-    () => paginateItems(filteredProducts, page),
-    [filteredProducts, page]
-  );
   const allFilteredSelected =
-    filteredProducts.length > 0 &&
-    filteredProducts.every((product) => selectedProductIds.includes(product.id));
+    products.length > 0 &&
+    products.every((product) => selectedProductIds.includes(product.id));
 
-  const loadPageData = async () => {
+  const loadPageData = async (targetPage = page) => {
     try {
       setLoading(true);
       setErrorMessage("");
 
-      const [productData, brandData, statsData] = await Promise.all([
-        getProducts(),
+      const [productPage, brandData, statsData] = await Promise.all([
+        getProductsPage({
+          page: targetPage,
+          pageSize: DEFAULT_PAGE_SIZE,
+          keyword: searchKeyword,
+          filters: {
+            status: statusFilter,
+            brandId: brandFilter
+          }
+        }),
         getBrandOptions(),
         getProductStats()
       ]);
 
-      setProducts(productData);
+      setProducts(productPage.rows);
+      setProductTotal(productPage.total);
+      setPage(productPage.page);
       setBrands(brandData);
       setStats(statsData);
       setSelectedProductIds((current) =>
         current.filter((productId) =>
-          productData.some((product) => product.id === productId)
+          productPage.rows.some((product) => product.id === productId)
         )
       );
       setSelectedProduct((current) => {
@@ -246,11 +231,12 @@ export default function AdminProductsPage() {
           return null;
         }
 
-        return productData.find((product) => product.id === current.id) ?? null;
+        return productPage.rows.find((product) => product.id === current.id) ?? null;
       });
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setProducts([]);
+      setProductTotal(0);
       setBrands([]);
       setStats(initialStats);
       setSelectedProductIds([]);
@@ -262,17 +248,21 @@ export default function AdminProductsPage() {
   };
 
   useEffect(() => {
-    loadPageData();
+    loadPageData(1);
   }, []);
 
   useEffect(() => {
-    setPage(1);
+    const timer = window.setTimeout(() => {
+      loadPageData(1);
+    }, 300);
+
+    return () => window.clearTimeout(timer);
   }, [brandFilter, searchKeyword, statusFilter]);
 
   const refreshAll = async () => {
     const productToRefresh = selectedProduct;
 
-    await loadPageData();
+    await loadPageData(page);
 
     if (productToRefresh) {
       await openProductSkus(productToRefresh, false);
@@ -292,7 +282,8 @@ export default function AdminProductsPage() {
       setSuccessMessage(`产品 ${created.product_code} 新增成功。`);
       setProductForm(initialProductForm);
       setCreateOpen(false);
-      await loadPageData();
+      setPage(1);
+      await loadPageData(1);
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
     } finally {
@@ -330,7 +321,7 @@ export default function AdminProductsPage() {
       await updateProduct(editForm);
       setSuccessMessage(`产品 ${editForm.productCode} 编辑成功。`);
       setEditForm(null);
-      await loadPageData();
+      await loadPageData(page);
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
     } finally {
@@ -348,7 +339,7 @@ export default function AdminProductsPage() {
       setSuccessMessage(
         `产品 ${product.product_code} 已${getStatusLabel(nextStatus)}。`
       );
-      await loadPageData();
+      await loadPageData(page);
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
     } finally {
@@ -369,7 +360,7 @@ export default function AdminProductsPage() {
       setSelectedProductIds((current) =>
         current.filter(
           (productId) =>
-            !filteredProducts.some((product) => product.id === productId)
+            !products.some((product) => product.id === productId)
         )
       );
       return;
@@ -377,7 +368,7 @@ export default function AdminProductsPage() {
 
     setSelectedProductIds((current) =>
       Array.from(
-        new Set([...current, ...filteredProducts.map((product) => product.id)])
+        new Set([...current, ...products.map((product) => product.id)])
       )
     );
   };
@@ -391,7 +382,8 @@ export default function AdminProductsPage() {
         .filter((row): row is ProductImportInput => Boolean(row))
     );
 
-    await loadPageData();
+    setPage(1);
+    await loadPageData(1);
     setSuccessMessage(
       `产品批量导入完成：成功 ${result.successCount} 条，失败 ${result.failedCount} 条。`
     );
@@ -401,13 +393,13 @@ export default function AdminProductsPage() {
 
   const batchDeactivateProducts = async (items: ProductListRow[]) => {
     const results = await deactivateProductsByIds(items.map((item) => item.id));
-    await loadPageData();
+    await loadPageData(page);
     return results;
   };
 
   const batchDeleteProducts = async (items: ProductListRow[]) => {
     const results = await deleteProductsByIds(items.map((item) => item.id));
-    await loadPageData();
+    await loadPageData(page);
     return results;
   };
 
@@ -432,7 +424,7 @@ export default function AdminProductsPage() {
       }
 
       setProductToDelete(null);
-      await loadPageData();
+      await loadPageData(page);
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
     } finally {
@@ -953,6 +945,7 @@ export default function AdminProductsPage() {
             setSearchKeyword("");
             setStatusFilter("all");
             setBrandFilter("all");
+            setPage(1);
           }}
         >
 
@@ -996,7 +989,7 @@ export default function AdminProductsPage() {
 
         <DataTable
           columns={productColumns}
-          rows={paginatedProducts}
+          rows={products}
           getRowKey={(product) => product.id}
           loading={loading}
           loadingText="正在读取产品数据..."
@@ -1004,8 +997,8 @@ export default function AdminProductsPage() {
           minWidth={1120}
           page={page}
           pageSize={DEFAULT_PAGE_SIZE}
-          total={filteredProducts.length}
-          onPageChange={setPage}
+          total={productTotal}
+          onPageChange={(nextPage) => loadPageData(nextPage)}
         />
       </section>
 

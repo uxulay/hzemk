@@ -758,7 +758,7 @@
 - 亚马逊站点当前仍按默认 `US` 写进 `notes` 文本里，不是单独字段。
 - 优先级当前仍按默认 `normal` 写入。
 - 当前还没有真实登录，所以 `requested_by` 暂时为空。
-- 批量导入校验：`SKU编码` 必填、`本次备货数量` 必填且必须大于 0、SKU 编码必须存在于系统成品 SKU、可选期望发货日期必须是 `YYYY-MM-DD`、可选目的仓库必须匹配仓库编码或仓库名称。
+- 批量导入校验：`SKU编码` 必填、`本次备货数量` 必填且必须是大于 0 的整数、SKU 编码必须存在于系统成品 SKU、可选期望发货日期必须是 `YYYY-MM-DD`、可选目的仓库必须匹配仓库编码或仓库名称。
 - 如果导入 SKU 暂未找到启用 BOM，当前不阻止创建备货单，但会提示后续排产算料前需要补齐 BOM。
 - 厂长排产和生产任务仍保持“一张生产任务 + 多个 SKU 明细”，不要改成一个 SKU 一张生产任务。
 
@@ -2134,6 +2134,65 @@ FBA 出库是单独动作，不能把成品入库自动等同于发往 FBA。
 
 - 已运行 `npm run typecheck`，通过。
 - 已运行 `npm run build`，通过。
+
+### 3.8.7 辅料拆表最终阶段：旧字段和旧 material SKU 删除准备（2026-05-27）
+
+本次完成最终清理脚本和代码适配。由于本地只有 Supabase anon key，没有数据库管理员连接、Supabase CLI 或 `psql`，没有直接在数据库执行备份和删除 SQL。
+
+已完成：
+
+- 新增 `scripts/final-check-before-dropping-legacy-material-fields.sql`，用于删除前检查旧辅料字段是否还有未迁移记录。
+- 新增 `scripts/backup-legacy-material-data-before-drop.sql`，会按 `backup_run_id` 备份旧 material SKU、BOM、物料需求、采购、库存和库存流水关键字段。
+- 新增 `scripts/drop-legacy-material-fields.sql`，会在检查和备份通过后删除 `bom_items.component_sku_id`、`material_requirements.material_sku_id` 和旧 `skus.sku_type = material` 数据。
+- `purchase_order_items.sku_id`、`inventory_items.sku_id`、`inventory_transactions.sku_id` 保留为可兼容历史数据的字段；其中库存和流水 `sku_id` 改为可空，辅料主逻辑使用 `material_id`。
+- 代码已清理 BOM、物料需求、采购、Dashboard 和库存页面中的旧辅料 fallback；辅料来源统一读取 `materials`。
+- 新增 `docs/materials-refactor-final-report.md`。
+
+数据库执行顺序：
+
+1. 先执行 `scripts/final-check-before-dropping-legacy-material-fields.sql`。
+2. 检查结果为 0 后执行 `scripts/backup-legacy-material-data-before-drop.sql`。
+3. 备份成功后执行 `scripts/drop-legacy-material-fields.sql`。
+
+如果第一步有任何未迁移记录，必须停止，不要删除。
+
+验证：
+
+- 已运行 `npm run typecheck`，通过。
+- 已运行 `npm run build`，通过。
+
+### 3.8.8 数据读取性能优化第一轮（2026-05-27）
+
+本次重点处理“大列表不要一次性拉全量”的第一轮高风险位置，没有删除文件，没有关闭 RLS。
+
+已完成：
+
+- 新增 `supabase/performance-rpc-and-indexes.sql`，包含性能索引、`pg_trgm` 搜索索引，以及 `get_skus_page`、`get_current_inventory_page`、`get_inventory_transactions_page`、`get_dashboard_summary`、`get_inventory_warning_summary` 等数据库端 RPC。
+- `/admin/skus` 改为调用 `get_skus_page`，SKU 搜索、品牌、产品、状态、SKU 类型筛选和库存数量/占用/库存行数汇总由数据库端分页聚合完成；产品选择默认只取前 20 条，并支持输入后 300ms 远程搜索。
+- `/inventory/materials`、`/inventory/products`、`/inventory/overview` 使用 `get_current_inventory_page` 读取当前页库存；仓库、SKU 关键词、品牌、库存状态在数据库端筛选，库存状态和汇总卡片由 RPC 计算。
+- `/inventory/transactions` 使用 `get_inventory_transactions_page` 读取当前页流水；流水类型、仓库、SKU 关键词、品牌、日期范围在数据库端筛选，流水类型统计由 RPC 返回。
+- `/dashboard` 的汇总数字改为调用 `get_dashboard_summary`，不再为了统计缺 BOM、低库存、待入库等数字拉整张业务表到前端计算。
+- `/admin/products`、`/admin/suppliers`、`/admin/users` 列表改成服务端分页读取，搜索、状态/品牌/角色筛选进入 Supabase 查询层；关联数量只按当前页 ID 查询。
+- 批量导入校验已优化一批大读取：品牌、产品、SKU、供应商、仓库、BOM、FBA 备货、其他入库、其他出库、库存调整等导入校验，改为只查询本次 CSV 出现过的编码或当前导入涉及的库存对象，不再先拉整张基础表。
+- 新增通用分页结果类型 `src/lib/api/page-types.ts`，用于统一 `{ rows, total, page, pageSize, totalPages }` 返回结构。
+
+需要在 Supabase 执行：
+
+1. 打开 `supabase/performance-rpc-and-indexes.sql`。
+2. 复制到 Supabase SQL Editor 执行。
+3. 执行成功后，页面才会有对应 RPC；如果未执行，相关页面会提示需要先执行该 SQL。
+
+本轮仍需继续优化：
+
+- `/bom`、`/admin/materials`、`/admin/brands`、`/admin/warehouses`、`/purchase/orders`、`/production/planning`、`/production/orders`、`/replenishment`、`/materials/requirements` 的主列表还需要继续第二轮改成完整服务端分页。
+- 部分业务创建弹窗里的 SKU / 辅料 / 供应商 / 仓库选择器还需要继续统一成远程搜索组件。
+- 旧的 `fetchAllSupabaseRows` 仍保留给详情、引用检查、少量基础字典和还未改完的列表；后续继续按模块收敛。
+
+验证：
+
+- 已运行 `npm run typecheck`，通过。
+- 已运行 `npm run build`，通过。
+- `npm run lint` 当前会进入 Next.js 15 的交互式 ESLint 配置提示，没有直接完成检查；本次未擅自选择 Strict/Base 生成配置。
 
 ## 10. 给后续 Codex 的开发提醒
 

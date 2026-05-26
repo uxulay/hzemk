@@ -1,6 +1,7 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { fetchAllSupabaseRows } from "@/lib/supabase/pagination";
 import type { BrandSummary } from "@/lib/brand-utils";
+import { normalizeRpcPage } from "@/lib/api/page-types";
 
 export type SkuStatus = "active" | "inactive";
 
@@ -58,6 +59,8 @@ export type GetSkusPageParams = {
   brandId?: string;
   productId?: string;
   supplierId?: string;
+  sortBy?: string;
+  sortDirection?: "asc" | "desc";
 };
 
 export type SkusPageResult = {
@@ -134,7 +137,6 @@ export type SkuBomHeaderForMaterial = {
 export type SkuBomItemUsage = {
   id: string;
   bom_header_id: string;
-  component_sku_id: string;
   quantity_per: number;
   unit: string;
   loss_rate: number;
@@ -517,102 +519,42 @@ export async function getSkusPage(
   const supabase = getSupabaseClient();
   const pageSize = Math.min(Math.max(params.pageSize || 100, 1), 100);
   const safePage = Math.max(params.page || 1, 1);
-  const from = (safePage - 1) * pageSize;
-  const to = from + pageSize - 1;
-  const keyword = escapeFilterKeyword(params.keyword ?? "");
-  const skuType = normalizeFilterValue(params.skuType);
-  const status = normalizeFilterValue(params.status);
-  const brandId = normalizeFilterValue(params.brandId);
-  const productId = normalizeFilterValue(params.productId);
-  const supplierId = normalizeFilterValue(params.supplierId);
+  const { data, error } = await withTimeout(
+    supabase.rpc("get_skus_page", {
+      p_page: safePage,
+      p_page_size: pageSize,
+      p_keyword: params.keyword?.trim() || null,
+      p_filters: {
+        skuType: params.skuType ?? "all",
+        status: params.status ?? "all",
+        brandId: params.brandId ?? "all",
+        productId: params.productId ?? "all",
+        supplierId: params.supplierId ?? "all"
+      },
+      p_sort_by: params.sortBy ?? "sku_code",
+      p_sort_direction: params.sortDirection ?? "asc"
+    }),
+    "分页读取 SKU 列表"
+  );
 
-  let productIdsByBrand: string[] | undefined;
-
-  if (brandId && brandId !== "none") {
-    productIdsByBrand = await getProductIdsByBrand(brandId);
-
-    if (productIdsByBrand.length === 0) {
-      return {
-        rows: [],
-        total: 0,
-        page: safePage,
-        pageSize,
-        totalPages: 1
-      };
-    }
-  }
-
-  if (brandId === "none") {
-    productIdsByBrand = await getProductIdsByBrand(null);
-  }
-
-  if (skuType === "material" || supplierId) {
-    return {
-      rows: [],
-      total: 0,
-      page: safePage,
-      pageSize,
-      totalPages: 1
-    };
-  }
-
-  let query = supabase
-    .from("skus")
-    .select(getSkuSelect(), { count: "exact" })
-    .order("sku_code", { ascending: true })
-    .range(from, to);
-
-  if (keyword) {
-    query = query.or(
-      `sku_code.ilike.%${keyword}%,sku_name.ilike.%${keyword}%,specs.ilike.%${keyword}%`
+  if (error) {
+    throw new Error(
+      `分页读取 SKU 列表失败：${error.message}。请确认已经在 Supabase SQL Editor 执行 supabase/performance-rpc-and-indexes.sql。`
     );
   }
 
-  if (skuType) {
-    query = query.eq("sku_type", skuType);
-  } else {
-    query = query.in("sku_type", ["finished_good", "finished_product", "semi_finished"]);
-  }
-
-  if (status) {
-    query = query.eq("status", status);
-  }
-
-  if (productId) {
-    query =
-      productId === "none"
-        ? query.is("product_id", null)
-        : query.eq("product_id", productId);
-  } else if (brandId === "none") {
-    query =
-      productIdsByBrand && productIdsByBrand.length > 0
-        ? query.or(`product_id.is.null,product_id.in.(${productIdsByBrand.join(",")})`)
-        : query.is("product_id", null);
-  } else if (productIdsByBrand) {
-    query = query.in("product_id", productIdsByBrand);
-  }
-
-  const skuResult = await withTimeout(query, "分页读取 SKU 列表");
-
-  if (skuResult.error) {
-    throw formatSupabaseError("分页读取 SKU 列表", skuResult.error);
-  }
-
-  const rows = (skuResult.data ?? []) as unknown as RawSkuRow[];
-  const inventorySummary = await getSkuInventorySummaryBySkuIds(
-    rows.map((row) => row.id)
-  );
-  const inventoryBySku = new Map(
-    inventorySummary.map((summary) => [summary.sku_id, summary])
-  );
-  const total = skuResult.count ?? 0;
-
-  return {
-    rows: rows.map((row) => normalizeSkuRow(row, inventoryBySku.get(row.id))),
-    total,
+  const page = normalizeRpcPage<SkuListRow, undefined>(data, {
     page: safePage,
     pageSize,
-    totalPages: Math.max(1, Math.ceil(total / pageSize))
+    summary: undefined
+  });
+
+  return {
+    rows: page.rows,
+    total: page.total,
+    page: page.page,
+    pageSize: page.pageSize,
+    totalPages: page.totalPages
   };
 }
 
@@ -640,11 +582,14 @@ export async function getSkus(): Promise<SkuListRow[]> {
   );
 }
 
-export async function getProductsForSkuForm(): Promise<SkuProductOption[]> {
+export async function getProductsForSkuForm(
+  keyword = "",
+  limit = 20
+): Promise<SkuProductOption[]> {
   const supabase = getSupabaseClient();
-  const data = await fetchAllSupabaseRows<RawSkuProductOption>(
-    () =>
-      supabase
+  const safeLimit = Math.min(Math.max(limit, 1), 50);
+  const normalizedKeyword = escapeFilterKeyword(keyword);
+  let query = supabase
       .from("products")
       .select(
         `
@@ -664,11 +609,29 @@ export async function getProductsForSkuForm(): Promise<SkuProductOption[]> {
           )
         `
       )
-      .order("product_code", { ascending: true }),
+      .order("product_code", { ascending: true })
+      .limit(safeLimit);
+
+  if (normalizedKeyword) {
+    query = query.or(
+      `product_code.ilike.%${normalizedKeyword}%,name.ilike.%${normalizedKeyword}%`
+    );
+  } else {
+    query = query.eq("status", "active");
+  }
+
+  const { data, error } = await withTimeout(
+    query,
     "读取产品下拉列表"
   );
 
-  return data.map(normalizeProductOption);
+  if (error) {
+    throw formatSupabaseError("读取产品下拉列表", error);
+  }
+
+  return ((data ?? []) as unknown as RawSkuProductOption[]).map(
+    normalizeProductOption
+  );
 }
 
 export async function createSku(input: CreateSkuInput): Promise<SkuRow> {
@@ -809,64 +772,9 @@ async function getFinishedSkuBomHeaders(
 }
 
 async function getMaterialSkuBomItems(
-  skuId: string
+  _skuId: string
 ): Promise<SkuBomItemUsage[]> {
-  const supabase = getSupabaseClient();
-  const data = await fetchAllSupabaseRows<RawSkuBomItemUsage>(
-    () =>
-      supabase
-      .from("bom_items")
-      .select(
-        `
-          id,
-          bom_header_id,
-          component_sku_id,
-          quantity_per,
-          unit,
-          loss_rate,
-          notes,
-          created_at,
-          updated_at,
-          bom_header:bom_headers!bom_items_bom_header_id_fkey (
-            id,
-            product_sku_id,
-            bom_code,
-            version,
-            status,
-            effective_from,
-            notes,
-            product_sku:skus!bom_headers_product_sku_id_fkey (
-              id,
-              sku_code,
-              sku_name,
-              sku_type,
-              unit,
-              product:products!skus_product_id_fkey (
-                id,
-                brand_id,
-                product_code,
-                name,
-                product_image_url,
-                status,
-                brand:brands!products_brand_id_fkey (
-                  id,
-                  brand_code,
-                  name,
-                  english_name,
-                  logo_url,
-                  status
-                )
-              )
-            )
-          )
-        `
-      )
-      .eq("component_sku_id", skuId)
-      .order("created_at", { ascending: false }),
-    "读取旧辅料 SKU 的 BOM 关联"
-  );
-
-  return data.map(normalizeBomItemUsage);
+  return [];
 }
 
 export async function getSkuBomUsage(input: {

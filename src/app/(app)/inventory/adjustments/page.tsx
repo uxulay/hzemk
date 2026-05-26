@@ -426,7 +426,7 @@ export default function InventoryAdjustmentsPage() {
     setSelectedItem({
       id: "",
       warehouse_id: warehouse.id,
-      sku_id: sku.legacy_sku_id ?? sku.id,
+      sku_id: sku.sku_type === "material" ? null : sku.id,
       product_sku_id: sku.product_sku_id,
       material_id: sku.material_id,
       item_type: sku.sku_type === "material" ? "material" : "finished_product",
@@ -437,7 +437,7 @@ export default function InventoryAdjustmentsPage() {
       updated_at: new Date().toISOString(),
       warehouse,
       sku: {
-        id: sku.legacy_sku_id ?? sku.id,
+        id: sku.id,
         product_id: sku.product_id,
         sku_code: sku.sku_code,
         sku_name: sku.sku_name,
@@ -492,7 +492,7 @@ export default function InventoryAdjustmentsPage() {
 
       const result = await adjustInventoryByWarehouseSku({
         warehouseId: selectedItem.warehouse_id,
-        skuId: selectedItem.material_id ?? selectedItem.product_sku_id ?? selectedItem.sku_id,
+        skuId: selectedItem.material_id ?? selectedItem.product_sku_id ?? selectedItem.sku_id ?? "",
         adjustmentMode,
         adjustmentQuantity:
           adjustmentMode === "set_to" || !adjustmentQuantity.trim()

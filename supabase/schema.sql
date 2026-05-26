@@ -117,13 +117,13 @@ create table public.skus (
   updated_at timestamptz not null default now()
 );
 
-comment on table public.skus is 'SKU 表：保存成品 SKU、原材料 SKU、半成品 SKU。用 sku_type 区分类型。';
+comment on table public.skus is 'SKU 表：保存成品 SKU、半成品 SKU。辅料已拆到 materials 表。';
 comment on column public.skus.id is '主键 ID。';
 comment on column public.skus.product_id is '所属产品 ID，原材料可为空。';
-comment on column public.skus.default_supplier_id is '辅料默认供应商 ID。仅 sku_type = material 的 SKU 使用，成品和半成品可为空。';
+comment on column public.skus.default_supplier_id is '历史字段：成品和半成品可为空；辅料默认供应商请使用 materials.default_supplier_id。';
 comment on column public.skus.sku_code is '内部 SKU 编码。';
 comment on column public.skus.sku_name is 'SKU 名称。';
-comment on column public.skus.sku_type is 'SKU 类型，例如 finished_product、material、semi_finished。';
+comment on column public.skus.sku_type is 'SKU 类型，例如 finished_product、semi_finished。';
 comment on column public.skus.amazon_sku is '亚马逊 SKU 或 MSKU。';
 comment on column public.skus.fnsku is '亚马逊 FNSKU。';
 comment on column public.skus.unit is '单位，例如 pcs、kg、m。';
@@ -177,7 +177,7 @@ create table public.materials (
   updated_at timestamptz not null default now()
 );
 
-comment on table public.materials is '辅料表：阶段一先从 skus.sku_type = material 拆出独立辅料基础资料。';
+comment on table public.materials is '辅料表：保存辅料基础资料。辅料不再存储在 skus 表。';
 comment on column public.materials.id is '主键 ID。';
 comment on column public.materials.material_code is '辅料编码。';
 comment on column public.materials.material_name is '辅料名称。';
@@ -238,7 +238,6 @@ comment on column public.bom_headers.updated_at is '更新时间。';
 create table public.bom_items (
   id uuid primary key default gen_random_uuid(),
   bom_header_id uuid not null references public.bom_headers(id) on delete cascade,
-  component_sku_id uuid references public.skus(id) on delete restrict,
   material_id uuid references public.materials(id) on delete restrict,
   quantity_per numeric(18, 4) not null,
   unit text not null default 'pcs',
@@ -246,14 +245,13 @@ create table public.bom_items (
   notes text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (bom_header_id, component_sku_id)
+  unique (bom_header_id, material_id)
 );
 
-comment on table public.bom_items is 'BOM 明细表：记录生产 1 个成品 SKU 需要哪些原材料或半成品。';
+comment on table public.bom_items is 'BOM 明细表：记录生产 1 个成品 SKU 需要哪些辅料。';
 comment on column public.bom_items.id is '主键 ID。';
 comment on column public.bom_items.bom_header_id is '所属 BOM 主表 ID。';
-comment on column public.bom_items.component_sku_id is '兼容旧数据字段：旧版组件 SKU ID，阶段二后辅料优先使用 material_id。';
-comment on column public.bom_items.material_id is '辅料 ID，关联 public.materials.id。阶段二起 BOM 辅料明细优先使用该字段。';
+comment on column public.bom_items.material_id is '辅料 ID，关联 public.materials.id。';
 comment on column public.bom_items.quantity_per is '生产 1 个成品需要的用量。';
 comment on column public.bom_items.unit is '用量单位。';
 comment on column public.bom_items.loss_rate is '损耗率，例如 0.03 表示 3%。';
@@ -265,7 +263,7 @@ create table public.fba_replenishment_requests (
   id uuid primary key default gen_random_uuid(),
   request_no text not null unique,
   requested_by uuid references public.profiles(id) on delete set null,
-  sku_id uuid not null references public.skus(id) on delete restrict,
+  sku_id uuid references public.skus(id) on delete restrict,
   target_warehouse_id uuid references public.warehouses(id) on delete set null,
   fba_warehouse_code text,
   requested_quantity numeric(18, 4) not null,
@@ -390,7 +388,6 @@ create table public.material_requirements (
   id uuid primary key default gen_random_uuid(),
   production_order_id uuid not null references public.production_orders(id) on delete cascade,
   replenishment_request_id uuid references public.fba_replenishment_requests(id) on delete set null,
-  material_sku_id uuid references public.skus(id) on delete restrict,
   material_id uuid references public.materials(id) on delete restrict,
   required_quantity numeric(18, 4) not null,
   available_quantity numeric(18, 4) not null default 0,
@@ -401,14 +398,13 @@ create table public.material_requirements (
   notes text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (production_order_id, material_sku_id)
+  unique (production_order_id, material_id)
 );
 
 comment on table public.material_requirements is '物料需求表：根据生产任务和 BOM 计算需要多少辅料，并记录缺料情况。';
 comment on column public.material_requirements.id is '主键 ID。';
 comment on column public.material_requirements.production_order_id is '来源生产任务 ID。';
 comment on column public.material_requirements.replenishment_request_id is '来源 FBA 备货需求 ID，方便追踪。';
-comment on column public.material_requirements.material_sku_id is '兼容旧数据字段：旧版原材料或半成品 SKU ID，辅料需求优先使用 material_id。';
 comment on column public.material_requirements.material_id is '辅料 ID，关联 public.materials.id。阶段三起物料需求优先使用该字段。';
 comment on column public.material_requirements.required_quantity is '需要数量。';
 comment on column public.material_requirements.available_quantity is '计算时可用库存数量。';
@@ -467,7 +463,7 @@ create table public.purchase_order_items (
 comment on table public.purchase_order_items is '采购单明细表：记录采购单里每个辅料的采购数量和到货数量。';
 comment on column public.purchase_order_items.id is '主键 ID。';
 comment on column public.purchase_order_items.purchase_order_id is '所属采购单 ID。';
-comment on column public.purchase_order_items.sku_id is '兼容旧数据字段：旧版采购的原材料或半成品 SKU ID，采购辅料优先使用 material_id。';
+comment on column public.purchase_order_items.sku_id is '历史采购 SKU ID。新辅料采购使用 material_id；该字段只保留给历史或非辅料采购记录。';
 comment on column public.purchase_order_items.material_id is '辅料 ID，关联 public.materials.id。阶段四起采购明细优先使用该字段。';
 comment on column public.purchase_order_items.material_requirement_id is '关联的物料需求 ID，可为空。';
 comment on column public.purchase_order_items.ordered_quantity is '采购数量。';
@@ -491,7 +487,6 @@ create table public.inventory_items (
   unit text not null default 'pcs',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (warehouse_id, sku_id),
   constraint inventory_items_product_sku_required check (
     item_type not in ('finished_product', 'finished_good', 'product_sku')
     or product_sku_id is not null
@@ -499,13 +494,16 @@ create table public.inventory_items (
   constraint inventory_items_material_required check (
     item_type <> 'material'
     or material_id is not null
-  )
+  ),
+  unique (warehouse_id, sku_id),
+  unique (warehouse_id, product_sku_id),
+  unique (warehouse_id, material_id)
 );
 
-comment on table public.inventory_items is '库存表：保存每个仓库里每个库存对象的当前数量。阶段五起成品优先用 product_sku_id，辅料优先用 material_id，旧 sku_id 保留兼容。';
+comment on table public.inventory_items is '库存表：保存每个仓库里每个库存对象的当前数量。成品优先用 product_sku_id，辅料优先用 material_id；sku_id 保留给历史库存和成品兼容。';
 comment on column public.inventory_items.id is '主键 ID。';
 comment on column public.inventory_items.warehouse_id is '仓库 ID。';
-comment on column public.inventory_items.sku_id is '兼容旧数据字段：库存 SKU ID。阶段五起代码逻辑不再依赖它判断辅料。';
+comment on column public.inventory_items.sku_id is '历史兼容 SKU ID，可为空。辅料主逻辑使用 material_id，成品主逻辑使用 product_sku_id。';
 comment on column public.inventory_items.product_sku_id is '成品 SKU ID，库存类型为 finished_product、finished_good、product_sku 时优先使用。';
 comment on column public.inventory_items.material_id is '辅料 ID，库存类型为 material 时优先使用。';
 comment on column public.inventory_items.item_type is '库存类型，例如 material、semi_finished、finished_product。';
@@ -520,7 +518,7 @@ create table public.inventory_transactions (
   id uuid primary key default gen_random_uuid(),
   transaction_no text not null unique,
   warehouse_id uuid not null references public.warehouses(id) on delete restrict,
-  sku_id uuid not null references public.skus(id) on delete restrict,
+  sku_id uuid references public.skus(id) on delete restrict,
   product_sku_id uuid references public.skus(id) on delete restrict,
   material_id uuid references public.materials(id) on delete restrict,
   transaction_type text not null,
@@ -535,11 +533,11 @@ create table public.inventory_transactions (
   updated_at timestamptz not null default now()
 );
 
-comment on table public.inventory_transactions is '出入库流水表：记录原材料入库、原材料领料、成品入库、成品出库和库存调整。';
+comment on table public.inventory_transactions is '出入库流水表：记录辅料入库、辅料领料、成品入库、成品出库和库存调整。成品优先用 product_sku_id，辅料优先用 material_id；sku_id 保留给历史流水和成品兼容。';
 comment on column public.inventory_transactions.id is '主键 ID。';
 comment on column public.inventory_transactions.transaction_no is '库存流水单号。';
 comment on column public.inventory_transactions.warehouse_id is '发生库存变化的仓库 ID。';
-comment on column public.inventory_transactions.sku_id is '兼容旧数据字段：发生库存变化的 SKU ID。阶段五起辅料优先使用 material_id。';
+comment on column public.inventory_transactions.sku_id is '历史兼容 SKU ID，可为空。辅料主逻辑使用 material_id，成品主逻辑使用 product_sku_id。';
 comment on column public.inventory_transactions.product_sku_id is '发生库存变化的成品 SKU ID。';
 comment on column public.inventory_transactions.material_id is '发生库存变化的辅料 ID。';
 comment on column public.inventory_transactions.transaction_type is '流水类型：material_in、material_out、product_in、product_out、adjustment。';
@@ -560,7 +558,6 @@ create index idx_skus_default_supplier_id on public.skus(default_supplier_id);
 create index idx_materials_default_supplier_id on public.materials(default_supplier_id);
 create index idx_bom_headers_product_sku_id on public.bom_headers(product_sku_id);
 create index idx_bom_items_bom_header_id on public.bom_items(bom_header_id);
-create index idx_bom_items_component_sku_id on public.bom_items(component_sku_id);
 create index idx_bom_items_material_id on public.bom_items(material_id);
 create index idx_fba_requests_sku_id on public.fba_replenishment_requests(sku_id);
 create index idx_fba_requests_status on public.fba_replenishment_requests(status);
@@ -573,7 +570,6 @@ create index idx_production_order_items_order_id on public.production_order_item
 create index idx_production_order_items_request_item_id on public.production_order_items(replenishment_request_item_id);
 create index idx_production_order_items_sku_id on public.production_order_items(sku_id);
 create index idx_material_requirements_order_id on public.material_requirements(production_order_id);
-create index idx_material_requirements_material_sku_id on public.material_requirements(material_sku_id);
 create index idx_material_requirements_material_id on public.material_requirements(material_id);
 create index idx_purchase_orders_supplier_id on public.purchase_orders(supplier_id);
 create index idx_purchase_orders_status on public.purchase_orders(status);

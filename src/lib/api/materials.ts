@@ -49,7 +49,7 @@ export type MaterialListRow = MaterialRow & {
 export type MaterialInventoryLocation = {
   id: string;
   warehouse_id: string;
-  sku_id: string;
+  material_id: string | null;
   item_type: string;
   quantity_on_hand: number;
   reserved_quantity: number;
@@ -68,7 +68,7 @@ export type MaterialInventoryLocation = {
 export type MaterialBomUsage = {
   id: string;
   bom_header_id: string;
-  component_sku_id: string;
+  material_id: string | null;
   quantity_per: number;
   unit: string;
   loss_rate: number;
@@ -181,14 +181,14 @@ type RawMaterialRow = MaterialTableRow & {
 };
 
 type RawInventorySummaryRow = {
-  sku_id: string;
+  material_id: string;
   quantity_on_hand: number | string;
   reserved_quantity: number | string;
   safety_stock_quantity: number | string | null;
 };
 
 type MaterialInventorySummary = {
-  sku_id: string;
+  material_id: string;
   quantity_on_hand: number;
   reserved_quantity: number;
   safety_stock_quantity: number;
@@ -198,16 +198,6 @@ type MaterialInventorySummary = {
 type RawReferenceRow = {
   id: string;
   [key: string]: string | null;
-};
-
-type LegacyMaterialSkuRow = {
-  id: string;
-  sku_code: string;
-};
-
-type MaterialUsageLookup = {
-  legacySkuIdByMaterialId: Map<string, string>;
-  materialIdByLegacySkuId: Map<string, string>;
 };
 
 type RawMaterialInventoryLocation = Omit<
@@ -682,11 +672,11 @@ async function deactivateRow(table: string, id: string, action: string) {
   }
 }
 
-async function getInventorySummaryBySkuIds(ids: string[]) {
-  const summaryBySku = new Map<string, MaterialInventorySummary>();
+async function getInventorySummaryByMaterialIds(ids: string[]) {
+  const summaryByMaterial = new Map<string, MaterialInventorySummary>();
 
   if (ids.length === 0) {
-    return summaryBySku;
+    return summaryByMaterial;
   }
 
   const supabase = getSupabaseClient();
@@ -695,15 +685,15 @@ async function getInventorySummaryBySkuIds(ids: string[]) {
       supabase
       .from("inventory_items")
       .select(
-        "sku_id, quantity_on_hand, reserved_quantity, safety_stock_quantity"
+        "material_id, quantity_on_hand, reserved_quantity, safety_stock_quantity"
       )
-      .in("sku_id", ids),
+      .in("material_id", ids),
     "读取辅料库存汇总"
   );
 
   for (const row of data) {
-    const current = summaryBySku.get(row.sku_id) ?? {
-      sku_id: row.sku_id,
+    const current = summaryByMaterial.get(row.material_id) ?? {
+      material_id: row.material_id,
       quantity_on_hand: 0,
       reserved_quantity: 0,
       safety_stock_quantity: 0,
@@ -714,10 +704,10 @@ async function getInventorySummaryBySkuIds(ids: string[]) {
     current.reserved_quantity += Number(row.reserved_quantity);
     current.safety_stock_quantity += Number(row.safety_stock_quantity ?? 0);
     current.inventory_row_count += 1;
-    summaryBySku.set(row.sku_id, current);
+    summaryByMaterial.set(row.material_id, current);
   }
 
-  return summaryBySku;
+  return summaryByMaterial;
 }
 
 async function getReferenceCounts(
@@ -757,57 +747,7 @@ function incrementCount(counts: Map<string, number>, key: string | null | undefi
   counts.set(key, (counts.get(key) ?? 0) + 1);
 }
 
-async function getMaterialUsageLookup(
-  materials: MaterialTableRow[]
-): Promise<MaterialUsageLookup> {
-  const legacySkuIdByMaterialId = new Map<string, string>();
-  const materialIdByLegacySkuId = new Map<string, string>();
-  const materialByCode = new Map(
-    materials.map((material) => [
-      material.material_code.toLowerCase(),
-      material.id
-    ])
-  );
-  const materialCodes = materials.map((material) => material.material_code);
-
-  if (materialCodes.length === 0) {
-    return {
-      legacySkuIdByMaterialId,
-      materialIdByLegacySkuId
-    };
-  }
-
-  const legacySkus = await fetchAllSupabaseRows<LegacyMaterialSkuRow>(
-    () =>
-      getSupabaseClient()
-        .from("skus")
-        .select("id, sku_code")
-        .eq("sku_type", "material")
-        .in("sku_code", materialCodes),
-    "读取辅料对应的旧 SKU"
-  );
-
-  for (const sku of legacySkus) {
-    const materialId = materialByCode.get(sku.sku_code.toLowerCase());
-
-    if (!materialId) {
-      continue;
-    }
-
-    legacySkuIdByMaterialId.set(materialId, sku.id);
-    materialIdByLegacySkuId.set(sku.id, materialId);
-  }
-
-  return {
-    legacySkuIdByMaterialId,
-    materialIdByLegacySkuId
-  };
-}
-
-async function getBomUsageCountsByMaterial(
-  materialIds: string[],
-  lookup: MaterialUsageLookup
-) {
+async function getBomUsageCountsByMaterial(materialIds: string[]) {
   const counts = new Map<string, number>();
 
   if (materialIds.length > 0) {
@@ -826,38 +766,10 @@ async function getBomUsageCountsByMaterial(
     rows.forEach((row) => incrementCount(counts, row.material_id));
   }
 
-  const legacySkuIds = [...lookup.materialIdByLegacySkuId.keys()];
-
-  if (legacySkuIds.length > 0) {
-    const rows = await fetchAllSupabaseRows<{
-      id: string;
-      component_sku_id: string | null;
-      material_id: string | null;
-    }>(
-      () =>
-        getSupabaseClient()
-          .from("bom_items")
-          .select("id, component_sku_id, material_id")
-          .in("component_sku_id", legacySkuIds),
-      "统计旧 BOM 辅料引用"
-    );
-
-    for (const row of rows) {
-      if (row.material_id) {
-        continue;
-      }
-
-      incrementCount(counts, lookup.materialIdByLegacySkuId.get(row.component_sku_id ?? ""));
-    }
-  }
-
   return counts;
 }
 
-async function getMaterialRequirementCountsByMaterial(
-  materialIds: string[],
-  lookup: MaterialUsageLookup
-) {
+async function getMaterialRequirementCountsByMaterial(materialIds: string[]) {
   const counts = new Map<string, number>();
 
   if (materialIds.length > 0) {
@@ -876,41 +788,10 @@ async function getMaterialRequirementCountsByMaterial(
     rows.forEach((row) => incrementCount(counts, row.material_id));
   }
 
-  const legacySkuIds = [...lookup.materialIdByLegacySkuId.keys()];
-
-  if (legacySkuIds.length > 0) {
-    const rows = await fetchAllSupabaseRows<{
-      id: string;
-      material_sku_id: string | null;
-      material_id: string | null;
-    }>(
-      () =>
-        getSupabaseClient()
-          .from("material_requirements")
-          .select("id, material_sku_id, material_id")
-          .in("material_sku_id", legacySkuIds),
-      "统计旧物料需求辅料引用"
-    );
-
-    for (const row of rows) {
-      if (row.material_id) {
-        continue;
-      }
-
-      incrementCount(
-        counts,
-        lookup.materialIdByLegacySkuId.get(row.material_sku_id ?? "")
-      );
-    }
-  }
-
   return counts;
 }
 
-async function getPurchaseUsageCountsByMaterial(
-  materialIds: string[],
-  lookup: MaterialUsageLookup
-) {
+async function getPurchaseUsageCountsByMaterial(materialIds: string[]) {
   const counts = new Map<string, number>();
 
   if (materialIds.length > 0) {
@@ -929,40 +810,10 @@ async function getPurchaseUsageCountsByMaterial(
     rows.forEach((row) => incrementCount(counts, row.material_id));
   }
 
-  const legacySkuIds = [...lookup.materialIdByLegacySkuId.keys()];
-
-  if (legacySkuIds.length === 0) {
-    return counts;
-  }
-
-  const rows = await fetchAllSupabaseRows<{
-    id: string;
-    sku_id: string | null;
-    material_id: string | null;
-  }>(
-    () =>
-      getSupabaseClient()
-        .from("purchase_order_items")
-        .select("id, sku_id, material_id")
-        .in("sku_id", legacySkuIds),
-    "统计旧采购辅料引用"
-  );
-
-  for (const row of rows) {
-    if (row.material_id) {
-      continue;
-    }
-
-    incrementCount(counts, lookup.materialIdByLegacySkuId.get(row.sku_id ?? ""));
-  }
-
   return counts;
 }
 
-async function getPurchaseRecordsForMaterial(
-  materialId: string,
-  legacySkuId?: string
-) {
+async function getPurchaseRecordsForMaterial(materialId: string) {
   const recordsById = new Map<string, MaterialPurchaseRecord>();
   const selectColumns = `
     id,
@@ -1003,23 +854,6 @@ async function getPurchaseRecordsForMaterial(
     .map(normalizePurchaseRecord)
     .forEach((record) => recordsById.set(record.id, record));
 
-  if (legacySkuId) {
-    const legacyRows = await fetchAllSupabaseRows<RawMaterialPurchaseRecord>(
-      () =>
-        getSupabaseClient()
-          .from("purchase_order_items")
-          .select(selectColumns)
-          .eq("sku_id", legacySkuId)
-          .is("material_id", null)
-          .order("created_at", { ascending: false }),
-      "读取旧辅料采购记录"
-    );
-
-    legacyRows
-      .map(normalizePurchaseRecord)
-      .forEach((record) => recordsById.set(record.id, record));
-  }
-
   return [...recordsById.values()].sort(
     (left, right) =>
       new Date(right.created_at).getTime() - new Date(left.created_at).getTime()
@@ -1037,25 +871,23 @@ export async function getMaterials(): Promise<MaterialListRow[]> {
     "读取辅料列表"
   );
 
-  const lookup = await getMaterialUsageLookup(materialRows);
   const materialIds = materialRows.map((material) => material.id);
-  const legacySkuIds = [...lookup.materialIdByLegacySkuId.keys()];
   const [
-    inventorySummaryBySku,
+    inventorySummaryByMaterial,
     bomUsageCounts,
     materialRequirementCounts,
     purchaseUsageCounts
   ] = await Promise.all([
-    getInventorySummaryBySkuIds(legacySkuIds),
-    getBomUsageCountsByMaterial(materialIds, lookup),
-    getMaterialRequirementCountsByMaterial(materialIds, lookup),
-    getPurchaseUsageCountsByMaterial(materialIds, lookup)
+    getInventorySummaryByMaterialIds(materialIds),
+    getBomUsageCountsByMaterial(materialIds),
+    getMaterialRequirementCountsByMaterial(materialIds),
+    getPurchaseUsageCountsByMaterial(materialIds)
   ]);
 
   return materialRows.map((row) =>
     normalizeMaterialRow(
       row,
-      inventorySummaryBySku.get(lookup.legacySkuIdByMaterialId.get(row.id) ?? ""),
+      inventorySummaryByMaterial.get(row.id),
       bomUsageCounts.get(row.id) ?? 0,
       materialRequirementCounts.get(row.id) ?? 0,
       purchaseUsageCounts.get(row.id) ?? 0
@@ -1189,26 +1021,24 @@ export async function getMaterialDetail(
   }
 
   const materialRow = materialData as unknown as RawMaterialRow;
-  const lookup = await getMaterialUsageLookup([materialRow]);
-  const legacySkuId = lookup.legacySkuIdByMaterialId.get(materialRow.id);
   const [
-    inventorySummaryBySku,
+    inventorySummaryByMaterial,
     bomUsageCounts,
     materialRequirementCounts,
     purchaseUsageCounts,
     purchaseRecords
   ] = await Promise.all([
-    getInventorySummaryBySkuIds(legacySkuId ? [legacySkuId] : []),
-    getBomUsageCountsByMaterial([materialRow.id], lookup),
-    getMaterialRequirementCountsByMaterial([materialRow.id], lookup),
-    getPurchaseUsageCountsByMaterial([materialRow.id], lookup),
-    getPurchaseRecordsForMaterial(materialRow.id, legacySkuId)
+    getInventorySummaryByMaterialIds([materialRow.id]),
+    getBomUsageCountsByMaterial([materialRow.id]),
+    getMaterialRequirementCountsByMaterial([materialRow.id]),
+    getPurchaseUsageCountsByMaterial([materialRow.id]),
+    getPurchaseRecordsForMaterial(materialRow.id)
   ]);
 
   return {
     material: normalizeMaterialRow(
       materialRow,
-      inventorySummaryBySku.get(legacySkuId ?? ""),
+      inventorySummaryByMaterial.get(materialRow.id),
       bomUsageCounts.get(materialRow.id) ?? 0,
       materialRequirementCounts.get(materialRow.id) ?? 0,
       purchaseUsageCounts.get(materialRow.id) ?? 0

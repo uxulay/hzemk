@@ -186,13 +186,9 @@ function getRequirementMaterialLabel(
   requirement: ProductionOrderTrackingRow["material_requirements"][number]
 ) {
   const code =
-    requirement.material?.material_code ??
-    requirement.material_sku?.sku_code ??
-    "-";
+    requirement.material?.material_code ?? "-";
   const name =
-    requirement.material?.material_name ??
-    requirement.material_sku?.sku_name ??
-    "-";
+    requirement.material?.material_name ?? "-";
 
   return `${code} / ${name}`;
 }

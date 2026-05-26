@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { BulkActionBar } from "@/components/BulkActionBar";
 import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -40,6 +40,7 @@ import {
   type SkuProductOption,
   type SkuStatus
 } from "@/lib/api/skus";
+import { getBrandOptions, type BrandRow } from "@/lib/api/brands";
 import { getBrandCodeName, getSkuBrandLabel } from "@/lib/brand-utils";
 import { downloadCsvTemplate, type CsvTemplateField } from "@/lib/utils/csv";
 
@@ -208,6 +209,8 @@ type ProductSearchSelectProps = {
   value: string;
   disabled?: boolean;
   required?: boolean;
+  loading?: boolean;
+  onSearch: (keyword: string) => void;
   onChange: (productId: string) => void;
 };
 
@@ -216,18 +219,20 @@ function ProductSearchSelect({
   value,
   disabled = false,
   required = false,
+  loading = false,
+  onSearch,
   onChange
 }: ProductSearchSelectProps) {
   const [keyword, setKeyword] = useState("");
   const selectedProduct = products.find((product) => product.id === value);
-  const normalizedKeyword = keyword.trim().toLowerCase();
-  const filteredProducts = normalizedKeyword
-    ? products.filter(
-        (product) =>
-          product.product_code.toLowerCase().includes(normalizedKeyword) ||
-          product.name.toLowerCase().includes(normalizedKeyword)
-      )
-    : products.slice(0, 8);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      onSearch(keyword);
+    }, 300);
+
+    return () => window.clearTimeout(timer);
+  }, [keyword, onSearch]);
 
   return (
     <div className="fieldBlock">
@@ -251,10 +256,12 @@ function ProductSearchSelect({
         </div>
       ) : null}
       <div className="searchPickerList">
-        {filteredProducts.length === 0 ? (
+        {loading ? (
+          <p className="tableHint">正在搜索产品...</p>
+        ) : products.length === 0 ? (
           <p className="tableHint">没有匹配的产品。</p>
         ) : (
-          filteredProducts.map((product) => (
+          products.map((product) => (
             <button
               type="button"
               key={product.id}
@@ -290,6 +297,7 @@ export default function AdminSkusPage() {
   const router = useRouter();
   const [skus, setSkus] = useState<SkuListRow[]>([]);
   const [products, setProducts] = useState<SkuProductOption[]>([]);
+  const [brands, setBrands] = useState<BrandRow[]>([]);
   const [skuForm, setSkuForm] = useState<SkuFormState>(initialSkuForm);
   const [editForm, setEditForm] = useState<SkuEditFormState | null>(null);
   const [selectedBomSku, setSelectedBomSku] = useState<SkuListRow | null>(null);
@@ -306,6 +314,7 @@ export default function AdminSkusPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [skuToDelete, setSkuToDelete] = useState<SkuListRow | null>(null);
   const [loading, setLoading] = useState(true);
+  const [productLoading, setProductLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [statusUpdatingId, setStatusUpdatingId] = useState("");
@@ -328,19 +337,7 @@ export default function AdminSkusPage() {
     };
   }, [skus, skuTotal]);
 
-  const brandOptions = useMemo(() => {
-    const brandById = new Map<string, NonNullable<SkuProductOption["brand"]>>();
-
-    products.forEach((product) => {
-      if (product.brand) {
-        brandById.set(product.brand.id, product.brand);
-      }
-    });
-
-    return [...brandById.values()].sort((first, second) =>
-      first.brand_code.localeCompare(second.brand_code, "zh-CN")
-    );
-  }, [products]);
+  const brandOptions = brands;
 
   const selectedSkuRows = useMemo(
     () => skus.filter((sku) => selectedSkuIds.includes(sku.id)),
@@ -393,13 +390,42 @@ export default function AdminSkusPage() {
 
   const loadOptions = async () => {
     try {
-      const productData = await getProductsForSkuForm();
+      const [productData, brandData] = await Promise.all([
+        getProductsForSkuForm("", 20),
+        getBrandOptions()
+      ]);
       setProducts(productData);
+      setBrands(brandData);
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setProducts([]);
+      setBrands([]);
     }
   };
+
+  const searchProducts = useCallback(async (keyword: string) => {
+    try {
+      setProductLoading(true);
+      const productData = await getProductsForSkuForm(keyword, 20);
+      setProducts((current) => {
+        const selected = current.filter(
+          (product) =>
+            product.id === skuForm.productId ||
+            product.id === editForm?.productId
+        );
+        const merged = new Map<string, SkuProductOption>();
+        [...selected, ...productData].forEach((product) =>
+          merged.set(product.id, product)
+        );
+
+        return [...merged.values()];
+      });
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setProductLoading(false);
+    }
+  }, [editForm?.productId, skuForm.productId]);
 
   useEffect(() => {
     loadOptions();
@@ -455,6 +481,14 @@ export default function AdminSkusPage() {
   };
 
   const startEditSku = (sku: SkuListRow) => {
+    if (sku.product) {
+      setProducts((current) =>
+        current.some((product) => product.id === sku.product?.id)
+          ? current
+          : [sku.product as SkuProductOption, ...current]
+      );
+    }
+
     setEditForm({
       skuId: sku.id,
       skuCode: sku.sku_code,
@@ -729,6 +763,8 @@ export default function AdminSkusPage() {
             value={skuForm.productId}
             disabled={creating}
             required={skuForm.skuType === "finished_good"}
+            loading={productLoading}
+            onSearch={searchProducts}
             onChange={(productId) =>
               setSkuForm((current) => ({
                 ...current,
@@ -843,12 +879,14 @@ export default function AdminSkusPage() {
             </label>
 
             <ProductSearchSelect
-              products={products}
-              value={editForm.productId}
-              disabled={updating}
-              required={editForm.skuType === "finished_good"}
-              onChange={(productId) =>
-                setEditForm((current) =>
+            products={products}
+            value={editForm.productId}
+            disabled={updating}
+            required={editForm.skuType === "finished_good"}
+            loading={productLoading}
+            onSearch={searchProducts}
+            onChange={(productId) =>
+              setEditForm((current) =>
                   current
                     ? {
                         ...current,

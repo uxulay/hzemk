@@ -35,6 +35,19 @@ export type UserStats = {
   warehouseUsers: number;
 };
 
+export type UserPageFilters = {
+  roleId?: string;
+  status?: string;
+};
+
+export type UserPageResult = {
+  rows: UserListRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
 export type CreateUserProfileInput = {
   authUserId: string;
   fullName: string;
@@ -247,8 +260,104 @@ export async function getUsers(): Promise<UserListRow[]> {
   return ((data ?? []) as unknown as RawUserListRow[]).map(normalizeUserListRow);
 }
 
+export async function getUsersPage(params: {
+  page?: number;
+  pageSize?: number;
+  keyword?: string;
+  filters?: UserPageFilters;
+} = {}): Promise<UserPageResult> {
+  const supabase = getSupabaseClient();
+  const pageSize = Math.min(Math.max(params.pageSize ?? 20, 1), 100);
+  const page = Math.max(params.page ?? 1, 1);
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+  const keyword = params.keyword?.trim() ?? "";
+  const roleId = params.filters?.roleId;
+  const status = params.filters?.status;
+  let query = supabase
+    .from("profiles")
+    .select(
+      `
+        id,
+        role_id,
+        full_name,
+        email,
+        phone,
+        status,
+        created_at,
+        updated_at,
+        role:roles!profiles_role_id_fkey (
+          id,
+          code,
+          name,
+          description,
+          created_at,
+          updated_at
+        )
+      `,
+      { count: "exact" }
+    )
+    .order("created_at", { ascending: false })
+    .range(from, to);
+
+  if (keyword) {
+    const escapedKeyword = keyword.replace(/[%_,]/g, " ").trim();
+    query = query.or(
+      `full_name.ilike.%${escapedKeyword}%,email.ilike.%${escapedKeyword}%`
+    );
+  }
+
+  if (roleId && roleId !== "all") {
+    query = query.eq("role_id", roleId);
+  }
+
+  if (status && status !== "all") {
+    query =
+      status === "disabled"
+        ? query.in("status", ["disabled", "inactive"])
+        : query.eq("status", status);
+  }
+
+  const { data, error, count } = await withTimeout(query, "分页读取用户列表");
+
+  if (error) {
+    throw formatSupabaseError("分页读取用户列表", error);
+  }
+
+  const total = count ?? 0;
+
+  return {
+    rows: ((data ?? []) as unknown as RawUserListRow[]).map(normalizeUserListRow),
+    total,
+    page,
+    pageSize,
+    totalPages: Math.max(1, Math.ceil(total / pageSize))
+  };
+}
+
 export async function getUserStats(): Promise<UserStats> {
-  const users = await getUsers();
+  const supabase = getSupabaseClient();
+  const [roles, profilesResult] = await Promise.all([
+    getRoles(),
+    withTimeout(
+      supabase.from("profiles").select("id, role_id, status"),
+      "统计用户数量"
+    )
+  ]);
+
+  if (profilesResult.error) {
+    throw formatSupabaseError("统计用户数量", profilesResult.error);
+  }
+
+  const roleById = new Map(roles.map((role) => [role.id, role]));
+  const users = ((profilesResult.data ?? []) as Array<{
+    id: string;
+    role_id: string | null;
+    status: string;
+  }>).map((profile) => ({
+    ...profile,
+    role: profile.role_id ? roleById.get(profile.role_id) ?? null : null
+  })) as UserListRow[];
 
   return {
     totalUsers: users.length,

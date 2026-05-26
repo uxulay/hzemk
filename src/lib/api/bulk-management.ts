@@ -76,7 +76,6 @@ export type BomImportInput = {
   status: Status;
   productSkuId: string;
   materialId: string;
-  componentSkuId: string | null;
   componentUnit: string;
   groupKey: string;
   existingBomHeaderId: string | null;
@@ -137,7 +136,6 @@ type BomHeaderMinimal = {
 type BomItemMinimal = {
   id: string;
   bom_header_id: string;
-  component_sku_id: string | null;
   material_id: string | null;
 };
 
@@ -227,15 +225,43 @@ function getDuplicateSet(values: string[]) {
   );
 }
 
-async function getExistingCodeSet(table: string, codeColumn: string) {
+async function getExistingCodeSet(
+  table: string,
+  codeColumn: string,
+  codes?: string[]
+) {
+  const uniqueCodes = Array.from(
+    new Set(
+      (codes ?? [])
+        .map((code) => normalizeCsvValue(code))
+        .filter(Boolean)
+    )
+  );
+
+  if (codes && uniqueCodes.length === 0) {
+    return new Set<string>();
+  }
+
   const supabase = getSupabaseClient();
-  const data = await fetchAllSupabaseRows<CodeRow>(
-    () => supabase.from(table).select(`id, ${codeColumn}`),
+  const { data, error } = await withTimeout(
+    (() => {
+      let query = supabase.from(table).select(`id, ${codeColumn}`);
+
+      if (codes) {
+        query = query.in(codeColumn, uniqueCodes);
+      }
+
+      return query;
+    })(),
     `读取 ${table} 编码`
   );
 
+  if (error) {
+    throw formatSupabaseError(`读取 ${table} 编码`, error);
+  }
+
   return new Set(
-    data.map((row) =>
+    ((data ?? []) as unknown as CodeRow[]).map((row) =>
       normalizeCsvValue(row[codeColumn]).toLowerCase()
     )
   );
@@ -354,10 +380,10 @@ function actionFailed(id: string, label: string, message: string): BulkActionRes
 export async function validateBrandImportRows(
   rows: CsvDataRow[]
 ): Promise<BulkImportValidationRow<BrandImportInput>[]> {
-  const existingCodes = await getExistingCodeSet("brands", "brand_code");
   const fileCodes = rows.map((row) =>
     normalizeLookupKey(getCsvValue(row, ["brand_code", "品牌编码"]))
   );
+  const existingCodes = await getExistingCodeSet("brands", "brand_code", fileCodes);
   const duplicatedCodes = getDuplicateSet(fileCodes);
 
   return rows.map((row, index) => {
@@ -424,7 +450,11 @@ export async function bulkImportBrands(
     };
   }
 
-  const existingCodes = await getExistingCodeSet("brands", "brand_code");
+  const existingCodes = await getExistingCodeSet(
+    "brands",
+    "brand_code",
+    inputs.map((input) => input.brandCode)
+  );
   const conflicts = inputs.filter((input) =>
     existingCodes.has(input.brandCode.toLowerCase())
   );
@@ -478,8 +508,11 @@ export async function bulkImportBrands(
 export async function validateProductImportRows(
   rows: CsvDataRow[]
 ): Promise<BulkImportValidationRow<ProductImportInput>[]> {
+  const productCodes = rows.map((row) =>
+    normalizeCsvValue(row.spu || row.product_code)
+  );
   const [existingCodes, brands] = await Promise.all([
-    getExistingCodeSet("products", "product_code"),
+    getExistingCodeSet("products", "product_code", productCodes),
     getBrandsForImport()
   ]);
   const seenCodes = new Set<string>();
@@ -572,7 +605,11 @@ export async function bulkImportProducts(
     };
   }
 
-  const existingCodes = await getExistingCodeSet("products", "product_code");
+  const existingCodes = await getExistingCodeSet(
+    "products",
+    "product_code",
+    inputs.map((input) => input.productCode)
+  );
   const conflicts = inputs.filter((input) =>
     existingCodes.has(input.productCode.toLowerCase())
   );
@@ -628,16 +665,29 @@ export async function validateSkuImportRows(
   rows: CsvDataRow[]
 ): Promise<BulkImportValidationRow<SkuImportInput>[]> {
   const supabase = getSupabaseClient();
+  const skuCodes = rows.map((row) => normalizeCsvValue(row.sku_code));
+  const productCodes = Array.from(
+    new Set(rows.map((row) => normalizeCsvValue(row.product_code)).filter(Boolean))
+  );
   const [existingSkuCodes, productRows] = await Promise.all([
-    getExistingCodeSet("skus", "sku_code"),
-    fetchAllSupabaseRows<ProductMinimal>(
-      () => supabase.from("products").select("id, product_code, name, status"),
+    getExistingCodeSet("skus", "sku_code", skuCodes),
+    withTimeout(
+      productCodes.length > 0
+        ? supabase
+            .from("products")
+            .select("id, product_code, name, status")
+            .in("product_code", productCodes)
+        : Promise.resolve({ data: [], error: null } as any),
       "读取产品编码"
     )
   ]);
 
+  if (productRows.error) {
+    throw formatSupabaseError("读取产品编码", productRows.error);
+  }
+
   const productByCode = new Map(
-    productRows.map((product) => [
+    ((productRows.data ?? []) as ProductMinimal[]).map((product) => [
       product.product_code.toLowerCase(),
       product
     ])
@@ -726,7 +776,11 @@ export async function bulkImportSkus(
     };
   }
 
-  const existingCodes = await getExistingCodeSet("skus", "sku_code");
+  const existingCodes = await getExistingCodeSet(
+    "skus",
+    "sku_code",
+    inputs.map((input) => input.skuCode)
+  );
   const conflicts = inputs.filter((input) =>
     existingCodes.has(input.skuCode.toLowerCase())
   );
@@ -781,9 +835,13 @@ export async function bulkImportSkus(
 export async function validateSupplierImportRows(
   rows: CsvDataRow[]
 ): Promise<BulkImportValidationRow<SupplierImportInput>[]> {
-  const existingCodes = await getExistingCodeSet("suppliers", "supplier_code");
   const fileCodes = rows.map((row) =>
     normalizeCsvValue(row.supplier_code).toLowerCase()
+  );
+  const existingCodes = await getExistingCodeSet(
+    "suppliers",
+    "supplier_code",
+    fileCodes
   );
   const duplicatedCodes = getDuplicateSet(fileCodes);
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -852,7 +910,11 @@ export async function bulkImportSuppliers(
     };
   }
 
-  const existingCodes = await getExistingCodeSet("suppliers", "supplier_code");
+  const existingCodes = await getExistingCodeSet(
+    "suppliers",
+    "supplier_code",
+    inputs.map((input) => input.supplierCode)
+  );
   const conflicts = inputs.filter((input) =>
     existingCodes.has(input.supplierCode.toLowerCase())
   );
@@ -908,9 +970,13 @@ export async function bulkImportSuppliers(
 export async function validateWarehouseImportRows(
   rows: CsvDataRow[]
 ): Promise<BulkImportValidationRow<WarehouseImportInput>[]> {
-  const existingCodes = await getExistingCodeSet("warehouses", "warehouse_code");
   const fileCodes = rows.map((row) =>
     normalizeCsvValue(row.warehouse_code).toLowerCase()
+  );
+  const existingCodes = await getExistingCodeSet(
+    "warehouses",
+    "warehouse_code",
+    fileCodes
   );
   const duplicatedCodes = getDuplicateSet(fileCodes);
   const allowedTypes = new Set([
@@ -987,7 +1053,11 @@ export async function bulkImportWarehouses(
     };
   }
 
-  const existingCodes = await getExistingCodeSet("warehouses", "warehouse_code");
+  const existingCodes = await getExistingCodeSet(
+    "warehouses",
+    "warehouse_code",
+    inputs.map((input) => input.warehouseCode)
+  );
   const conflicts = inputs.filter((input) =>
     existingCodes.has(input.warehouseCode.toLowerCase())
   );
@@ -1064,33 +1134,75 @@ export async function validateBomImportRows(
   rows: CsvDataRow[]
 ): Promise<BulkImportValidationRow<BomImportInput>[]> {
   const supabase = getSupabaseClient();
-  const [skuRows, materialRows, bomHeaders, bomItems] = await Promise.all([
-    fetchAllSupabaseRows<SkuMinimal>(
-      () => supabase.from("skus").select("id, sku_code, sku_name, sku_type, unit, status"),
+  const skuCodes = Array.from(
+    new Set(rows.map((row) => normalizeCsvValue(row.finished_sku_code)).filter(Boolean))
+  );
+  const materialCodes = Array.from(
+    new Set(rows.map((row) => normalizeCsvValue(row.material_code)).filter(Boolean))
+  );
+  const [skuResult, materialResult] = await Promise.all([
+    withTimeout(
+      skuCodes.length > 0
+        ? supabase
+            .from("skus")
+            .select("id, sku_code, sku_name, sku_type, unit, status")
+            .in("sku_code", skuCodes)
+        : Promise.resolve({ data: [], error: null } as any),
       "读取 BOM 导入用 SKU"
     ),
-    fetchAllSupabaseRows<MaterialMinimal>(
-      () =>
-        supabase
-          .from("materials")
-          .select("id, material_code, material_name, unit, status"),
+    withTimeout(
+      materialCodes.length > 0
+        ? supabase
+            .from("materials")
+            .select("id, material_code, material_name, unit, status")
+            .in("material_code", materialCodes)
+        : Promise.resolve({ data: [], error: null } as any),
       "读取 BOM 导入用辅料"
-    ),
-    fetchAllSupabaseRows<BomHeaderMinimal>(
-      () =>
-        supabase
-        .from("bom_headers")
-        .select("id, product_sku_id, bom_code, version, status"),
-      "读取 BOM 主表"
-    ),
-    fetchAllSupabaseRows<BomItemMinimal>(
-      () =>
-        supabase
-          .from("bom_items")
-          .select("id, bom_header_id, component_sku_id, material_id"),
-      "读取 BOM 明细"
     )
   ]);
+
+  if (skuResult.error) {
+    throw formatSupabaseError("读取 BOM 导入用 SKU", skuResult.error);
+  }
+
+  if (materialResult.error) {
+    throw formatSupabaseError("读取 BOM 导入用辅料", materialResult.error);
+  }
+
+  const skuRows = (skuResult.data ?? []) as SkuMinimal[];
+  const materialRows = (materialResult.data ?? []) as MaterialMinimal[];
+  const skuIds = skuRows.map((sku) => sku.id);
+  const bomHeaderResult = await withTimeout(
+    skuIds.length > 0
+      ? supabase
+          .from("bom_headers")
+          .select("id, product_sku_id, bom_code, version, status")
+          .in("product_sku_id", skuIds)
+      : Promise.resolve({ data: [], error: null } as any),
+    "读取 BOM 主表"
+  );
+
+  if (bomHeaderResult.error) {
+    throw formatSupabaseError("读取 BOM 主表", bomHeaderResult.error);
+  }
+
+  const bomHeaders = (bomHeaderResult.data ?? []) as BomHeaderMinimal[];
+  const bomHeaderIds = bomHeaders.map((header) => header.id);
+  const bomItemResult = await withTimeout(
+    bomHeaderIds.length > 0
+      ? supabase
+          .from("bom_items")
+          .select("id, bom_header_id, material_id")
+          .in("bom_header_id", bomHeaderIds)
+      : Promise.resolve({ data: [], error: null } as any),
+    "读取 BOM 明细"
+  );
+
+  if (bomItemResult.error) {
+    throw formatSupabaseError("读取 BOM 明细", bomItemResult.error);
+  }
+
+  const bomItems = (bomItemResult.data ?? []) as BomItemMinimal[];
 
   const skuByCode = new Map(
     skuRows.map((sku) => [
@@ -1114,9 +1226,6 @@ export async function validateBomImportRows(
     bomItems.flatMap((item) => [
       item.material_id
         ? `${item.bom_header_id}||material:${item.material_id}`
-        : "",
-      item.component_sku_id
-        ? `${item.bom_header_id}||sku:${item.component_sku_id}`
         : ""
     ].filter(Boolean))
   );
@@ -1163,10 +1272,6 @@ export async function validateBomImportRows(
     const material = materialCode
       ? materialByCode.get(materialCode.toLowerCase())
       : null;
-    const legacyMaterialSku = materialCode
-      ? skuByCode.get(materialCode.toLowerCase())
-      : null;
-
     if (!finishedSkuCode) {
       errors.push("成品 SKU 编码必填。");
     }
@@ -1187,10 +1292,6 @@ export async function validateBomImportRows(
 
     if (!material) {
       errors.push("辅料编码不存在，请先到辅料管理维护。");
-    }
-
-    if (legacyMaterialSku && legacyMaterialSku.sku_type !== "material") {
-      errors.push("同编码旧 SKU 不是 material 类型，请先检查旧 SKU 资料。");
     }
 
     if (!quantityPerText || Number.isNaN(quantityPer) || quantityPer <= 0) {
@@ -1227,9 +1328,7 @@ export async function validateBomImportRows(
     if (
       existingHeader &&
       material &&
-      (existingItems.has(`${existingHeader.id}||material:${material.id}`) ||
-        (legacyMaterialSku &&
-          existingItems.has(`${existingHeader.id}||sku:${legacyMaterialSku.id}`)))
+      existingItems.has(`${existingHeader.id}||material:${material.id}`)
     ) {
       errors.push("这个辅料已经存在于对应 BOM 明细中。");
     }
@@ -1261,7 +1360,6 @@ export async function validateBomImportRows(
               status: normalizeStatus(row.status),
               productSkuId: finishedSku.id,
               materialId: material.id,
-              componentSkuId: legacyMaterialSku?.id ?? null,
               componentUnit: material.unit,
               groupKey,
               existingBomHeaderId: existingHeader?.id ?? null,
@@ -1378,7 +1476,6 @@ export async function bulkImportBomRows(
       const { error } = await withTimeout(
         supabase.from("bom_items").insert({
           bom_header_id: bomHeaderId,
-          component_sku_id: null,
           material_id: row.materialId,
           quantity_per: row.quantityPer,
           unit: row.componentUnit,
@@ -1579,7 +1676,6 @@ export async function deleteSkusByIds(ids: string[]): Promise<BulkActionResult[]
     try {
       const checks = await Promise.all([
         hasReference("bom_headers", "product_sku_id", sku.id, "检查 SKU 的 BOM 主表引用"),
-        hasReference("bom_items", "component_sku_id", sku.id, "检查 SKU 的 BOM 明细引用"),
         hasReference(
           "fba_replenishment_requests",
           "sku_id",
@@ -1587,12 +1683,6 @@ export async function deleteSkusByIds(ids: string[]): Promise<BulkActionResult[]
           "检查 SKU 的 FBA 备货引用"
         ),
         hasReference("production_orders", "sku_id", sku.id, "检查 SKU 的生产任务引用"),
-        hasReference(
-          "material_requirements",
-          "material_sku_id",
-          sku.id,
-          "检查 SKU 的物料需求引用"
-        ),
         hasReference(
           "purchase_order_items",
           "sku_id",
@@ -1886,7 +1976,7 @@ export async function deleteBomItemsByIds(
 ): Promise<BulkActionResult[]> {
   const items = await getRowsByIds<BomItemMinimal>(
     "bom_items",
-    "id, bom_header_id, component_sku_id, material_id",
+    "id, bom_header_id, material_id",
     ids
   );
   const results: BulkActionResult[] = [];
@@ -1928,29 +2018,10 @@ export async function deleteBomItemsByIds(
         material = materialResult.data as MaterialMinimal;
       }
 
-      let sku: SkuMinimal | null = null;
-
-      if (item.component_sku_id) {
-        const skuResult = await withTimeout(
-          supabase
-            .from("skus")
-            .select("id, sku_code, sku_name, sku_type, unit")
-            .eq("id", item.component_sku_id)
-            .single(),
-          "读取 BOM 原材料 SKU"
-        );
-
-        if (skuResult.error) {
-          throw formatSupabaseError("读取 BOM 原材料 SKU", skuResult.error);
-        }
-
-        sku = skuResult.data as SkuMinimal;
-      }
-
       const header = headerResult.data as BomHeaderMinimal;
 
       label = `${header.bom_code} / ${
-        material?.material_code ?? sku?.sku_code ?? item.id
+        material?.material_code ?? item.id
       }`;
 
       const hasProductionOrders = await hasReference(

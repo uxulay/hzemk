@@ -150,7 +150,6 @@ type MaterialRequirementRow = {
     unit: string;
     default_supplier_id: string | null;
   }>;
-  material_sku: MaybeRelation<DashboardSku>;
   production_order: MaybeRelation<{
     id: string;
     production_order_no: string;
@@ -175,7 +174,12 @@ type PurchaseOrderRow = {
     ordered_quantity: number;
     received_quantity: number;
     unit: string;
-    sku: MaybeRelation<DashboardSku>;
+    material: MaybeRelation<{
+      id: string;
+      material_code: string;
+      material_name: string;
+      unit: string;
+    }>;
   }>;
 };
 
@@ -418,9 +422,13 @@ function getPurchaseQuantity(row: PurchaseOrderRow) {
 }
 
 function getPurchaseTitle(row: PurchaseOrderRow) {
-  const firstSku = singleRelation(row.items?.[0]?.sku ?? null);
+  const firstMaterial = singleRelation(row.items?.[0]?.material ?? null);
 
-  return row.items.length > 1 ? `${row.items.length} 个辅料` : getSkuTitle(firstSku);
+  return row.items.length > 1
+    ? `${row.items.length} 个辅料`
+    : firstMaterial
+      ? `${firstMaterial.material_code} / ${firstMaterial.material_name}`
+      : "未设置辅料";
 }
 
 function toFbaTodo(row: FbaRequestRow): DashboardTodoItem {
@@ -463,15 +471,12 @@ function toProductionTodo(row: ProductionOrderRow): DashboardTodoItem {
 
 function toMaterialTodo(row: MaterialRequirementRow): DashboardTodoItem {
   const material = singleRelation(row.material);
-  const sku = singleRelation(row.material_sku);
 
   return {
     id: row.id,
     no: singleRelation(row.production_order)?.production_order_no ?? "-",
     brand: "辅料",
-    title: material
-      ? `${material.material_code} / ${material.material_name}`
-      : getSkuTitle(sku),
+    title: material ? `${material.material_code} / ${material.material_name}` : "未设置辅料",
     quantity:
       numberValue(row.shortage_quantity) > 0
         ? numberValue(row.shortage_quantity)
@@ -697,24 +702,6 @@ const materialRequirementSelect = `
     unit,
     default_supplier_id
   ),
-  material_sku:skus!material_requirements_material_sku_id_fkey (
-    id,
-    sku_code,
-    sku_name,
-    sku_type,
-    unit,
-    default_supplier_id,
-    product:products!skus_product_id_fkey (
-      id,
-      product_code,
-      name,
-      brand:brands!products_brand_id_fkey (
-        id,
-        brand_code,
-        name
-      )
-    )
-  ),
   production_order:production_orders!material_requirements_production_order_id_fkey (
     id,
     production_order_no
@@ -739,22 +726,11 @@ const purchaseSelect = `
     ordered_quantity,
     received_quantity,
     unit,
-    sku:skus!purchase_order_items_sku_id_fkey (
+    material:materials!purchase_order_items_material_id_fkey (
       id,
-      sku_code,
-      sku_name,
-      sku_type,
-      unit,
-      product:products!skus_product_id_fkey (
-        id,
-        product_code,
-        name,
-        brand:brands!products_brand_id_fkey (
-          id,
-          brand_code,
-          name
-        )
-      )
+      material_code,
+      material_name,
+      unit
     )
   )
 `;
@@ -1334,115 +1310,44 @@ async function getAcceptedFbaWithoutProduction(limit = 5) {
 }
 
 async function getCounts() {
-  const [
-    fbaSubmitted,
-    fbaAccepted,
-    fbaInProduction,
-    fbaCompleted,
-    overdueFba,
-    productionPlanned,
-    productionMaterialPending,
-    productionInProgress,
-    shortageMaterials,
-    readyMaterials,
-    purchaseDraft,
-    purchaseOrdered,
-    overduePurchase,
-    productsWithoutBrand,
-    materialsWithoutSupplier,
-    inactiveSupplierReferences,
-    missingBomSkus,
-    acceptedFbaWithoutProduction
-  ] = await Promise.all([
-    countTableByStatus(
-      "fba_replenishment_requests",
-      ["submitted"],
-      "统计待接单 FBA 备货需求"
-    ),
-    countTableByStatus(
-      "fba_replenishment_requests",
-      ["accepted"],
-      "统计已接单 FBA 备货需求"
-    ),
-    countTableByStatus(
-      "fba_replenishment_requests",
-      ["in_production"],
-      "统计生产中 FBA 备货需求"
-    ),
-    countTableByStatus(
-      "fba_replenishment_requests",
-      ["completed"],
-      "统计待 FBA 出库备货需求"
-    ),
-    countOverdueFbaRequests(),
-    countTableByStatus(
-      "production_orders",
-      ["planned"],
-      "统计可开工生产任务"
-    ),
-    countTableByStatus(
-      "production_orders",
-      ["material_pending"],
-      "统计待物料生产任务"
-    ),
-    countTableByStatus(
-      "production_orders",
-      ["in_progress"],
-      "统计生产中任务"
-    ),
-    countTableByStatus(
-      "material_requirements",
-      ["shortage"],
-      "统计缺料物料"
-    ),
-    countTableByStatus(
-      "material_requirements",
-      ["ready", "reserved", "received"],
-      "统计可开工物料需求"
-    ),
-    countTableByStatus("purchase_orders", ["draft"], "统计未下单采购单"),
-    countTableByStatus(
-      "purchase_orders",
-      ["ordered", "partially_received"],
-      "统计待到货采购单"
-    ),
-    countOverduePurchaseOrders(),
-    countProductsWithoutBrand(),
-    countMaterialsWithoutSupplier(),
-    countInactiveSupplierReferences(),
-    countMissingBomSkus(),
-    countAcceptedFbaWithoutProduction()
-  ]);
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase.rpc("get_dashboard_summary"),
+    "读取首页汇总统计"
+  );
 
-  const lowStockMaterials = (await getLowStockMaterials(50)).length;
-  const abnormalFinishedStock = (await getAbnormalFinishedStock(50)).length;
-  const pendingProductionInbound = (await getPendingProductionInboundOrders(50))
-    .length;
-  const overdueProduction = await countOverdueProductionOrders();
+  if (error) {
+    throw new Error(
+      `读取首页汇总统计失败：${error.message}。请确认已经在 Supabase SQL Editor 执行 supabase/performance-rpc-and-indexes.sql。`
+    );
+  }
+
+  const counts = (data ?? {}) as Record<string, number | string | null>;
+  const numberCount = (key: string) => Number(counts[key] ?? 0);
 
   return {
-    fbaSubmitted,
-    fbaAccepted,
-    fbaInProduction,
-    fbaCompleted,
-    overdueFba,
-    productionPlanned,
-    productionMaterialPending,
-    productionInProgress,
-    shortageMaterials,
-    readyMaterials,
-    purchaseDraft,
-    purchaseOrdered,
-    overduePurchase,
-    productsWithoutBrand,
-    materialsWithoutSupplier,
-    inactiveSupplierReferences,
-    missingBomSkus,
-    acceptedFbaWithoutProduction,
-    lowStockMaterials,
-    abnormalFinishedStock,
-    pendingProductionInbound,
-    overdueProduction
+    fbaSubmitted: numberCount("fbaSubmitted"),
+    fbaAccepted: numberCount("fbaAccepted"),
+    fbaInProduction: numberCount("fbaInProduction"),
+    fbaCompleted: numberCount("fbaCompleted"),
+    overdueFba: numberCount("overdueFba"),
+    productionPlanned: numberCount("productionPlanned"),
+    productionMaterialPending: numberCount("productionMaterialPending"),
+    productionInProgress: numberCount("productionInProgress"),
+    shortageMaterials: numberCount("shortageMaterials"),
+    readyMaterials: numberCount("readyMaterials"),
+    purchaseDraft: numberCount("purchaseDraft"),
+    purchaseOrdered: numberCount("purchaseOrdered"),
+    overduePurchase: numberCount("overduePurchase"),
+    productsWithoutBrand: numberCount("productsWithoutBrand"),
+    materialsWithoutSupplier: numberCount("materialsWithoutSupplier"),
+    inactiveSupplierReferences: numberCount("inactiveSupplierReferences"),
+    missingBomSkus: numberCount("missingBomSkus"),
+    acceptedFbaWithoutProduction: numberCount("acceptedFbaWithoutProduction"),
+    lowStockMaterials: numberCount("lowStockMaterials"),
+    abnormalFinishedStock: numberCount("abnormalFinishedStock"),
+    pendingProductionInbound: numberCount("pendingProductionInbound"),
+    overdueProduction: numberCount("overdueProduction")
   };
 }
 

@@ -757,16 +757,47 @@ export async function validateFbaReplenishmentImportRows(
   rows: CsvDataRow[]
 ): Promise<BulkImportValidationRow<FbaReplenishmentImportInput>[]> {
   const supabase = getSupabaseClient();
-  const [skuRows, warehouseRows] = await Promise.all([
-    fetchAllSupabaseRows<ImportSkuRow>(
-      () => supabase.from("skus").select("id, sku_code, sku_name, sku_type, status"),
+  const skuCodes = Array.from(
+    new Set(rows.map((row) => normalizeCsvValue(row.sku_code)).filter(Boolean))
+  );
+  const warehouseCodes = Array.from(
+    new Set(
+      rows
+        .map((row) => normalizeCsvValue(row.target_warehouse_code))
+        .filter(Boolean)
+    )
+  );
+  const [skuResult, warehouseResult] = await Promise.all([
+    withTimeout(
+      skuCodes.length > 0
+        ? supabase
+            .from("skus")
+            .select("id, sku_code, sku_name, sku_type, status")
+            .in("sku_code", skuCodes)
+        : Promise.resolve({ data: [], error: null } as any),
       "读取 SKU 数据"
     ),
-    fetchAllSupabaseRows<ImportWarehouseRow>(
-      () => supabase.from("warehouses").select("id, warehouse_code, name, status"),
+    withTimeout(
+      warehouseCodes.length > 0
+        ? supabase
+            .from("warehouses")
+            .select("id, warehouse_code, name, status")
+            .in("warehouse_code", warehouseCodes)
+        : Promise.resolve({ data: [], error: null } as any),
       "读取仓库数据"
     )
   ]);
+
+  if (skuResult.error) {
+    throw formatSupabaseError("读取 SKU 数据", skuResult.error);
+  }
+
+  if (warehouseResult.error) {
+    throw formatSupabaseError("读取仓库数据", warehouseResult.error);
+  }
+
+  const skuRows = (skuResult.data ?? []) as ImportSkuRow[];
+  const warehouseRows = (warehouseResult.data ?? []) as ImportWarehouseRow[];
 
   const skuByCode = new Map(
     skuRows.map((sku) => [

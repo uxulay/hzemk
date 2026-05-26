@@ -20,7 +20,6 @@ export type MaterialRequirementRow = {
   id: string;
   production_order_id: string;
   replenishment_request_id: string | null;
-  material_sku_id: string | null;
   material_id: string | null;
   required_quantity: number;
   available_quantity: number;
@@ -43,13 +42,6 @@ export type MaterialRequirementRow = {
       sku_name: string;
     } | null;
   } | null;
-  material_sku: {
-    id: string;
-    sku_code: string;
-    sku_name: string;
-    specs: string | null;
-    unit: string;
-  } | null;
   material: {
     id: string;
     material_code: string;
@@ -68,7 +60,7 @@ type MaybeRelation<T> = T | T[] | null;
 
 type RawMaterialRequirementRow = Omit<
   MaterialRequirementRow,
-  "production_order" | "material_sku" | "material" | "bom_item"
+  "production_order" | "material" | "bom_item"
 > & {
   production_order: MaybeRelation<
     Omit<NonNullable<MaterialRequirementRow["production_order"]>, "finished_sku"> & {
@@ -79,13 +71,11 @@ type RawMaterialRequirementRow = Omit<
       >;
     }
   >;
-  material_sku: MaybeRelation<NonNullable<MaterialRequirementRow["material_sku"]>>;
   material: MaybeRelation<NonNullable<MaterialRequirementRow["material"]>>;
 };
 
 type BomItemLookupRow = {
   bom_header_id: string;
-  component_sku_id: string | null;
   material_id: string | null;
   quantity_per: number;
   loss_rate: number;
@@ -133,14 +123,10 @@ function normalizeMaterialRequirement(
   bomItemMap: Map<string, MaterialRequirementRow["bom_item"]>
 ): MaterialRequirementRow {
   const productionOrder = singleRelation(row.production_order);
-  const materialSku = singleRelation(row.material_sku);
   const material = singleRelation(row.material);
   const bomHeaderId = productionOrder?.bom_header_id ?? "";
   const materialBomItemKey = row.material_id
     ? `${bomHeaderId}:material:${row.material_id}`
-    : "";
-  const legacyBomItemKey = row.material_sku_id
-    ? `${bomHeaderId}:sku:${row.material_sku_id}`
     : "";
 
   return {
@@ -151,12 +137,8 @@ function normalizeMaterialRequirement(
           finished_sku: singleRelation(productionOrder.finished_sku)
         }
       : null,
-    material_sku: materialSku,
     material,
-    bom_item:
-      bomItemMap.get(materialBomItemKey) ??
-      bomItemMap.get(legacyBomItemKey) ??
-      null
+    bom_item: bomItemMap.get(materialBomItemKey) ?? null
   };
 }
 
@@ -165,7 +147,6 @@ async function getBomItemMap(rows: RawMaterialRequirementRow[]) {
   const bomHeaderIds = uniqueValues(
     rows.map((row) => singleRelation(row.production_order)?.bom_header_id)
   );
-  const materialSkuIds = uniqueValues(rows.map((row) => row.material_sku_id));
   const materialIds = uniqueValues(rows.map((row) => row.material_id));
   const bomItemMap = new Map<string, MaterialRequirementRow["bom_item"]>();
 
@@ -177,7 +158,7 @@ async function getBomItemMap(rows: RawMaterialRequirementRow[]) {
     supabase
       .from("bom_items")
       .select(
-        "bom_header_id, component_sku_id, material_id, quantity_per, loss_rate, unit"
+        "bom_header_id, material_id, quantity_per, loss_rate, unit"
       )
       .in("bom_header_id", bomHeaderIds),
     "读取物料需求对应的 BOM 明细"
@@ -198,12 +179,6 @@ async function getBomItemMap(rows: RawMaterialRequirementRow[]) {
       bomItemMap.set(`${item.bom_header_id}:material:${item.material_id}`, bomItem);
     }
 
-    if (item.component_sku_id && materialSkuIds.includes(item.component_sku_id)) {
-      bomItemMap.set(
-        `${item.bom_header_id}:sku:${item.component_sku_id}`,
-        bomItem
-      );
-    }
   }
 
   return bomItemMap;
@@ -220,7 +195,6 @@ export async function getMaterialRequirements(options: {
         id,
         production_order_id,
         replenishment_request_id,
-        material_sku_id,
         required_quantity,
         available_quantity,
         shortage_quantity,
@@ -242,13 +216,6 @@ export async function getMaterialRequirements(options: {
             sku_code,
             sku_name
           )
-        ),
-        material_sku:skus!material_requirements_material_sku_id_fkey (
-          id,
-          sku_code,
-          sku_name,
-          specs,
-          unit
         ),
         material:materials!material_requirements_material_id_fkey (
           id,

@@ -285,7 +285,12 @@ function isPositiveNumberText(value: string) {
   const text = value.trim();
   const quantity = Number(text);
 
-  return text !== "" && Number.isFinite(quantity) && quantity > 0;
+  return (
+    text !== "" &&
+    Number.isFinite(quantity) &&
+    Number.isInteger(quantity) &&
+    quantity > 0
+  );
 }
 
 function sortWarehouses(warehouses: Warehouse[]) {
@@ -824,7 +829,7 @@ export default function ReplenishmentPage() {
     );
 
     if (invalidRow) {
-      setCreateErrorMessage("勾选的 SKU 必须填写大于 0 的备货数量。");
+      setCreateErrorMessage("勾选的 SKU 备货数量必须是大于 0 的整数。");
       return;
     }
 
@@ -897,8 +902,8 @@ export default function ReplenishmentPage() {
 
         if (!quantityText) {
           rowErrors.push("本次备货数量为空");
-        } else if (!Number.isFinite(quantity) || quantity <= 0) {
-          rowErrors.push("本次备货数量必须是大于 0 的数字");
+        } else if (!isPositiveNumberText(quantityText)) {
+          rowErrors.push("本次备货数量必须是大于 0 的整数");
         }
 
         if (skuCode && !sku) {
@@ -1063,7 +1068,7 @@ export default function ReplenishmentPage() {
     );
 
     if (invalidItem) {
-      return `SKU ${invalidItem.skuCode} 的备货数量必须是大于 0 的数字。`;
+      return `SKU ${invalidItem.skuCode} 的备货数量必须是大于 0 的整数。`;
     }
 
     const missingSku = draftItems.find((item) => !skuById.has(item.skuId));
@@ -1576,7 +1581,8 @@ export default function ReplenishmentPage() {
                         <td>
                           <input
                             className="tableNumberInput"
-                            min="0.0001"
+                            inputMode="numeric"
+                            min="1"
                             step="1"
                             type="number"
                             value={item.quantity}
@@ -1887,7 +1893,8 @@ export default function ReplenishmentPage() {
                             <td>
                               <input
                                 className="tableNumberInput"
-                                min="0.0001"
+                                inputMode="numeric"
+                                min="1"
                                 step="1"
                                 type="number"
                                 value={state.quantity}

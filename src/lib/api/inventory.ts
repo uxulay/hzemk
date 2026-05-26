@@ -1,6 +1,7 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { fetchAllSupabaseRows } from "@/lib/supabase/pagination";
 import type { BrandSummary } from "@/lib/brand-utils";
+import { normalizeRpcPage, type ListPageResult } from "@/lib/api/page-types";
 import type {
   BulkImportResult,
   BulkImportValidationRow,
@@ -60,7 +61,7 @@ export type InventoryTransactionRow = {
   id: string;
   transaction_no: string;
   warehouse_id: string;
-  sku_id: string;
+  sku_id: string | null;
   product_sku_id: string | null;
   material_id: string | null;
   transaction_type: InventoryTransactionType;
@@ -107,6 +108,27 @@ export type CurrentInventoryFilters = {
   stockStatus?: InventoryStockStatusFilter;
   brandId?: string;
 };
+
+export type CurrentInventorySummary = {
+  skuKindCount: number;
+  totalQuantity: number;
+  lowStockCount: number;
+  outOfStockCount: number;
+  inStockSkuCount: number;
+  outOfStockSkuCount: number;
+};
+
+export type CurrentInventoryPageResult = ListPageResult<
+  CurrentInventoryRow,
+  CurrentInventorySummary
+>;
+
+export type InventoryTransactionSummary = Record<InventoryTransactionType, number>;
+
+export type InventoryTransactionPageResult = ListPageResult<
+  InventoryTransactionRow,
+  InventoryTransactionSummary
+>;
 
 export type InventoryAdjustmentSkuTypeFilter =
   | "all"
@@ -177,7 +199,7 @@ export type InventoryMaterial = {
 export type CurrentInventoryRow = {
   id: string;
   warehouse_id: string;
-  sku_id: string;
+  sku_id: string | null;
   product_sku_id: string | null;
   material_id: string | null;
   item_type: string;
@@ -206,7 +228,7 @@ export type PurchaseOrderInboundStatus =
 export type ReceivablePurchaseOrderItem = {
   id: string;
   purchase_order_id: string;
-  sku_id: string;
+  sku_id: string | null;
   material_id: string | null;
   material_requirement_id: string | null;
   ordered_quantity: number;
@@ -379,7 +401,6 @@ export type InventorySkuOption = {
   id: string;
   product_sku_id: string | null;
   material_id: string | null;
-  legacy_sku_id: string | null;
   product_id: string | null;
   sku_code: string;
   sku_name: string;
@@ -402,7 +423,7 @@ export type OtherInventoryMovementInput = {
 export type OtherInventoryMovementImportInput = {
   warehouseId: string;
   warehouseCode: string;
-  skuId: string;
+  skuId: string | null;
   productSkuId?: string | null;
   materialId?: string | null;
   skuCode: string;
@@ -420,7 +441,7 @@ export type OtherInventoryMovementValidationRow =
 export type InventoryAdjustmentImportInput = {
   warehouseId: string;
   warehouseCode: string;
-  skuId: string;
+  skuId: string | null;
   productSkuId?: string | null;
   materialId?: string | null;
   skuCode: string;
@@ -563,7 +584,7 @@ type RawInventorySkuOption = Omit<InventorySkuOption, "product" | "material"> & 
 type InventoryItem = {
   id: string;
   warehouse_id: string;
-  sku_id: string;
+  sku_id: string | null;
   product_sku_id: string | null;
   material_id: string | null;
   item_type: string;
@@ -575,7 +596,7 @@ type InventoryItem = {
 
 type InventoryTransactionQuantity = {
   replenishment_request_id: string | null;
-  sku_id: string;
+  sku_id: string | null;
   product_sku_id: string | null;
   material_id: string | null;
   quantity: number;
@@ -696,13 +717,7 @@ function getInventoryIdentityFromOption(option: InventorySkuOption) {
   const productSkuId =
     option.product_sku_id ??
     (option.sku_type === "material" ? null : option.id);
-  const skuId = option.sku_type === "material" ? option.legacy_sku_id : option.id;
-
-  if (!skuId) {
-    throw new Error(
-      `${option.sku_code} 是新辅料，但旧库存字段 sku_id 仍是必填。请先按同编码保留或补齐一个旧辅料 SKU，后续清理阶段再把 sku_id 改成可空。`
-    );
-  }
+  const skuId = option.sku_type === "material" ? null : option.id;
 
   return {
     skuId,
@@ -713,7 +728,7 @@ function getInventoryIdentityFromOption(option: InventorySkuOption) {
 }
 
 function getInventoryIdentityFromItem(input: {
-  sku_id: string;
+  sku_id?: string | null;
   product_sku_id?: string | null;
   material_id?: string | null;
   item_type: string;
@@ -728,8 +743,8 @@ function getInventoryIdentityFromItem(input: {
   }
 
   return {
-    skuId: input.sku_id,
-    productSkuId: input.product_sku_id ?? input.sku_id,
+    skuId: input.sku_id ?? input.product_sku_id ?? null,
+    productSkuId: input.product_sku_id ?? input.sku_id ?? null,
     materialId: null,
     itemType: isFinishedInventoryType(input.item_type)
       ? input.item_type
@@ -1213,7 +1228,7 @@ function createSyntheticInventoryRow(input: {
     updated_at: new Date().toISOString(),
     warehouse: input.warehouse,
     sku: {
-      id: identity.skuId,
+      id: input.sku.id,
       product_id: input.sku.product_id,
       sku_code: input.sku.sku_code,
       sku_name: input.sku.sku_name,
@@ -1394,6 +1409,57 @@ export async function getProductInventory(
   return getCurrentInventoryRows("finished_good", filters, "读取成品库存");
 }
 
+const emptyCurrentInventorySummary: CurrentInventorySummary = {
+  skuKindCount: 0,
+  totalQuantity: 0,
+  lowStockCount: 0,
+  outOfStockCount: 0,
+  inStockSkuCount: 0,
+  outOfStockSkuCount: 0
+};
+
+export async function getCurrentInventoryPage(input: {
+  mode: "materials" | "products";
+  page?: number;
+  pageSize?: number;
+  filters?: CurrentInventoryFilters;
+  sortBy?: string;
+  sortDirection?: "asc" | "desc";
+}): Promise<CurrentInventoryPageResult> {
+  const supabase = getSupabaseClient();
+  const page = Math.max(input.page ?? 1, 1);
+  const pageSize = Math.min(Math.max(input.pageSize ?? 20, 1), 100);
+  const filters = input.filters ?? {};
+  const { data, error } = await withTimeout(
+    supabase.rpc("get_current_inventory_page", {
+      p_page: page,
+      p_page_size: pageSize,
+      p_keyword: filters.skuKeyword?.trim() || null,
+      p_filters: {
+        mode: input.mode,
+        warehouseId: filters.warehouseId || "all",
+        brandId: filters.brandId || "all",
+        stockStatus: filters.stockStatus || "all"
+      },
+      p_sort_by: input.sortBy ?? "updated_at",
+      p_sort_direction: input.sortDirection ?? "desc"
+    }),
+    input.mode === "materials" ? "分页读取辅料库存" : "分页读取成品库存"
+  );
+
+  if (error) {
+    throw new Error(
+      `${input.mode === "materials" ? "分页读取辅料库存" : "分页读取成品库存"}失败：${error.message}。请确认已经在 Supabase SQL Editor 执行 supabase/performance-rpc-and-indexes.sql。`
+    );
+  }
+
+  return normalizeRpcPage<CurrentInventoryRow, CurrentInventorySummary>(data, {
+    page,
+    pageSize,
+    summary: emptyCurrentInventorySummary
+  });
+}
+
 export async function getInventoryForAdjustment(
   filters: InventoryAdjustmentFilters = {}
 ): Promise<InventoryAdjustmentRow[]> {
@@ -1514,7 +1580,7 @@ export async function getSkuOptionsForInventory(): Promise<InventorySkuOption[]>
             )
           `
         )
-        .in("sku_type", ["finished_good", "finished_product", "material"])
+        .in("sku_type", ["finished_good", "finished_product"])
         .order("sku_code", { ascending: true }),
     "读取库存可选 SKU"
   ),
@@ -1544,26 +1610,18 @@ export async function getSkuOptionsForInventory(): Promise<InventorySkuOption[]>
     )
   ]);
 
-  const legacyMaterialSkuByCode = new Map(
-    skuData
-      .filter((sku) => sku.sku_type === "material")
-      .map((sku) => [sku.sku_code, sku.id])
-  );
   const productOptions = skuData
-    .filter((sku) => sku.sku_type !== "material")
     .map((sku) =>
       normalizeInventorySkuOption({
         ...sku,
         product_sku_id: sku.id,
         material_id: null,
-        legacy_sku_id: sku.id
       })
     );
   const materialOptions: InventorySkuOption[] = materialData.map((material) => ({
     id: material.id,
     product_sku_id: null,
     material_id: material.id,
-    legacy_sku_id: legacyMaterialSkuByCode.get(material.material_code) ?? null,
     product_id: null,
     sku_code: material.material_code,
     sku_name: material.material_name,
@@ -1573,6 +1631,110 @@ export async function getSkuOptionsForInventory(): Promise<InventorySkuOption[]>
     product: null,
     material
   }));
+
+  return [...materialOptions, ...productOptions].sort((a, b) =>
+    a.sku_code.localeCompare(b.sku_code, "zh-CN")
+  );
+}
+
+async function getSkuOptionsForInventoryByCodes(
+  skuCodes: string[]
+): Promise<InventorySkuOption[]> {
+  const uniqueCodes = Array.from(new Set(skuCodes.map((code) => code.trim()).filter(Boolean)));
+
+  if (uniqueCodes.length === 0) {
+    return [];
+  }
+
+  const supabase = getSupabaseClient();
+  const [skuResult, materialResult] = await Promise.all([
+    withTimeout(
+      supabase
+        .from("skus")
+        .select(
+          `
+            id,
+            product_id,
+            sku_code,
+            sku_name,
+            sku_type,
+            unit,
+            status,
+            product:products!skus_product_id_fkey (
+              id,
+              brand_id,
+              product_code,
+              name,
+              brand:brands!products_brand_id_fkey (
+                id,
+                brand_code,
+                name,
+                english_name,
+                logo_url,
+                status
+              )
+            )
+          `
+        )
+        .in("sku_code", uniqueCodes),
+      "按编码读取库存可选 SKU"
+    ),
+    withTimeout(
+      supabase
+        .from("materials")
+        .select(
+          `
+            id,
+            material_code,
+            material_name,
+            category,
+            unit,
+            specs,
+            default_supplier_id,
+            status,
+            supplier:suppliers!materials_default_supplier_id_fkey (
+              id,
+              supplier_code,
+              name
+            )
+          `
+        )
+        .in("material_code", uniqueCodes),
+      "按编码读取库存可选辅料"
+    )
+  ]);
+
+  if (skuResult.error) {
+    throw formatSupabaseError("按编码读取库存可选 SKU", skuResult.error);
+  }
+
+  if (materialResult.error) {
+    throw formatSupabaseError("按编码读取库存可选辅料", materialResult.error);
+  }
+
+  const productOptions = ((skuResult.data ?? []) as unknown as RawInventorySkuOption[])
+    .map((sku) =>
+      normalizeInventorySkuOption({
+        ...sku,
+        product_sku_id: sku.id,
+        material_id: null
+      })
+    );
+  const materialOptions: InventorySkuOption[] = ((materialResult.data ?? []) as unknown as InventoryMaterial[]).map(
+    (material) => ({
+      id: material.id,
+      product_sku_id: null,
+      material_id: material.id,
+      product_id: null,
+      sku_code: material.material_code,
+      sku_name: material.material_name,
+      sku_type: "material",
+      unit: material.unit,
+      status: material.status,
+      product: null,
+      material
+    })
+  );
 
   return [...materialOptions, ...productOptions].sort((a, b) =>
     a.sku_code.localeCompare(b.sku_code, "zh-CN")
@@ -1705,6 +1867,59 @@ export async function getInventoryTransactions(
     });
 }
 
+const emptyInventoryTransactionSummary: InventoryTransactionSummary = {
+  material_in: 0,
+  material_out: 0,
+  product_in: 0,
+  product_out: 0,
+  adjustment: 0
+};
+
+export async function getInventoryTransactionsPage(input: {
+  page?: number;
+  pageSize?: number;
+  filters?: InventoryTransactionFilters;
+  sortBy?: string;
+  sortDirection?: "asc" | "desc";
+}): Promise<InventoryTransactionPageResult> {
+  const supabase = getSupabaseClient();
+  const page = Math.max(input.page ?? 1, 1);
+  const pageSize = Math.min(Math.max(input.pageSize ?? 20, 1), 100);
+  const filters = input.filters ?? {};
+  const { data, error } = await withTimeout(
+    supabase.rpc("get_inventory_transactions_page", {
+      p_page: page,
+      p_page_size: pageSize,
+      p_keyword: filters.skuKeyword?.trim() || null,
+      p_filters: {
+        transactionType: filters.transactionType ?? "all",
+        warehouseId: filters.warehouseId || "all",
+        brandId: filters.brandId || "all",
+        startDate: filters.startDate || "",
+        endDate: filters.endDate || ""
+      },
+      p_sort_by: input.sortBy ?? "occurred_at",
+      p_sort_direction: input.sortDirection ?? "desc"
+    }),
+    "分页读取库存流水"
+  );
+
+  if (error) {
+    throw new Error(
+      `分页读取库存流水失败：${error.message}。请确认已经在 Supabase SQL Editor 执行 supabase/performance-rpc-and-indexes.sql。`
+    );
+  }
+
+  return normalizeRpcPage<InventoryTransactionRow, InventoryTransactionSummary>(
+    data,
+    {
+      page,
+      pageSize,
+      summary: emptyInventoryTransactionSummary
+    }
+  );
+}
+
 export async function getRecentAdjustmentTransactions(
   limit = 20
 ): Promise<InventoryTransactionRow[]> {
@@ -1730,7 +1945,7 @@ export async function getRecentAdjustmentTransactions(
 
 export async function upsertInventoryItem(input: {
   warehouseId: string;
-  skuId: string;
+  skuId?: string | null;
   productSkuId?: string | null;
   materialId?: string | null;
   itemType: string;
@@ -1819,7 +2034,7 @@ export async function upsertInventoryItem(input: {
 
 export async function createInventoryTransaction(input: {
   warehouseId: string;
-  skuId: string;
+  skuId?: string | null;
   productSkuId?: string | null;
   materialId?: string | null;
   itemType?: string;
@@ -1865,7 +2080,7 @@ export async function createInventoryTransaction(input: {
 
 async function getRawInventoryItemByWarehouseAndSku(input: {
   warehouseId: string;
-  skuId: string;
+  skuId?: string | null;
   productSkuId?: string | null;
   materialId?: string | null;
   action?: string;
@@ -1902,7 +2117,7 @@ async function getRawInventoryItemByWarehouseAndSku(input: {
 
 async function insertInventoryItemWithQuantity(input: {
   warehouseId: string;
-  skuId: string;
+  skuId?: string | null;
   productSkuId?: string | null;
   materialId?: string | null;
   itemType: string;
@@ -2435,14 +2650,6 @@ async function validateOtherMovementImportRows(input: {
   fields: CsvTemplateField[];
   movementType: "inbound" | "outbound";
 }): Promise<OtherInventoryMovementValidationRow[]> {
-  const [warehouses, skus] = await Promise.all([
-    getWarehousesForFilter(),
-    getSkuOptionsForInventory()
-  ]);
-  const warehouseByCode = new Map(
-    warehouses.map((warehouse) => [warehouse.warehouse_code.trim(), warehouse])
-  );
-  const skuByCode = new Map(skus.map((sku) => [sku.sku_code.trim(), sku]));
   const warehouseCodeField = getOtherMovementImportField(input.fields, "仓库编码");
   const skuCodeField = getOtherMovementImportField(input.fields, "SKU 编码");
   const quantityField = getOtherMovementImportField(
@@ -2454,6 +2661,39 @@ async function validateOtherMovementImportRows(input: {
     input.movementType === "inbound" ? "入库原因" : "出库原因"
   );
   const remarkField = getOtherMovementImportField(input.fields, "备注");
+  const warehouseCodes = Array.from(
+    new Set(
+      input.rows
+        .map((row) => getCsvRowValue(row, warehouseCodeField))
+        .filter(Boolean)
+    )
+  );
+  const skuCodes = Array.from(
+    new Set(input.rows.map((row) => getCsvRowValue(row, skuCodeField)).filter(Boolean))
+  );
+  const supabase = getSupabaseClient();
+  const [warehouseResult, skus] = await Promise.all([
+    withTimeout(
+      warehouseCodes.length > 0
+        ? supabase
+            .from("warehouses")
+            .select("id, warehouse_code, name, warehouse_type, status")
+            .in("warehouse_code", warehouseCodes)
+        : Promise.resolve({ data: [], error: null } as any),
+      "按编码读取导入仓库"
+    ),
+    getSkuOptionsForInventoryByCodes(skuCodes)
+  ]);
+
+  if (warehouseResult.error) {
+    throw formatSupabaseError("按编码读取导入仓库", warehouseResult.error);
+  }
+
+  const warehouses = (warehouseResult.data ?? []) as InventoryTransactionWarehouse[];
+  const warehouseByCode = new Map(
+    warehouses.map((warehouse) => [warehouse.warehouse_code.trim(), warehouse])
+  );
+  const skuByCode = new Map(skus.map((sku) => [sku.sku_code.trim(), sku]));
   const validationRows = input.rows.map<OtherInventoryMovementValidationRow>(
     (row, index) => {
       const rowNumber = index + 2;
@@ -2550,19 +2790,44 @@ async function appendOtherOutboundStockValidation(
   }
 
   const supabase = getSupabaseClient();
-  const inventoryRows = await fetchAllSupabaseRows<
-    Pick<
-      InventoryItem,
-      "warehouse_id" | "sku_id" | "quantity_on_hand" | "reserved_quantity"
-      | "product_sku_id" | "material_id"
-    >
-  >(
-    () =>
-      supabase
-        .from("inventory_items")
-        .select("warehouse_id, sku_id, product_sku_id, material_id, quantity_on_hand, reserved_quantity"),
+  const warehouseIds = Array.from(new Set(rowsWithData.map((row) => row.data?.warehouseId).filter(Boolean))) as string[];
+  const skuIds = Array.from(new Set(rowsWithData.map((row) => row.data?.skuId).filter(Boolean))) as string[];
+  const productSkuIds = Array.from(new Set(rowsWithData.map((row) => row.data?.productSkuId).filter(Boolean))) as string[];
+  const materialIds = Array.from(new Set(rowsWithData.map((row) => row.data?.materialId).filter(Boolean))) as string[];
+  const objectConditions: string[] = [];
+
+  if (skuIds.length > 0) {
+    objectConditions.push(`sku_id.in.(${skuIds.join(",")})`);
+  }
+
+  if (productSkuIds.length > 0) {
+    objectConditions.push(`product_sku_id.in.(${productSkuIds.join(",")})`);
+  }
+
+  if (materialIds.length > 0) {
+    objectConditions.push(`material_id.in.(${materialIds.join(",")})`);
+  }
+
+  const { data: inventoryRowsData, error: inventoryError } = await withTimeout(
+    objectConditions.length > 0
+      ? supabase
+          .from("inventory_items")
+          .select("warehouse_id, sku_id, product_sku_id, material_id, quantity_on_hand, reserved_quantity")
+          .in("warehouse_id", warehouseIds)
+          .or(objectConditions.join(","))
+      : Promise.resolve({ data: [], error: null } as any),
     "校验其他出库库存"
   );
+
+  if (inventoryError) {
+    throw formatSupabaseError("校验其他出库库存", inventoryError);
+  }
+
+  const inventoryRows = (inventoryRowsData ?? []) as Pick<
+    InventoryItem,
+    "warehouse_id" | "sku_id" | "quantity_on_hand" | "reserved_quantity"
+    | "product_sku_id" | "material_id"
+  >[];
   const availableByGroup = new Map<string, number>();
 
   for (const item of inventoryRows) {
@@ -2671,16 +2936,37 @@ function parseInventoryAdjustmentReason(
 export async function validateInventoryAdjustmentImportRows(
   rows: CsvDataRow[]
 ): Promise<InventoryAdjustmentValidationRow[]> {
-  const [warehouses, skus] = await Promise.all([
-    getWarehousesForFilter(),
-    getSkuOptionsForInventory()
+  const warehouseCodeField = getInventoryAdjustmentImportField("仓库编码");
+  const skuCodeField = getInventoryAdjustmentImportField("SKU 编码");
+  const warehouseCodes = Array.from(
+    new Set(rows.map((row) => getCsvRowValue(row, warehouseCodeField)).filter(Boolean))
+  );
+  const skuCodes = Array.from(
+    new Set(rows.map((row) => getCsvRowValue(row, skuCodeField)).filter(Boolean))
+  );
+  const supabase = getSupabaseClient();
+  const [warehouseResult, skus] = await Promise.all([
+    withTimeout(
+      warehouseCodes.length > 0
+        ? supabase
+            .from("warehouses")
+            .select("id, warehouse_code, name, warehouse_type, status")
+            .in("warehouse_code", warehouseCodes)
+        : Promise.resolve({ data: [], error: null } as any),
+      "按编码读取库存调整仓库"
+    ),
+    getSkuOptionsForInventoryByCodes(skuCodes)
   ]);
+
+  if (warehouseResult.error) {
+    throw formatSupabaseError("按编码读取库存调整仓库", warehouseResult.error);
+  }
+
+  const warehouses = (warehouseResult.data ?? []) as InventoryTransactionWarehouse[];
   const warehouseByCode = new Map(
     warehouses.map((warehouse) => [warehouse.warehouse_code.trim(), warehouse])
   );
   const skuByCode = new Map(skus.map((sku) => [sku.sku_code.trim(), sku]));
-  const warehouseCodeField = getInventoryAdjustmentImportField("仓库编码");
-  const skuCodeField = getInventoryAdjustmentImportField("SKU 编码");
   const modeField = getInventoryAdjustmentImportField("调整方式");
   const adjustmentQuantityField = getInventoryAdjustmentImportField("调整数量");
   const targetQuantityField = getInventoryAdjustmentImportField("调整后库存");
@@ -3456,6 +3742,9 @@ export async function getFinishedGoodsInventory(
 
   for (const item of data) {
     const skuId = item.product_sku_id ?? item.sku_id;
+    if (!skuId) {
+      continue;
+    }
     const current = inventoryBySku.get(skuId) ?? 0;
     const availableQuantity = Math.max(
       0,

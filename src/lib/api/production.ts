@@ -218,7 +218,6 @@ export type ProductionOrderTrackingRow = {
   assigned_profile: ProductionProfile | null;
   material_requirements: Array<{
     id: string;
-    material_sku_id: string | null;
     material_id: string | null;
     required_quantity: number;
     available_quantity: number;
@@ -232,17 +231,11 @@ export type ProductionOrderTrackingRow = {
       specs: string | null;
       unit: string;
     } | null;
-    material_sku: {
-      id: string;
-      sku_code: string;
-      sku_name: string;
-    } | null;
   }>;
   inbound_transactions: Array<{
     id: string;
     transaction_no: string;
     warehouse_id: string;
-    sku_id: string;
     transaction_type: string;
     quantity: number;
     occurred_at: string;
@@ -257,7 +250,6 @@ export type ProductionOrderTrackingRow = {
     id: string;
     transaction_no: string;
     warehouse_id: string;
-    sku_id: string;
     quantity: number;
     occurred_at: string;
     notes: string | null;
@@ -290,7 +282,6 @@ export type ProductionMaterialStatusFilter = ProductionMaterialStatus | "all";
 export type ProductionMaterialInventoryOption = {
   id: string;
   warehouse_id: string;
-  sku_id: string;
   material_id: string | null;
   item_type: string;
   quantity_on_hand: number;
@@ -313,7 +304,6 @@ export type ProductionIssueMaterialLineStatus =
 
 export type ProductionIssueMaterialLine = {
   material_requirement_id: string;
-  material_sku_id: string | null;
   material_id: string | null;
   sku_code: string;
   sku_name: string;
@@ -363,7 +353,6 @@ type BomHeader = {
 type BomItem = {
   id: string;
   bom_header_id: string;
-  component_sku_id: string | null;
   material_id: string | null;
   material: {
     id: string;
@@ -378,8 +367,7 @@ type BomItem = {
 
 type ResolvedBomRequirementLine = {
   key: string;
-  material_id: string | null;
-  material_sku_id: string | null;
+  material_id: string;
   quantity_per: number;
   unit: string;
   loss_rate: number;
@@ -387,7 +375,6 @@ type ResolvedBomRequirementLine = {
 };
 
 type InventoryItem = {
-  sku_id: string;
   material_id: string | null;
   quantity_on_hand: number;
   reserved_quantity: number;
@@ -498,16 +485,11 @@ type RawProductionOrderTrackingRow = Omit<
     | Array<
         Omit<
           ProductionOrderTrackingRow["material_requirements"][number],
-          "material" | "material_sku"
+          "material"
         > & {
           material: MaybeRelation<
             NonNullable<
               ProductionOrderTrackingRow["material_requirements"][number]["material"]
-            >
-          >;
-          material_sku: MaybeRelation<
-            NonNullable<
-              ProductionOrderTrackingRow["material_requirements"][number]["material_sku"]
             >
           >;
         }
@@ -726,8 +708,7 @@ function normalizeProductionOrderTrackingRow(
   const materialRequirements = (row.material_requirements ?? []).map(
     (requirement) => ({
       ...requirement,
-      material: singleRelation(requirement.material),
-      material_sku: singleRelation(requirement.material_sku)
+      material: singleRelation(requirement.material)
     })
   );
   const inboundTransactions = (row.inbound_transactions ?? [])
@@ -742,7 +723,6 @@ function normalizeProductionOrderTrackingRow(
       id: transaction.id,
       transaction_no: transaction.transaction_no,
       warehouse_id: transaction.warehouse_id,
-      sku_id: transaction.sku_id,
       quantity: Number(transaction.quantity),
       occurred_at: transaction.occurred_at,
       notes: transaction.notes,
@@ -881,7 +861,6 @@ function getProductionOrderSelect() {
     ),
     material_requirements:material_requirements!material_requirements_production_order_id_fkey (
       id,
-      material_sku_id,
       material_id,
       required_quantity,
       available_quantity,
@@ -894,18 +873,14 @@ function getProductionOrderSelect() {
         material_name,
         specs,
         unit
-      ),
-      material_sku:skus!material_requirements_material_sku_id_fkey (
-        id,
-        sku_code,
-        sku_name
       )
     ),
     inbound_transactions:inventory_transactions!inventory_transactions_production_order_id_fkey (
       id,
       transaction_no,
       warehouse_id,
-      sku_id,
+      product_sku_id,
+      material_id,
       transaction_type,
       quantity,
       occurred_at,
@@ -1014,13 +989,12 @@ function sortMaterialInventoryOptions(
 
 async function getAvailableInventoryForMaterials(
   supabase: ReturnType<typeof getSupabaseClient>,
-  skuIds: string[],
-  materialIds: string[] = []
+  materialIds: string[]
 ): Promise<Map<string, ProductionMaterialInventoryOption[]>> {
-  const inventoryBySku = new Map<string, ProductionMaterialInventoryOption[]>();
+  const inventoryByMaterial = new Map<string, ProductionMaterialInventoryOption[]>();
 
-  if (skuIds.length === 0 && materialIds.length === 0) {
-    return inventoryBySku;
+  if (materialIds.length === 0) {
+    return inventoryByMaterial;
   }
 
   const data = await fetchAllSupabaseRows<RawProductionMaterialInventoryOption>(
@@ -1031,7 +1005,6 @@ async function getAvailableInventoryForMaterials(
         `
           id,
           warehouse_id,
-          sku_id,
           material_id,
           item_type,
           quantity_on_hand,
@@ -1046,57 +1019,34 @@ async function getAvailableInventoryForMaterials(
           )
         `
       )
-      .or(
-        [
-          skuIds.length > 0 ? `sku_id.in.(${skuIds.join(",")})` : "",
-          materialIds.length > 0
-            ? `material_id.in.(${materialIds.join(",")})`
-            : ""
-        ]
-          .filter(Boolean)
-          .join(",")
-      )
+      .in("material_id", materialIds)
       .order("created_at", { ascending: true }),
     "读取原材料当前库存"
   );
 
   for (const row of data) {
     const option = normalizeMaterialInventoryOption(row);
-    const keys = [option.material_id, option.sku_id].filter(
-      (value): value is string => Boolean(value)
-    );
-
-    for (const key of keys) {
-      const current = inventoryBySku.get(key) ?? [];
-      inventoryBySku.set(key, [...current, option]);
+    if (option.material_id) {
+      const current = inventoryByMaterial.get(option.material_id) ?? [];
+      inventoryByMaterial.set(option.material_id, [...current, option]);
     }
   }
 
-  for (const [skuId, options] of inventoryBySku.entries()) {
-    inventoryBySku.set(skuId, [...options].sort(sortMaterialInventoryOptions));
+  for (const [materialId, options] of inventoryByMaterial.entries()) {
+    inventoryByMaterial.set(
+      materialId,
+      [...options].sort(sortMaterialInventoryOptions)
+    );
   }
 
-  return inventoryBySku;
-}
-
-export async function getAvailableInventoryForMaterial(
-  skuId: string
-): Promise<ProductionMaterialInventoryOption[]> {
-  const supabase = getSupabaseClient();
-  const inventoryBySku = await getAvailableInventoryForMaterials(supabase, [
-    skuId
-  ]);
-
-  return inventoryBySku.get(skuId) ?? [];
+  return inventoryByMaterial;
 }
 
 function getRequirementMaterialCode(
   requirement: ProductionOrderTrackingRow["material_requirements"][number]
 ) {
   return (
-    requirement.material?.material_code ??
-    requirement.material_sku?.sku_code ??
-    "-"
+    requirement.material?.material_code ?? "-"
   );
 }
 
@@ -1104,9 +1054,7 @@ function getRequirementMaterialName(
   requirement: ProductionOrderTrackingRow["material_requirements"][number]
 ) {
   return (
-    requirement.material?.material_name ??
-    requirement.material_sku?.sku_name ??
-    "-"
+    requirement.material?.material_name ?? "-"
   );
 }
 
@@ -1118,10 +1066,9 @@ function buildIssueMaterialLine(
   const materialCode = getRequirementMaterialCode(requirement);
   const materialName = getRequirementMaterialName(requirement);
 
-  if (!requirement.material_id && !requirement.material_sku_id) {
+  if (!requirement.material_id) {
     return {
       material_requirement_id: requirement.id,
-      material_sku_id: null,
       material_id: requirement.material_id,
       sku_code: materialCode,
       sku_name: materialName,
@@ -1138,9 +1085,8 @@ function buildIssueMaterialLine(
       current_quantity: 0,
       after_issue_quantity: null,
       status: "shortage",
-      status_label: "待库存迁移",
-      reason:
-        "该物料需求没有关联新辅料，也没有旧 SKU，不能确认领料。"
+      status_label: "待补齐辅料",
+      reason: "该物料需求没有关联辅料，不能确认领料。"
     };
   }
 
@@ -1165,7 +1111,6 @@ function buildIssueMaterialLine(
   if (selectedOption) {
     return {
       material_requirement_id: requirement.id,
-      material_sku_id: requirement.material_sku_id,
       material_id: requirement.material_id,
       sku_code: materialCode,
       sku_name: materialName,
@@ -1192,7 +1137,6 @@ function buildIssueMaterialLine(
   if (totalAvailableQuantity >= requiredQuantity) {
     return {
       material_requirement_id: requirement.id,
-      material_sku_id: requirement.material_sku_id,
       material_id: requirement.material_id,
       sku_code: materialCode,
       sku_name: materialName,
@@ -1216,7 +1160,6 @@ function buildIssueMaterialLine(
 
   return {
     material_requirement_id: requirement.id,
-    material_sku_id: requirement.material_sku_id,
     material_id: requirement.material_id,
     sku_code: materialCode,
     sku_name: materialName,
@@ -1240,7 +1183,7 @@ function buildIssueMaterialLine(
 
 function buildIssuePreviewForOrder(
   order: ProductionOrderTrackingRow,
-  inventoryBySku: Map<string, ProductionMaterialInventoryOption[]>
+  inventoryByMaterial: Map<string, ProductionMaterialInventoryOption[]>
 ): ProductionOrderIssueMaterialsPreview {
   if (order.materials_issued) {
     return {
@@ -1296,10 +1239,7 @@ function buildIssuePreviewForOrder(
   const materials = order.material_requirements.map((requirement) =>
     buildIssueMaterialLine(
       requirement,
-      inventoryBySku.get(requirement.material_id ?? "") ??
-        (requirement.material_sku_id
-          ? inventoryBySku.get(requirement.material_sku_id) ?? []
-          : [])
+      inventoryByMaterial.get(requirement.material_id ?? "") ?? []
     )
   );
   const shortageCount = materials.filter(
@@ -1363,21 +1303,24 @@ function buildIssuePreviewForOrder(
 async function hydrateProductionOrderIssueStatuses(
   orders: ProductionOrderTrackingRow[]
 ): Promise<ProductionOrderTrackingRow[]> {
-  const skuIds = [
+  const materialIds = [
     ...new Set(
       orders.flatMap((order) =>
         order.materials_issued
           ? []
-          : order.material_requirements.map((requirement) => requirement.material_sku_id)
+          : order.material_requirements.map((requirement) => requirement.material_id)
       )
-      .filter((skuId): skuId is string => Boolean(skuId))
+      .filter((materialId): materialId is string => Boolean(materialId))
     )
   ];
   const supabase = getSupabaseClient();
-  const inventoryBySku = await getAvailableInventoryForMaterials(supabase, skuIds);
+  const inventoryByMaterial = await getAvailableInventoryForMaterials(
+    supabase,
+    materialIds
+  );
 
   return orders.map((order) => {
-    const preview = buildIssuePreviewForOrder(order, inventoryBySku);
+    const preview = buildIssuePreviewForOrder(order, inventoryByMaterial);
 
     return {
       ...order,
@@ -1428,7 +1371,6 @@ async function getBomItems(
         `
           id,
           bom_header_id,
-          component_sku_id,
           material_id,
           quantity_per,
           unit,
@@ -1467,82 +1409,14 @@ async function getBomItems(
 }
 
 async function resolveBomRequirementLines(
-  supabase: ReturnType<typeof getSupabaseClient>,
+  _supabase: ReturnType<typeof getSupabaseClient>,
   bomItems: BomItem[]
 ): Promise<ResolvedBomRequirementLine[]> {
-  const legacyComponentSkuIds = Array.from(
-    new Set(
-      bomItems
-        .filter((item) => !item.material_id && item.component_sku_id)
-        .map((item) => item.component_sku_id)
-        .filter((id): id is string => Boolean(id))
-    )
-  );
-  const legacySkuById = new Map<
-    string,
-    { id: string; sku_code: string; sku_name: string; unit: string }
-  >();
-  const materialByCode = new Map<
-    string,
-    {
-      id: string;
-      material_code: string;
-      material_name: string;
-      unit: string;
-    }
-  >();
-
-  if (legacyComponentSkuIds.length > 0) {
-    const legacySkus = await fetchAllSupabaseRows<{
-      id: string;
-      sku_code: string;
-      sku_name: string;
-      unit: string;
-    }>(
-      () =>
-        supabase
-          .from("skus")
-          .select("id, sku_code, sku_name, unit")
-          .eq("sku_type", "material")
-          .in("id", legacyComponentSkuIds),
-      "读取旧 BOM 辅料 SKU"
-    );
-
-    legacySkus.forEach((sku) => legacySkuById.set(sku.id, sku));
-
-    const materialCodes = Array.from(
-      new Set(legacySkus.map((sku) => sku.sku_code).filter(Boolean))
-    );
-
-    if (materialCodes.length > 0) {
-      const materials = await fetchAllSupabaseRows<{
-        id: string;
-        material_code: string;
-        material_name: string;
-        unit: string;
-      }>(
-        () =>
-          supabase
-            .from("materials")
-            .select("id, material_code, material_name, unit")
-            .in("material_code", materialCodes),
-        "读取旧 BOM 对应的新辅料"
-      );
-
-      materials.forEach((material) =>
-        materialByCode.set(material.material_code.toLowerCase(), material)
-      );
-    }
-  }
-
   return bomItems.map((item) => {
-    const legacySkuId = item.component_sku_id ?? null;
-
     if (item.material_id && item.material) {
       return {
         key: `material:${item.material_id}`,
         material_id: item.material_id,
-        material_sku_id: null,
         quantity_per: item.quantity_per,
         unit: item.material.unit || item.unit,
         loss_rate: item.loss_rate,
@@ -1550,63 +1424,8 @@ async function resolveBomRequirementLines(
       };
     }
 
-    if (!legacySkuId) {
-      throw new Error(
-        `BOM 明细 ${item.id} 既没有辅料 ID，也没有旧原材料 SKU，不能自动生成物料需求。`
-      );
-    }
-
-    const legacySku = legacySkuById.get(legacySkuId);
-    const fallbackMaterial = legacySku
-      ? materialByCode.get(legacySku.sku_code.toLowerCase()) ?? null
-      : null;
-
-    return {
-      key: fallbackMaterial ? `material:${fallbackMaterial.id}` : `sku:${legacySkuId}`,
-      material_id: fallbackMaterial?.id ?? null,
-      material_sku_id: legacySkuId,
-      quantity_per: item.quantity_per,
-      unit: fallbackMaterial?.unit || item.unit,
-      loss_rate: item.loss_rate,
-      material_label: fallbackMaterial
-        ? `${fallbackMaterial.material_code} / ${fallbackMaterial.material_name}`
-        : `${legacySku?.sku_code ?? legacySkuId} / ${legacySku?.sku_name ?? "旧原材料 SKU"}`
-    };
+    throw new Error(`BOM 明细 ${item.id} 没有关联辅料，不能自动生成物料需求。`);
   });
-}
-
-async function getAvailableInventoryBySku(
-  supabase: ReturnType<typeof getSupabaseClient>,
-  skuIds: string[]
-): Promise<Map<string, number>> {
-  const availability = new Map<string, number>();
-
-  if (skuIds.length === 0) {
-    return availability;
-  }
-
-  const data = await fetchAllSupabaseRows<InventoryItem>(
-    () =>
-      supabase
-      .from("inventory_items")
-      .select("sku_id, quantity_on_hand, reserved_quantity")
-      .in("sku_id", skuIds),
-    "读取原材料库存"
-  );
-
-  for (const item of data) {
-    const current = availability.get(item.sku_id) ?? 0;
-    const itemAvailable =
-      Number(item.quantity_on_hand) - Number(item.reserved_quantity);
-
-    availability.set(item.sku_id, current + itemAvailable);
-  }
-
-  for (const [skuId, available] of availability.entries()) {
-    availability.set(skuId, Math.max(0, roundQuantity(available)));
-  }
-
-  return availability;
 }
 
 async function getAvailableInventoryByMaterial(
@@ -1623,7 +1442,7 @@ async function getAvailableInventoryByMaterial(
     () =>
       supabase
         .from("inventory_items")
-        .select("sku_id, material_id, quantity_on_hand, reserved_quantity")
+        .select("material_id, quantity_on_hand, reserved_quantity")
         .in("material_id", materialIds),
     "读取辅料库存"
   );
@@ -1679,16 +1498,13 @@ async function generateMaterialRequirements(
   await ensureMaterialRequirementsDoNotExist(supabase, productionOrderId);
 
   const requirementLines = await resolveBomRequirementLines(supabase, bomItems);
-  const materialSkuIds = requirementLines
-    .map((item) => item.material_sku_id)
-    .filter((skuId): skuId is string => Boolean(skuId));
   const materialIds = requirementLines
     .map((item) => item.material_id)
     .filter((materialId): materialId is string => Boolean(materialId));
-  const [availableBySku, availableByMaterial] = await Promise.all([
-    getAvailableInventoryBySku(supabase, materialSkuIds),
-    getAvailableInventoryByMaterial(supabase, materialIds)
-  ]);
+  const availableByMaterial = await getAvailableInventoryByMaterial(
+    supabase,
+    materialIds
+  );
 
   const rows = requirementLines.map((item) => {
     const quantityPer = Number(item.quantity_per);
@@ -1696,11 +1512,7 @@ async function generateMaterialRequirements(
     const requiredQuantity = roundQuantity(
       plannedQuantity * quantityPer * (1 + lossRate)
     );
-    const availableQuantity = item.material_id
-      ? availableByMaterial.get(item.material_id) ?? 0
-      : item.material_sku_id
-        ? availableBySku.get(item.material_sku_id) ?? 0
-        : 0;
+    const availableQuantity = availableByMaterial.get(item.material_id) ?? 0;
     const shortageQuantity = roundQuantity(
       Math.max(0, requiredQuantity - availableQuantity)
     );
@@ -1708,7 +1520,6 @@ async function generateMaterialRequirements(
     return {
       production_order_id: productionOrderId,
       replenishment_request_id: replenishmentRequestId,
-      material_sku_id: item.material_sku_id,
       material_id: item.material_id,
       required_quantity: requiredQuantity,
       available_quantity: availableQuantity,
@@ -1746,8 +1557,7 @@ async function generateMaterialRequirementsForOrderItems(
   const requirementByMaterial = new Map<
     string,
     {
-      material_id: string | null;
-      material_sku_id: string | null;
+      material_id: string;
       required_quantity: number;
       unit: string;
       notes: string[];
@@ -1772,14 +1582,10 @@ async function generateMaterialRequirementsForOrderItems(
         current.required_quantity = roundQuantity(
           current.required_quantity + requiredQuantity
         );
-        current.material_id = current.material_id ?? bomItem.material_id;
-        current.material_sku_id =
-          current.material_sku_id ?? bomItem.material_sku_id;
         current.notes.push(note);
       } else {
         requirementByMaterial.set(bomItem.key, {
           material_id: bomItem.material_id,
-          material_sku_id: bomItem.material_sku_id,
           required_quantity: requiredQuantity,
           unit: bomItem.unit,
           notes: [note]
@@ -1788,22 +1594,15 @@ async function generateMaterialRequirementsForOrderItems(
     }
   }
 
-  const materialSkuIds = [...requirementByMaterial.values()]
-    .map((requirement) => requirement.material_sku_id)
-    .filter((skuId): skuId is string => Boolean(skuId));
   const materialIds = [...requirementByMaterial.values()]
     .map((requirement) => requirement.material_id)
     .filter((materialId): materialId is string => Boolean(materialId));
-  const [availableBySku, availableByMaterial] = await Promise.all([
-    getAvailableInventoryBySku(supabase, materialSkuIds),
-    getAvailableInventoryByMaterial(supabase, materialIds)
-  ]);
+  const availableByMaterial = await getAvailableInventoryByMaterial(
+    supabase,
+    materialIds
+  );
   const rows = [...requirementByMaterial.values()].map((requirement) => {
-    const availableQuantity = requirement.material_id
-      ? availableByMaterial.get(requirement.material_id) ?? 0
-      : requirement.material_sku_id
-        ? availableBySku.get(requirement.material_sku_id) ?? 0
-        : 0;
+    const availableQuantity = availableByMaterial.get(requirement.material_id) ?? 0;
     const shortageQuantity = roundQuantity(
       Math.max(0, requirement.required_quantity - availableQuantity)
     );
@@ -1811,7 +1610,6 @@ async function generateMaterialRequirementsForOrderItems(
     return {
       production_order_id: productionOrderId,
       replenishment_request_id: replenishmentRequestId,
-      material_sku_id: requirement.material_sku_id,
       material_id: requirement.material_id,
       required_quantity: requirement.required_quantity,
       available_quantity: availableQuantity,
@@ -2067,15 +1865,13 @@ export async function getProductionOrderMaterialStatus(
   return computeProductionOrderMaterialStatus(
     (data ?? []).map((requirement) => ({
       id: requirement.id,
-      material_sku_id: null,
       material_id: null,
       required_quantity: 0,
       available_quantity: 0,
       shortage_quantity: 0,
       unit: "",
       status: requirement.status,
-      material: null,
-      material_sku: null
+      material: null
     }))
   );
 }
@@ -2106,14 +1902,6 @@ export async function getProductionOrderIssueMaterialsPreview(
 ): Promise<ProductionOrderIssueMaterialsPreview> {
   const supabase = getSupabaseClient();
   const order = await getProductionOrderDetail(productionOrderId);
-  const materialSkuIds = [
-    ...new Set(
-      order.material_requirements.map(
-        (requirement) => requirement.material_sku_id
-      )
-      .filter((skuId): skuId is string => Boolean(skuId))
-    )
-  ];
   const materialIds = [
     ...new Set(
       order.material_requirements
@@ -2123,7 +1911,6 @@ export async function getProductionOrderIssueMaterialsPreview(
   ];
   const inventoryBySku = await getAvailableInventoryForMaterials(
     supabase,
-    materialSkuIds,
     materialIds
   );
 
@@ -2133,7 +1920,6 @@ export async function getProductionOrderIssueMaterialsPreview(
 async function getMaterialInventoryItemForIssue(
   supabase: ReturnType<typeof getSupabaseClient>,
   inventoryItemId: string,
-  materialSkuId: string | null,
   materialId: string | null
 ): Promise<MaterialIssueInventoryItem> {
   const { data, error } = await withTimeout(
@@ -2145,8 +1931,6 @@ async function getMaterialInventoryItemForIssue(
 
       if (materialId) {
         query = query.eq("material_id", materialId);
-      } else if (materialSkuId) {
-        query = query.eq("sku_id", materialSkuId);
       }
 
       return query.single();
@@ -2261,16 +2045,13 @@ export async function issueMaterialsForProductionOrder(
       );
     }
 
-    if (!material.material_id && !material.material_sku_id) {
-      throw new Error(
-        `${material.sku_code} 没有关联可扣库存的辅料或旧 SKU，不能确认领料。`
-      );
+    if (!material.material_id) {
+      throw new Error(`${material.sku_code} 没有关联可扣库存的辅料，不能确认领料。`);
     }
 
     const inventoryItem = await getMaterialInventoryItemForIssue(
       supabase,
       material.selected_inventory_item_id,
-      material.material_sku_id,
       material.material_id
     );
     const materialLabel = `${material.sku_code} / ${material.sku_name}`;

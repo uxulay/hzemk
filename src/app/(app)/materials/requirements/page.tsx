@@ -62,23 +62,15 @@ function formatPercent(value: number | null | undefined) {
 }
 
 function getMaterialCode(requirement: MaterialRequirementRow) {
-  return (
-    requirement.material?.material_code ??
-    requirement.material_sku?.sku_code ??
-    "-"
-  );
+  return requirement.material?.material_code ?? "-";
 }
 
 function getMaterialName(requirement: MaterialRequirementRow) {
-  return (
-    requirement.material?.material_name ??
-    requirement.material_sku?.sku_name ??
-    "-"
-  );
+  return requirement.material?.material_name ?? "-";
 }
 
 function getMaterialSpecs(requirement: MaterialRequirementRow) {
-  return requirement.material?.specs ?? requirement.material_sku?.specs ?? "-";
+  return requirement.material?.specs ?? "-";
 }
 
 export default function MaterialRequirementsPage() {

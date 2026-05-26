@@ -322,19 +322,19 @@ function BomMaterialSearchSelect({
 }
 
 function getItemUnit(item: BomItemRow) {
-  return item.material?.unit ?? item.component_sku?.unit ?? item.unit;
+  return item.material?.unit ?? item.unit;
 }
 
 function getItemCode(item: BomItemRow) {
-  return item.material?.material_code ?? item.component_sku?.sku_code ?? "-";
+  return item.material?.material_code ?? "-";
 }
 
 function getItemName(item: BomItemRow) {
-  return item.material?.material_name ?? item.component_sku?.sku_name ?? "-";
+  return item.material?.material_name ?? "-";
 }
 
 function getItemSpecs(item: BomItemRow) {
-  return item.material?.specs ?? item.component_sku?.specs ?? "-";
+  return item.material?.specs ?? "-";
 }
 
 function renderBomImportSummary(
@@ -419,16 +419,9 @@ export default function BomPage() {
       return null;
     }
 
-    const selectedMaterial = materials.find(
-      (material) => material.id === itemForm.materialId
-    );
-
     return (
       bomDetail.items.find(
-        (item) =>
-          item.material_id === itemForm.materialId ||
-          (Boolean(selectedMaterial?.legacy_component_sku_id) &&
-            item.component_sku_id === selectedMaterial?.legacy_component_sku_id)
+        (item) => item.material_id === itemForm.materialId
       ) ?? null
     );
   }, [bomDetail, itemForm.materialId, materials]);

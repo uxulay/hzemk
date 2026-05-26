@@ -18,7 +18,7 @@ import {
   getSupplierDefaultMaterials,
   getSupplierPurchaseOrders,
   getSupplierStats,
-  getSuppliers,
+  getSuppliersPage,
   toggleSupplierStatus,
   updateSupplier,
   type SupplierListRow,
@@ -28,7 +28,7 @@ import {
   type SupplierStatus
 } from "@/lib/api/suppliers";
 import { downloadCsvTemplate, type CsvTemplateField } from "@/lib/utils/csv";
-import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
+import { DEFAULT_PAGE_SIZE } from "@/lib/utils/pagination";
 
 const supplierStatusLabels: Record<string, string> = {
   active: "启用",
@@ -182,6 +182,7 @@ export default function AdminSuppliersPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedSupplierIds, setSelectedSupplierIds] = useState<string[]>([]);
   const [page, setPage] = useState(1);
+  const [supplierTotal, setSupplierTotal] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [supplierToDelete, setSupplierToDelete] =
@@ -195,51 +196,38 @@ export default function AdminSuppliersPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
-  const filteredSuppliers = useMemo(() => {
-    const keyword = searchKeyword.trim().toLowerCase();
-
-    return suppliers.filter((supplier) => {
-      const matchesKeyword =
-        !keyword ||
-        supplier.name.toLowerCase().includes(keyword) ||
-        supplier.supplier_code.toLowerCase().includes(keyword) ||
-        (supplier.contact_name ?? "").toLowerCase().includes(keyword);
-      const matchesStatus =
-        statusFilter === "all" || supplier.status === statusFilter;
-
-      return matchesKeyword && matchesStatus;
-    });
-  }, [suppliers, searchKeyword, statusFilter]);
-
   const selectedSuppliers = useMemo(
     () => suppliers.filter((supplier) => selectedSupplierIds.includes(supplier.id)),
     [suppliers, selectedSupplierIds]
   );
-  const paginatedSuppliers = useMemo(
-    () => paginateItems(filteredSuppliers, page),
-    [filteredSuppliers, page]
-  );
   const allFilteredSelected =
-    filteredSuppliers.length > 0 &&
-    filteredSuppliers.every((supplier) =>
+    suppliers.length > 0 &&
+    suppliers.every((supplier) =>
       selectedSupplierIds.includes(supplier.id)
     );
 
-  const loadPageData = async () => {
+  const loadPageData = async (targetPage = page) => {
     try {
       setLoading(true);
       setErrorMessage("");
 
-      const [supplierData, statsData] = await Promise.all([
-        getSuppliers(),
+      const [supplierPage, statsData] = await Promise.all([
+        getSuppliersPage({
+          page: targetPage,
+          pageSize: DEFAULT_PAGE_SIZE,
+          keyword: searchKeyword,
+          filters: { status: statusFilter }
+        }),
         getSupplierStats()
       ]);
 
-      setSuppliers(supplierData);
+      setSuppliers(supplierPage.rows);
+      setSupplierTotal(supplierPage.total);
+      setPage(supplierPage.page);
       setStats(statsData);
       setSelectedSupplierIds((current) =>
         current.filter((supplierId) =>
-          supplierData.some((supplier) => supplier.id === supplierId)
+          supplierPage.rows.some((supplier) => supplier.id === supplierId)
         )
       );
       setSelectedSupplier((current) => {
@@ -248,14 +236,15 @@ export default function AdminSuppliersPage() {
         }
 
         return (
-          supplierData.find((supplier) => supplier.id === current.id) ?? null
+          supplierPage.rows.find((supplier) => supplier.id === current.id) ?? null
         );
       });
 
-      return supplierData;
+      return supplierPage.rows;
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setSuppliers([]);
+      setSupplierTotal(0);
       setStats(initialStats);
       setSelectedSupplierIds([]);
       setSelectedSupplier(null);
@@ -269,11 +258,15 @@ export default function AdminSuppliersPage() {
   };
 
   useEffect(() => {
-    loadPageData();
+    loadPageData(1);
   }, []);
 
   useEffect(() => {
-    setPage(1);
+    const timer = window.setTimeout(() => {
+      loadPageData(1);
+    }, 300);
+
+    return () => window.clearTimeout(timer);
   }, [searchKeyword, statusFilter]);
 
   const refreshAll = async () => {
@@ -387,7 +380,7 @@ export default function AdminSuppliersPage() {
       setSelectedSupplierIds((current) =>
         current.filter(
           (supplierId) =>
-            !filteredSuppliers.some((supplier) => supplier.id === supplierId)
+            !suppliers.some((supplier) => supplier.id === supplierId)
         )
       );
       return;
@@ -397,7 +390,7 @@ export default function AdminSuppliersPage() {
       Array.from(
         new Set([
           ...current,
-          ...filteredSuppliers.map((supplier) => supplier.id)
+          ...suppliers.map((supplier) => supplier.id)
         ])
       )
     );
@@ -921,11 +914,11 @@ export default function AdminSuppliersPage() {
           <div className="debugNotice">正在读取供应商数据...</div>
         ) : null}
 
-        {!loading && filteredSuppliers.length === 0 ? (
+        {!loading && suppliers.length === 0 ? (
           <div className="emptyState">暂无供应商</div>
         ) : null}
 
-        {!loading && filteredSuppliers.length > 0 ? (
+        {!loading && suppliers.length > 0 ? (
           <div className="tableWrap">
             <table className="dataTable supplierTable">
               <thead>
@@ -955,7 +948,7 @@ export default function AdminSuppliersPage() {
                 </tr>
               </thead>
               <tbody>
-                {paginatedSuppliers.map((supplier) => {
+                {suppliers.map((supplier) => {
                   const statusUpdating = statusUpdatingId === supplier.id;
 
                   return (
@@ -1038,12 +1031,12 @@ export default function AdminSuppliersPage() {
           </div>
         ) : null}
 
-        {!loading && filteredSuppliers.length > 0 ? (
+        {!loading && suppliers.length > 0 ? (
           <Pagination
             page={page}
             pageSize={DEFAULT_PAGE_SIZE}
-            total={filteredSuppliers.length}
-            onPageChange={setPage}
+            total={supplierTotal}
+            onPageChange={(nextPage) => loadPageData(nextPage)}
           />
         ) : null}
       </section>

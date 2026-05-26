@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Modal } from "@/components/Modal";
 import { Pagination } from "@/components/Pagination";
 import {
   createUserProfile,
   getRoles,
-  getUsers,
+  getUsersPage,
   getUserStats,
   toggleUserStatus,
   updateUserProfile,
@@ -15,7 +15,7 @@ import {
   type UserStats,
   type UserStatus
 } from "@/lib/api/users";
-import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
+import { DEFAULT_PAGE_SIZE } from "@/lib/utils/pagination";
 
 const userStatusLabels: Record<string, string> = {
   active: "启用",
@@ -123,6 +123,7 @@ export default function AdminUsersPage() {
   const [roleFilter, setRoleFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [page, setPage] = useState(1);
+  const [userTotal, setUserTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [updating, setUpdating] = useState(false);
@@ -130,38 +131,28 @@ export default function AdminUsersPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
-  const filteredUsers = useMemo(() => {
-    const keyword = searchKeyword.trim().toLowerCase();
-
-    return users.filter((user) => {
-      const matchesKeyword =
-        !keyword ||
-        user.full_name.toLowerCase().includes(keyword) ||
-        user.email.toLowerCase().includes(keyword);
-      const matchesRole = roleFilter === "all" || user.role_id === roleFilter;
-      const matchesStatus = matchesStatusFilter(user.status, statusFilter);
-
-      return matchesKeyword && matchesRole && matchesStatus;
-    });
-  }, [users, searchKeyword, roleFilter, statusFilter]);
-
-  const paginatedUsers = useMemo(
-    () => paginateItems(filteredUsers, page),
-    [filteredUsers, page]
-  );
-
-  const loadPageData = async () => {
+  const loadPageData = async (targetPage = page) => {
     try {
       setLoading(true);
       setErrorMessage("");
 
-      const [userData, roleData, statsData] = await Promise.all([
-        getUsers(),
+      const [userPage, roleData, statsData] = await Promise.all([
+        getUsersPage({
+          page: targetPage,
+          pageSize: DEFAULT_PAGE_SIZE,
+          keyword: searchKeyword,
+          filters: {
+            roleId: roleFilter,
+            status: statusFilter
+          }
+        }),
         getRoles(),
         getUserStats()
       ]);
 
-      setUsers(userData);
+      setUsers(userPage.rows);
+      setUserTotal(userPage.total);
+      setPage(userPage.page);
       setRoles(roleData);
       setStats(statsData);
       setSelectedUser((current) => {
@@ -169,13 +160,14 @@ export default function AdminUsersPage() {
           return null;
         }
 
-        return userData.find((user) => user.id === current.id) ?? null;
+        return userPage.rows.find((user) => user.id === current.id) ?? null;
       });
 
-      return userData;
+      return userPage.rows;
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setUsers([]);
+      setUserTotal(0);
       setRoles([]);
       setStats(initialStats);
       setSelectedUser(null);
@@ -187,11 +179,15 @@ export default function AdminUsersPage() {
   };
 
   useEffect(() => {
-    loadPageData();
+    loadPageData(1);
   }, []);
 
   useEffect(() => {
-    setPage(1);
+    const timer = window.setTimeout(() => {
+      loadPageData(1);
+    }, 300);
+
+    return () => window.clearTimeout(timer);
   }, [roleFilter, searchKeyword, statusFilter]);
 
   const submitCreateUser = async (event: FormEvent<HTMLFormElement>) => {
@@ -597,7 +593,7 @@ export default function AdminUsersPage() {
             <p className="eyebrow">用户列表</p>
             <h3>所有 profiles 用户资料</h3>
           </div>
-          <button className="secondaryButton" type="button" onClick={loadPageData}>
+          <button className="secondaryButton" type="button" onClick={() => loadPageData(page)}>
             {loading ? "正在刷新..." : "刷新列表"}
           </button>
         </div>
@@ -639,18 +635,18 @@ export default function AdminUsersPage() {
             </select>
           </label>
 
-          <button className="secondaryButton" type="button" onClick={loadPageData}>
+          <button className="secondaryButton" type="button" onClick={() => loadPageData(page)}>
             刷新
           </button>
         </div>
 
         {loading ? <div className="debugNotice">正在读取用户数据...</div> : null}
 
-        {!loading && filteredUsers.length === 0 ? (
+        {!loading && users.length === 0 ? (
           <div className="emptyState">暂无用户</div>
         ) : null}
 
-        {!loading && filteredUsers.length > 0 ? (
+        {!loading && users.length > 0 ? (
           <div className="tableWrap">
             <table className="dataTable usersTable">
               <thead>
@@ -666,7 +662,7 @@ export default function AdminUsersPage() {
                 </tr>
               </thead>
               <tbody>
-                {paginatedUsers.map((user) => {
+                {users.map((user) => {
                   const statusUpdating = statusUpdatingId === user.id;
 
                   return (
@@ -741,12 +737,12 @@ export default function AdminUsersPage() {
           </div>
         ) : null}
 
-        {!loading && filteredUsers.length > 0 ? (
+        {!loading && users.length > 0 ? (
           <Pagination
             page={page}
             pageSize={DEFAULT_PAGE_SIZE}
-            total={filteredUsers.length}
-            onPageChange={setPage}
+            total={userTotal}
+            onPageChange={(nextPage) => loadPageData(nextPage)}
           />
         ) : null}
       </section>

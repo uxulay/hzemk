@@ -466,25 +466,18 @@ function downloadPurchaseOrderCsv(order: PurchaseOrder) {
 }
 
 function getDraftItem(requirement: ShortageMaterialRequirement): DraftItem {
-  const defaultSupplierId =
-    requirement.material?.default_supplier_id ??
-    requirement.material_sku?.default_supplier_id ??
-    null;
+  const defaultSupplierId = requirement.material?.default_supplier_id ?? null;
   const defaultSupplierLabel = requirement.material
     ? getMaterialDefaultSupplierLabel(requirement.material)
-    : requirement.material_sku
-      ? getMaterialDefaultSupplierLabel(requirement.material_sku)
-      : "未设置";
+    : "未设置";
 
   return {
     materialRequirementId: requirement.id,
     materialId: requirement.material_id,
-    skuId: requirement.material_id ? "" : requirement.material_sku_id ?? "",
-    materialCode:
-      requirement.material?.material_code ?? requirement.material_sku?.sku_code ?? "-",
-    materialName:
-      requirement.material?.material_name ?? requirement.material_sku?.sku_name ?? "-",
-    specs: requirement.material?.specs ?? requirement.material_sku?.specs ?? null,
+    skuId: "",
+    materialCode: requirement.material?.material_code ?? "-",
+    materialName: requirement.material?.material_name ?? "-",
+    specs: requirement.material?.specs ?? null,
     productionOrderNo: requirement.production_order?.production_order_no ?? "-",
     defaultSupplierId,
     defaultSupplierLabel,
@@ -814,7 +807,7 @@ export default function PurchaseOrdersPage() {
           return {
             ...item,
             materialId: value,
-            skuId: material?.legacy_sku_id ?? "",
+            skuId: "",
             materialCode: material?.material_code ?? "",
             materialName: material?.material_name ?? "",
             specs: material?.specs ?? null,
@@ -1298,7 +1291,7 @@ export default function PurchaseOrdersPage() {
                 orderDate,
                 expectedArrivalDate,
                 materialId: material.id,
-                skuId: material.legacy_sku_id,
+                skuId: null,
                 materialCode: material.material_code,
                 materialName: material.material_name,
                 unit: material.unit,
@@ -1498,9 +1491,7 @@ export default function PurchaseOrdersPage() {
                     <td>
                       <input
                         aria-label={`选择${
-                          requirement.material?.material_code ??
-                          requirement.material_sku?.sku_code ??
-                          "缺料辅料"
+                          requirement.material?.material_code ?? "缺料辅料"
                         }`}
                         checked={selectedRequirementIds.includes(requirement.id)}
                         onChange={() => toggleRequirement(requirement.id)}
@@ -1522,19 +1513,15 @@ export default function PurchaseOrdersPage() {
                     </td>
                     <td>
                       {requirement.material?.material_code ??
-                        requirement.material_sku?.sku_code ??
                         "-"}
                     </td>
                     <td>
                       {requirement.material?.material_name ??
-                        requirement.material_sku?.sku_name ??
                         "-"}
                     </td>
                     <td>
                       {requirement.material
                         ? getMaterialDefaultSupplierLabel(requirement.material)
-                        : requirement.material_sku
-                          ? getMaterialDefaultSupplierLabel(requirement.material_sku)
                         : "-"}
                     </td>
                     <td>{requirement.unit}</td>

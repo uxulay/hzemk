@@ -1,6 +1,7 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { fetchAllSupabaseRows } from "@/lib/supabase/pagination";
 import type { BrandSummary } from "@/lib/brand-utils";
+import type { ListPageParams } from "@/lib/api/page-types";
 
 export type ProductStatus = "active" | "inactive";
 
@@ -39,6 +40,21 @@ export type ProductStats = {
   activeProducts: number;
   inactiveProducts: number;
   totalSkus: number;
+};
+
+export type ProductListFilters = {
+  status?: string;
+  brandId?: string;
+};
+
+export type ProductPageParams = ListPageParams<ProductListFilters>;
+
+export type ProductPageResult = {
+  rows: ProductListRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
 };
 
 export type CreateProductInput = {
@@ -214,6 +230,85 @@ export async function getProducts(): Promise<ProductListRow[]> {
       ...product,
       sku_count: skuCountByProduct.get(product.id) ?? 0
     }));
+}
+
+export async function getProductsPage(
+  params: ProductPageParams = {}
+): Promise<ProductPageResult> {
+  const supabase = getSupabaseClient();
+  const pageSize = Math.min(Math.max(params.pageSize ?? 20, 1), 100);
+  const page = Math.max(params.page ?? 1, 1);
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+  const keyword = params.keyword?.trim() ?? "";
+  const status = params.filters?.status;
+  const brandId = params.filters?.brandId;
+
+  let query = supabase
+    .from("products")
+    .select(getProductSelect(), { count: "exact" })
+    .order(params.sortBy ?? "product_code", {
+      ascending: params.sortDirection !== "desc"
+    })
+    .range(from, to);
+
+  if (keyword) {
+    const escapedKeyword = keyword.replace(/[%_,]/g, " ").trim();
+    query = query.or(
+      `product_code.ilike.%${escapedKeyword}%,name.ilike.%${escapedKeyword}%,category.ilike.%${escapedKeyword}%`
+    );
+  }
+
+  if (status && status !== "all") {
+    query = query.eq("status", status);
+  }
+
+  if (brandId && brandId !== "all") {
+    query =
+      brandId === "none"
+        ? query.is("brand_id", null)
+        : query.eq("brand_id", brandId);
+  }
+
+  const { data, error, count } = await withTimeout(query, "分页读取产品列表");
+
+  if (error) {
+    throw formatSupabaseError("分页读取产品列表", error);
+  }
+
+  const productRows = ((data ?? []) as unknown as RawProductRow[]).map(
+    normalizeProduct
+  );
+  const productIds = productRows.map((product) => product.id);
+  const skuCountByProduct = new Map<string, number>();
+
+  if (productIds.length > 0) {
+    const { data: skuRows, error: skuError } = await withTimeout(
+      supabase.from("skus").select("id, product_id").in("product_id", productIds),
+      "统计当前页产品关联 SKU 数量"
+    );
+
+    if (skuError) {
+      throw formatSupabaseError("统计当前页产品关联 SKU 数量", skuError);
+    }
+
+    countSkusByProduct((skuRows ?? []) as SkuProductLink[]).forEach(
+      (value, key) => skuCountByProduct.set(key, value)
+    );
+  }
+
+  const total = count ?? 0;
+
+  return {
+    rows: productRows.map((product) => ({
+      ...product,
+      sku_count: skuCountByProduct.get(product.id) ?? 0
+    })),
+    total,
+    page,
+    pageSize,
+    totalPages: Math.max(1, Math.ceil(total / pageSize))
+  };
 }
 
 export async function getProductStats(): Promise<ProductStats> {

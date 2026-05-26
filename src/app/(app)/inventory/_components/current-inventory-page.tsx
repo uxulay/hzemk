@@ -1,15 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Modal } from "@/components/Modal";
 import { Pagination } from "@/components/Pagination";
 import {
-  getMaterialInventory,
-  getProductInventory,
+  getCurrentInventoryPage,
   getWarehousesForFilter,
   type CurrentInventoryFilters,
   type CurrentInventoryRow,
+  type CurrentInventorySummary,
   type CurrentInventoryWarehouse,
   type InventoryStockStatus,
   type InventoryStockStatusFilter,
@@ -18,7 +18,7 @@ import {
 } from "@/lib/api/inventory";
 import { getBrandOptions, type BrandRow } from "@/lib/api/brands";
 import { getBrandCodeName } from "@/lib/brand-utils";
-import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
+import { DEFAULT_PAGE_SIZE } from "@/lib/utils/pagination";
 
 type CurrentInventoryPageMode = "materials" | "products";
 
@@ -138,39 +138,14 @@ function getInventoryActionHref(
   return queryString ? `${path}?${queryString}` : path;
 }
 
-function countUniqueSkus(rows: CurrentInventoryRow[]) {
-  return new Set(
-    rows.map((row) => row.material_id ?? row.product_sku_id ?? row.sku_id)
-  ).size;
-}
-
-function getProductSkuStockCounts(rows: ProductInventoryRow[]) {
-  const quantityBySku = new Map<string, number>();
-
-  for (const row of rows) {
-    quantityBySku.set(
-      row.product_sku_id ?? row.sku_id,
-      (quantityBySku.get(row.product_sku_id ?? row.sku_id) ?? 0) +
-        Number(row.quantity_on_hand)
-    );
-  }
-
-  let inStockSkuCount = 0;
-  let outOfStockSkuCount = 0;
-
-  for (const quantity of quantityBySku.values()) {
-    if (quantity > 0) {
-      inStockSkuCount += 1;
-    } else {
-      outOfStockSkuCount += 1;
-    }
-  }
-
-  return {
-    inStockSkuCount,
-    outOfStockSkuCount
-  };
-}
+const emptySummary: CurrentInventorySummary = {
+  skuKindCount: 0,
+  totalQuantity: 0,
+  lowStockCount: 0,
+  outOfStockCount: 0,
+  inStockSkuCount: 0,
+  outOfStockSkuCount: 0
+};
 
 export function CurrentInventoryPage({ mode, embedded = false }: CurrentInventoryPageProps) {
   const config = pageConfig[mode];
@@ -187,48 +162,11 @@ export function CurrentInventoryPage({ mode, embedded = false }: CurrentInventor
     null
   );
   const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [summary, setSummary] =
+    useState<CurrentInventorySummary>(emptySummary);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
-
-  const summary = useMemo(() => {
-    const totalQuantity = items.reduce(
-      (sum, item) => sum + Number(item.quantity_on_hand),
-      0
-    );
-
-    if (mode === "materials") {
-      const materialItems = items as MaterialInventoryRow[];
-
-      return {
-        skuKindCount: countUniqueSkus(materialItems),
-        totalQuantity,
-        lowStockCount: materialItems.filter(
-          (item) => item.stock_status === "low_stock"
-        ).length,
-        outOfStockCount: materialItems.filter(
-          (item) => item.stock_status === "out_of_stock"
-        ).length,
-        inStockSkuCount: 0,
-        outOfStockSkuCount: 0
-      };
-    }
-
-    const productSkuCounts = getProductSkuStockCounts(items as ProductInventoryRow[]);
-
-    return {
-      skuKindCount: countUniqueSkus(items),
-      totalQuantity,
-      lowStockCount: 0,
-      outOfStockCount: 0,
-      inStockSkuCount: productSkuCounts.inStockSkuCount,
-      outOfStockSkuCount: productSkuCounts.outOfStockSkuCount
-    };
-  }, [items, mode]);
-
-  const paginatedItems = useMemo(
-    () => paginateItems(items, page),
-    [items, page]
-  );
 
   const buildFilters = (
     overrides: Partial<CurrentInventoryFilters> = {}
@@ -241,27 +179,35 @@ export function CurrentInventoryPage({ mode, embedded = false }: CurrentInventor
   });
 
   const loadInventory = async (
-    filters: CurrentInventoryFilters = buildFilters()
+    filters: CurrentInventoryFilters = buildFilters(),
+    targetPage = 1
   ) => {
     try {
       setLoading(true);
       setErrorMessage("");
-      setPage(1);
 
-      const [inventoryData, warehouseData, brandData] = await Promise.all([
-        mode === "materials"
-          ? getMaterialInventory(filters)
-          : getProductInventory(filters),
+      const [inventoryPage, warehouseData, brandData] = await Promise.all([
+        getCurrentInventoryPage({
+          mode,
+          page: targetPage,
+          pageSize: DEFAULT_PAGE_SIZE,
+          filters
+        }),
         getWarehousesForFilter(),
         mode === "products" ? getBrandOptions() : Promise.resolve([])
       ]);
 
-      setItems(inventoryData);
+      setItems(inventoryPage.rows);
+      setTotal(inventoryPage.total);
+      setSummary(inventoryPage.summary);
+      setPage(inventoryPage.page);
       setWarehouses(warehouseData);
       setBrands(brandData);
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setItems([]);
+      setTotal(0);
+      setSummary(emptySummary);
     } finally {
       setLoading(false);
     }
@@ -277,7 +223,7 @@ export function CurrentInventoryPage({ mode, embedded = false }: CurrentInventor
 
   const submitFilters = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    loadInventory();
+    loadInventory(buildFilters(), 1);
   };
 
   const resetFilters = () => {
@@ -292,11 +238,11 @@ export function CurrentInventoryPage({ mode, embedded = false }: CurrentInventor
     setBrandId("all");
     setSkuKeyword("");
     setStockStatus("all");
-    loadInventory(nextFilters);
+    loadInventory(nextFilters, 1);
   };
 
   const refreshInventory = () => {
-    loadInventory();
+    loadInventory(buildFilters(), page);
   };
 
   return (
@@ -495,7 +441,7 @@ export function CurrentInventoryPage({ mode, embedded = false }: CurrentInventor
               </thead>
               <tbody>
                 {mode === "materials"
-                  ? (paginatedItems as MaterialInventoryRow[]).map((item) => (
+                  ? (items as MaterialInventoryRow[]).map((item) => (
                       <tr key={item.id}>
                         <td>{getItemCode(item)}</td>
                         <td>{getItemName(item)}</td>
@@ -555,7 +501,7 @@ export function CurrentInventoryPage({ mode, embedded = false }: CurrentInventor
                         </td>
                       </tr>
                     ))
-                  : (paginatedItems as ProductInventoryRow[]).map((item) => (
+                  : (items as ProductInventoryRow[]).map((item) => (
                       <tr key={item.id}>
                         <td>{getItemCode(item)}</td>
                         <td>{getItemName(item)}</td>
@@ -618,8 +564,8 @@ export function CurrentInventoryPage({ mode, embedded = false }: CurrentInventor
           <Pagination
             page={page}
             pageSize={DEFAULT_PAGE_SIZE}
-            total={items.length}
-            onPageChange={setPage}
+            total={total}
+            onPageChange={(nextPage) => loadInventory(buildFilters(), nextPage)}
           />
         ) : null}
       </section>

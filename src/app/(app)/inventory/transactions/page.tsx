@@ -1,21 +1,22 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Modal } from "@/components/Modal";
 import { Pagination } from "@/components/Pagination";
 import { getBrandOptions, type BrandRow } from "@/lib/api/brands";
 import { getBrandCodeName } from "@/lib/brand-utils";
 import {
-  getInventoryTransactions,
+  getInventoryTransactionsPage,
   getWarehousesForFilter,
   type InventoryTransactionFilters,
   type InventoryTransactionRelatedOrderType,
   type InventoryTransactionRow,
+  type InventoryTransactionSummary,
   type InventoryTransactionType,
   type InventoryTransactionTypeFilter,
   type InventoryTransactionWarehouse
 } from "@/lib/api/inventory";
-import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
+import { DEFAULT_PAGE_SIZE } from "@/lib/utils/pagination";
 
 const transactionTypeOptions: Array<{
   value: InventoryTransactionTypeFilter;
@@ -51,6 +52,14 @@ const relatedOrderTypeLabels: Record<
   purchase_order: "采购单",
   production_order: "生产任务",
   fba_replenishment_request: "FBA 备货单"
+};
+
+const emptySummary: InventoryTransactionSummary = {
+  material_in: 0,
+  material_out: 0,
+  product_in: 0,
+  product_out: 0,
+  adjustment: 0
 };
 
 function getErrorMessage(error: unknown) {
@@ -190,29 +199,11 @@ export default function InventoryTransactionsPage() {
   const [selectedTransaction, setSelectedTransaction] =
     useState<InventoryTransactionRow | null>(null);
   const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [summary, setSummary] =
+    useState<InventoryTransactionSummary>(emptySummary);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
-
-  const summary = useMemo(() => {
-    const counts: Record<InventoryTransactionType, number> = {
-      material_in: 0,
-      material_out: 0,
-      product_in: 0,
-      product_out: 0,
-      adjustment: 0
-    };
-
-    for (const transaction of transactions) {
-      counts[transaction.transaction_type] += 1;
-    }
-
-    return counts;
-  }, [transactions]);
-
-  const paginatedTransactions = useMemo(
-    () => paginateItems(transactions, page),
-    [page, transactions]
-  );
 
   const loadTransactions = async (
     filters: InventoryTransactionFilters = {
@@ -222,7 +213,8 @@ export default function InventoryTransactionsPage() {
       skuKeyword,
       startDate,
       endDate
-    }
+    },
+    targetPage = 1
   ) => {
     if (
       isEndDateBeforeStartDate(filters.startDate ?? "", filters.endDate ?? "")
@@ -235,20 +227,28 @@ export default function InventoryTransactionsPage() {
     try {
       setLoading(true);
       setErrorMessage("");
-      setPage(1);
 
-      const [transactionData, warehouseData, brandData] = await Promise.all([
-        getInventoryTransactions(filters),
+      const [transactionPage, warehouseData, brandData] = await Promise.all([
+        getInventoryTransactionsPage({
+          page: targetPage,
+          pageSize: DEFAULT_PAGE_SIZE,
+          filters
+        }),
         getWarehousesForFilter(),
         getBrandOptions()
       ]);
 
-      setTransactions(transactionData);
+      setTransactions(transactionPage.rows);
+      setTotal(transactionPage.total);
+      setSummary(transactionPage.summary);
+      setPage(transactionPage.page);
       setWarehouses(warehouseData);
       setBrands(brandData);
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setTransactions([]);
+      setTotal(0);
+      setSummary(emptySummary);
       setBrands([]);
     } finally {
       setLoading(false);
@@ -276,12 +276,12 @@ export default function InventoryTransactionsPage() {
       setSkuKeyword(initialSkuKeyword);
     }
 
-    loadTransactions(initialFilters);
+    loadTransactions(initialFilters, 1);
   }, []);
 
   const submitFilters = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    loadTransactions();
+    loadTransactions(undefined, 1);
   };
 
   const resetFilters = () => {
@@ -300,7 +300,7 @@ export default function InventoryTransactionsPage() {
     setSkuKeyword("");
     setStartDate("");
     setEndDate("");
-    loadTransactions(nextFilters);
+    loadTransactions(nextFilters, 1);
   };
 
   return (
@@ -431,7 +431,7 @@ export default function InventoryTransactionsPage() {
             </button>
             <button
               type="button"
-              onClick={() => loadTransactions()}
+              onClick={() => loadTransactions(undefined, page)}
               disabled={loading}
             >
               {loading ? "刷新中..." : "刷新"}
@@ -467,7 +467,7 @@ export default function InventoryTransactionsPage() {
                 </tr>
               </thead>
               <tbody>
-                {paginatedTransactions.map((transaction) => (
+                {transactions.map((transaction) => (
                   <tr key={transaction.id}>
                     <td>{formatDateTime(transaction.occurred_at)}</td>
                     <td>
@@ -526,8 +526,20 @@ export default function InventoryTransactionsPage() {
           <Pagination
             page={page}
             pageSize={DEFAULT_PAGE_SIZE}
-            total={transactions.length}
-            onPageChange={setPage}
+            total={total}
+            onPageChange={(nextPage) =>
+              loadTransactions(
+                {
+                  transactionType,
+                  warehouseId,
+                  brandId,
+                  skuKeyword,
+                  startDate,
+                  endDate
+                },
+                nextPage
+              )
+            }
           />
         ) : null}
       </section>

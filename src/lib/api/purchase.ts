@@ -20,7 +20,6 @@ export type PurchaseSupplierSummary = {
 export type ShortageMaterialRequirement = {
   id: string;
   production_order_id: string;
-  material_sku_id: string | null;
   material_id: string | null;
   required_quantity: number;
   available_quantity: number;
@@ -36,15 +35,6 @@ export type ShortageMaterialRequirement = {
       sku_code: string;
       sku_name: string;
     } | null;
-  } | null;
-  material_sku: {
-    id: string;
-    sku_code: string;
-    sku_name: string;
-    unit: string;
-    specs: string | null;
-    default_supplier_id: string | null;
-    default_supplier: PurchaseSupplierSummary | null;
   } | null;
   material: {
     id: string;
@@ -103,7 +93,6 @@ export type PurchaseMaterialOption = {
   specs: string | null;
   default_supplier_id: string | null;
   default_supplier: PurchaseSupplierSummary | null;
-  legacy_sku_id: string | null;
 };
 
 export type PurchaseProfileOption = {
@@ -203,7 +192,7 @@ type MaybeRelation<T> = T | T[] | null;
 
 type RawShortageMaterialRequirement = Omit<
   ShortageMaterialRequirement,
-  "production_order" | "material_sku" | "material"
+  "production_order" | "material"
 > & {
   production_order: MaybeRelation<
     Omit<NonNullable<ShortageMaterialRequirement["production_order"]>, "finished_sku"> & {
@@ -212,11 +201,6 @@ type RawShortageMaterialRequirement = Omit<
           NonNullable<ShortageMaterialRequirement["production_order"]>["finished_sku"]
         >
       >;
-    }
-  >;
-  material_sku: MaybeRelation<
-    Omit<NonNullable<ShortageMaterialRequirement["material_sku"]>, "default_supplier"> & {
-      default_supplier: MaybeRelation<PurchaseSupplierSummary>;
     }
   >;
   material: MaybeRelation<
@@ -228,7 +212,7 @@ type RawShortageMaterialRequirement = Omit<
 
 type RawPurchaseMaterialOption = Omit<
   PurchaseMaterialOption,
-  "default_supplier" | "legacy_sku_id"
+  "default_supplier"
 > & {
   default_supplier: MaybeRelation<PurchaseSupplierSummary>;
 };
@@ -342,7 +326,6 @@ function normalizeShortageRequirement(
   row: RawShortageMaterialRequirement
 ): ShortageMaterialRequirement {
   const productionOrder = singleRelation(row.production_order);
-  const materialSku = singleRelation(row.material_sku);
   const material = singleRelation(row.material);
 
   return {
@@ -351,12 +334,6 @@ function normalizeShortageRequirement(
       ? {
           ...productionOrder,
           finished_sku: singleRelation(productionOrder.finished_sku)
-        }
-      : null,
-    material_sku: materialSku
-      ? {
-          ...materialSku,
-          default_supplier: singleRelation(materialSku.default_supplier)
         }
       : null,
     material: material
@@ -368,14 +345,10 @@ function normalizeShortageRequirement(
   };
 }
 
-function normalizePurchaseMaterialOption(
-  row: RawPurchaseMaterialOption,
-  legacySkuId: string | null
-): PurchaseMaterialOption {
+function normalizePurchaseMaterialOption(row: RawPurchaseMaterialOption): PurchaseMaterialOption {
   return {
     ...row,
-    default_supplier: singleRelation(row.default_supplier),
-    legacy_sku_id: legacySkuId
+    default_supplier: singleRelation(row.default_supplier)
   };
 }
 
@@ -491,7 +464,6 @@ export async function getShortageMaterialRequirements(): Promise<
         `
           id,
           production_order_id,
-          material_sku_id,
           material_id,
           required_quantity,
           available_quantity,
@@ -516,22 +488,6 @@ export async function getShortageMaterialRequirements(): Promise<
             specs,
             default_supplier_id,
             default_supplier:suppliers!materials_default_supplier_id_fkey (
-              id,
-              supplier_code,
-              name,
-              contact_name,
-              phone,
-              status
-            )
-          ),
-          material_sku:skus!material_requirements_material_sku_id_fkey (
-            id,
-            sku_code,
-            sku_name,
-            unit,
-            specs,
-            default_supplier_id,
-            default_supplier:suppliers!skus_default_supplier_id_fkey (
               id,
               supplier_code,
               name,
@@ -622,8 +578,7 @@ export async function getPurchaseMaterialOptions(): Promise<
     "读取辅料列表"
   );
 
-  const materialCodes = data.map((material) => material.material_code);
-  return data.map((material) => normalizePurchaseMaterialOption(material, null));
+  return data.map((material) => normalizePurchaseMaterialOption(material));
 }
 
 export async function getPurchaseProfileOptions(): Promise<PurchaseProfileOption[]> {
