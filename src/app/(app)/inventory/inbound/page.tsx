@@ -190,7 +190,7 @@ export default function InventoryInboundPage() {
     projectedCompletedQuantity - Number(fbaRequestedQuantity)
   );
 
-  const loadPageData = async () => {
+  const loadPageData = async (preferredOtherWarehouseId = "") => {
     try {
       setLoading(true);
       setErrorMessage("");
@@ -225,7 +225,9 @@ export default function InventoryInboundPage() {
         current || getDefaultWarehouseId(warehouseData, "finished_product")
       );
       setOtherWarehouseId((current) =>
-        current || getDefaultWarehouseId(warehouseData, "finished_product")
+        current ||
+        preferredOtherWarehouseId ||
+        getDefaultWarehouseId(warehouseData, "finished_product")
       );
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
@@ -239,8 +241,44 @@ export default function InventoryInboundPage() {
   };
 
   useEffect(() => {
-    loadPageData();
+    const params = new URLSearchParams(window.location.search);
+    const initialTab = params.get("tab");
+    const initialWarehouseId = params.get("warehouseId") ?? "";
+    const initialSkuKeyword = params.get("skuKeyword") ?? "";
+
+    if (initialTab === "other") {
+      setActiveTab("other");
+      setOtherInboundOpen(true);
+    }
+
+    if (initialWarehouseId) {
+      setOtherWarehouseId(initialWarehouseId);
+    }
+
+    if (initialSkuKeyword) {
+      setOtherSkuKeyword(initialSkuKeyword);
+    }
+
+    loadPageData(initialWarehouseId);
   }, []);
+
+  useEffect(() => {
+    const keyword = otherSkuKeyword.trim().toLowerCase();
+
+    if (!keyword || otherSkuId) {
+      return;
+    }
+
+    const matchedSku = filteredSkuOptions.find(
+      (sku) =>
+        sku.sku_code.toLowerCase() === keyword ||
+        sku.sku_name.toLowerCase() === keyword
+    ) ?? filteredSkuOptions[0];
+
+    if (matchedSku) {
+      setOtherSkuId(matchedSku.id);
+    }
+  }, [filteredSkuOptions, otherSkuId, otherSkuKeyword]);
 
   useEffect(() => {
     if (!selectedPurchaseOrder) {
@@ -376,6 +414,12 @@ export default function InventoryInboundPage() {
     setSuccessMessage("");
   };
 
+  const openOtherInboundImport = () => {
+    setActiveTab("other");
+    setOtherInboundOpen(false);
+    setOtherImportOpen(true);
+  };
+
   const submitOtherInbound = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -467,7 +511,7 @@ export default function InventoryInboundPage() {
           <button
             className={activeTab === "other" ? "tabButton active" : "tabButton"}
             type="button"
-            onClick={() => setActiveTab("other")}
+            onClick={openOtherInbound}
           >
             其他入库
           </button>
@@ -485,7 +529,7 @@ export default function InventoryInboundPage() {
                 <h3>待入库采购单</h3>
               </div>
               <div className="rowActions">
-                <button type="button" onClick={loadPageData} disabled={loading}>
+                <button type="button" onClick={() => loadPageData()} disabled={loading}>
                   刷新
                 </button>
               </div>
@@ -560,7 +604,7 @@ export default function InventoryInboundPage() {
                 <h3>待入库生产任务</h3>
               </div>
               <div className="rowActions">
-                <button type="button" onClick={loadPageData} disabled={loading}>
+                <button type="button" onClick={() => loadPageData()} disabled={loading}>
                   刷新
                 </button>
               </div>
@@ -633,21 +677,25 @@ export default function InventoryInboundPage() {
             <div className="sectionHeader">
               <div>
                 <p className="eyebrow">非采购 / 非生产</p>
-                <h3>批量导入初始库存 / 其他入库</h3>
+                <h3>其他入库单</h3>
               </div>
               <div className="rowActions">
-                <button type="button" onClick={openOtherInbound} disabled={submitting}>
-                  其他入库
-                </button>
                 <button
                   className="primaryButton"
                   type="button"
-                  onClick={() => setOtherImportOpen(true)}
+                  onClick={openOtherInbound}
                   disabled={submitting}
                 >
-                  批量导入
+                  新建其他入库单
                 </button>
-                <button type="button" onClick={loadPageData} disabled={loading}>
+                <button
+                  type="button"
+                  onClick={openOtherInboundImport}
+                  disabled={submitting}
+                >
+                  批量上传
+                </button>
+                <button type="button" onClick={() => loadPageData()} disabled={loading}>
                   刷新
                 </button>
               </div>
@@ -940,7 +988,7 @@ export default function InventoryInboundPage() {
         <Modal
           open={otherInboundOpen}
           eyebrow="其他入库"
-          title="新增其他入库"
+          title="新建其他入库单"
           maxWidth="xl"
           onClose={() => {
             if (!submitting) {
@@ -1028,6 +1076,20 @@ export default function InventoryInboundPage() {
                 disabled={submitting}
               />
             </label>
+
+            <div className="fullField adjustmentPreviewBox">
+              <span>批量上传</span>
+              <strong>适合期初库存、盘点补录、退货入库等多 SKU 场景</strong>
+              <div className="rowActions">
+                <button
+                  type="button"
+                  onClick={openOtherInboundImport}
+                  disabled={submitting}
+                >
+                  打开批量上传
+                </button>
+              </div>
+            </div>
 
             <div className="modalFooter fullField">
               <span>提交后会增加库存，并写入库存流水。</span>

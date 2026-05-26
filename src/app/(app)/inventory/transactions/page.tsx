@@ -74,6 +74,21 @@ function formatQuantity(value: number | null | undefined) {
 function formatSignedQuantity(transaction: InventoryTransactionRow) {
   const quantity = Number(transaction.quantity);
 
+  if (transaction.transaction_type === "adjustment") {
+    const match = transaction.notes?.match(/调整差异：\s*([+-]?\d+(?:\.\d+)?)/);
+    const signedQuantity = match?.[1] ? Number(match[1]) : quantity;
+
+    if (signedQuantity > 0) {
+      return `+${formatQuantity(signedQuantity)}`;
+    }
+
+    if (signedQuantity < 0) {
+      return `-${formatQuantity(Math.abs(signedQuantity))}`;
+    }
+
+    return formatQuantity(signedQuantity);
+  }
+
   if (
     transaction.transaction_type === "material_out" ||
     transaction.transaction_type === "product_out"
@@ -117,6 +132,17 @@ function getSkuTypeLabel(value: string | null | undefined) {
   }
 
   return skuTypeLabels[value] ?? value;
+}
+
+function getRelatedOrderLabel(transaction: InventoryTransactionRow) {
+  const typeLabel = getRelatedOrderTypeLabel(transaction.related_order_type);
+  const orderNo = transaction.related_order_no ?? "-";
+
+  if (typeLabel === "-" && orderNo === "-") {
+    return "-";
+  }
+
+  return `${typeLabel} / ${orderNo}`;
 }
 
 function isEndDateBeforeStartDate(startDate: string, endDate: string) {
@@ -402,20 +428,13 @@ export default function InventoryTransactionsPage() {
             <table className="dataTable transactionTable">
               <thead>
                 <tr>
-                  <th>流水单号</th>
-                  <th>流水类型</th>
-                  <th>SKU 编码</th>
-                  <th>SKU 名称</th>
-                  <th>SKU 类型</th>
-                  <th>产品名称</th>
-                  <th>品牌</th>
-                  <th>仓库</th>
-                  <th>数量</th>
-                  <th>单位</th>
-                  <th>关联单据类型</th>
-                  <th>关联单据号</th>
-                  <th>操作人</th>
                   <th>操作时间</th>
+                  <th>流水类型</th>
+                  <th>SKU</th>
+                  <th>产品/品牌</th>
+                  <th>仓库</th>
+                  <th>数量变化</th>
+                  <th>关联单据</th>
                   <th>备注</th>
                   <th>操作</th>
                 </tr>
@@ -423,7 +442,7 @@ export default function InventoryTransactionsPage() {
               <tbody>
                 {paginatedTransactions.map((transaction) => (
                   <tr key={transaction.id}>
-                    <td>{transaction.transaction_no}</td>
+                    <td>{formatDateTime(transaction.occurred_at)}</td>
                     <td>
                       <span
                         className={`tablePill transaction-type-${transaction.transaction_type}`}
@@ -431,11 +450,14 @@ export default function InventoryTransactionsPage() {
                         {transactionTypeLabels[transaction.transaction_type]}
                       </span>
                     </td>
-                    <td>{transaction.sku?.sku_code ?? "-"}</td>
-                    <td>{transaction.sku?.sku_name ?? "-"}</td>
-                    <td>{getSkuTypeLabel(transaction.sku?.sku_type)}</td>
-                    <td>{transaction.sku?.product?.name ?? "-"}</td>
-                    <td>{getBrandCodeName(transaction.sku?.product?.brand)}</td>
+                    <td>
+                      <strong>{transaction.sku?.sku_code ?? "-"}</strong>
+                      <span>{transaction.sku?.sku_name ?? "-"}</span>
+                    </td>
+                    <td>
+                      <strong>{transaction.sku?.product?.name ?? "-"}</strong>
+                      <span>{getBrandCodeName(transaction.sku?.product?.brand)}</span>
+                    </td>
                     <td>
                       <strong>{transaction.warehouse?.name ?? "-"}</strong>
                       <span>{transaction.warehouse?.warehouse_code ?? "-"}</span>
@@ -443,18 +465,7 @@ export default function InventoryTransactionsPage() {
                     <td className="quantityCell">
                       {formatSignedQuantity(transaction)}
                     </td>
-                    <td>{transaction.sku?.unit ?? "-"}</td>
-                    <td>
-                      {getRelatedOrderTypeLabel(transaction.related_order_type)}
-                    </td>
-                    <td>{transaction.related_order_no ?? "-"}</td>
-                    <td>
-                      <strong>{transaction.operator?.full_name ?? "-"}</strong>
-                      {transaction.operator?.email ? (
-                        <span>{transaction.operator.email}</span>
-                      ) : null}
-                    </td>
-                    <td>{formatDateTime(transaction.occurred_at)}</td>
+                    <td>{getRelatedOrderLabel(transaction)}</td>
                     <td className="notesCell">{transaction.notes ?? "-"}</td>
                     <td>
                       <button
@@ -491,6 +502,10 @@ export default function InventoryTransactionsPage() {
         >
           <div className="detailGrid">
             <div className="detailItem">
+              <span>流水单号</span>
+              <strong>{selectedTransaction.transaction_no}</strong>
+            </div>
+            <div className="detailItem">
               <span>流水类型</span>
               <strong>
                 {transactionTypeLabels[selectedTransaction.transaction_type]}
@@ -502,6 +517,10 @@ export default function InventoryTransactionsPage() {
                 {selectedTransaction.sku?.sku_code ?? "-"} /{" "}
                 {selectedTransaction.sku?.sku_name ?? "-"}
               </strong>
+            </div>
+            <div className="detailItem">
+              <span>产品名称</span>
+              <strong>{selectedTransaction.sku?.product?.name ?? "-"}</strong>
             </div>
             <div className="detailItem">
               <span>SKU 类型</span>
@@ -526,6 +545,10 @@ export default function InventoryTransactionsPage() {
                   ? ` ${selectedTransaction.sku.unit}`
                   : ""}
               </strong>
+            </div>
+            <div className="detailItem">
+              <span>单位</span>
+              <strong>{selectedTransaction.sku?.unit ?? "-"}</strong>
             </div>
             <div className="detailItem">
               <span>关联单据</span>

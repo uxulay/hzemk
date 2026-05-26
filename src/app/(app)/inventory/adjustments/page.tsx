@@ -1,16 +1,21 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { Modal } from "@/components/Modal";
 import {
   adjustInventoryByWarehouseSku,
+  bulkAdjustInventory,
   getInventoryForAdjustment,
   getRecentAdjustmentTransactions,
   getSkuOptionsForInventory,
   getWarehousesForFilter,
+  inventoryAdjustmentImportFields,
+  validateInventoryAdjustmentImportRows,
   type InventorySkuOption,
   type InventoryAdjustmentMode,
   type InventoryAdjustmentReason,
+  type InventoryAdjustmentValidationRow,
   type InventoryAdjustmentRow,
   type InventoryAdjustmentSkuTypeFilter,
   type InventoryTransactionRow,
@@ -39,6 +44,7 @@ const adjustmentReasonOptions: Array<{
   value: InventoryAdjustmentReason;
   label: string;
 }> = [
+  { value: "initial_stock", label: "期初库存" },
   { value: "stocktake_gain", label: "盘盈" },
   { value: "stocktake_loss", label: "盘亏" },
   { value: "damage_loss", label: "破损报废" },
@@ -169,6 +175,8 @@ export default function InventoryAdjustmentsPage() {
   const [newAdjustmentWarehouseId, setNewAdjustmentWarehouseId] = useState("");
   const [newAdjustmentSkuId, setNewAdjustmentSkuId] = useState("");
   const [newAdjustmentSkuKeyword, setNewAdjustmentSkuKeyword] = useState("");
+  const [adjustmentPickerOpen, setAdjustmentPickerOpen] = useState(false);
+  const [adjustmentImportOpen, setAdjustmentImportOpen] = useState(false);
   const [selectedItem, setSelectedItem] =
     useState<InventoryAdjustmentRow | null>(null);
   const [adjustmentMode, setAdjustmentMode] =
@@ -300,8 +308,44 @@ export default function InventoryAdjustmentsPage() {
   };
 
   useEffect(() => {
-    loadPageData();
+    const params = new URLSearchParams(window.location.search);
+    const initialWarehouseId = params.get("warehouseId") ?? "";
+    const initialSkuKeyword = params.get("skuKeyword") ?? "";
+
+    if (initialWarehouseId) {
+      setWarehouseId(initialWarehouseId);
+      setNewAdjustmentWarehouseId(initialWarehouseId);
+    }
+
+    if (initialSkuKeyword) {
+      setSkuKeyword(initialSkuKeyword);
+      setNewAdjustmentSkuKeyword(initialSkuKeyword);
+    }
+
+    loadPageData({
+      warehouseId: initialWarehouseId,
+      skuKeyword: initialSkuKeyword,
+      skuType: "all"
+    });
   }, []);
+
+  useEffect(() => {
+    const keyword = newAdjustmentSkuKeyword.trim().toLowerCase();
+
+    if (!keyword || newAdjustmentSkuId) {
+      return;
+    }
+
+    const matchedSku = filteredSkuOptions.find(
+      (sku) =>
+        sku.sku_code.toLowerCase() === keyword ||
+        sku.sku_name.toLowerCase() === keyword
+    ) ?? filteredSkuOptions[0];
+
+    if (matchedSku) {
+      setNewAdjustmentSkuId(matchedSku.id);
+    }
+  }, [filteredSkuOptions, newAdjustmentSkuId, newAdjustmentSkuKeyword]);
 
   const submitFilters = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -321,12 +365,34 @@ export default function InventoryAdjustmentsPage() {
     loadPageData(nextFilters);
   };
 
-  const openAdjustmentForm = (item: InventoryAdjustmentRow) => {
+  const openAdjustmentForm = (
+    item: InventoryAdjustmentRow,
+    defaults: Partial<{
+      adjustmentMode: InventoryAdjustmentMode;
+      adjustmentReason: InventoryAdjustmentReason;
+    }> = {}
+  ) => {
     setSelectedItem(item);
-    setAdjustmentMode("increase");
+    setAdjustmentMode(defaults.adjustmentMode ?? "set_to");
     setAdjustmentQuantity("");
     setTargetQuantity(String(item.quantity_on_hand));
-    setAdjustmentReason("stocktake_gain");
+    setAdjustmentReason(defaults.adjustmentReason ?? "stocktake_gain");
+    setAdjustmentNotes("");
+    setErrorMessage("");
+    setSuccessMessage("");
+  };
+
+  const openAdjustmentPicker = () => {
+    setAdjustmentPickerOpen(true);
+    setNewAdjustmentWarehouseId(
+      newAdjustmentWarehouseId || warehouseId || warehouses[0]?.id || ""
+    );
+    setNewAdjustmentSkuKeyword(skuKeyword);
+    setNewAdjustmentSkuId("");
+    setAdjustmentMode("set_to");
+    setAdjustmentReason("initial_stock");
+    setAdjustmentQuantity("");
+    setTargetQuantity("");
     setAdjustmentNotes("");
     setErrorMessage("");
     setSuccessMessage("");
@@ -349,7 +415,11 @@ export default function InventoryAdjustmentsPage() {
     );
 
     if (existingItem) {
-      openAdjustmentForm(existingItem);
+      openAdjustmentForm(existingItem, {
+        adjustmentMode,
+        adjustmentReason
+      });
+      setAdjustmentPickerOpen(false);
       return;
     }
 
@@ -374,13 +444,14 @@ export default function InventoryAdjustmentsPage() {
         product: sku.product
       }
     });
-    setAdjustmentMode("increase");
+    setAdjustmentMode(adjustmentMode);
     setAdjustmentQuantity("");
     setTargetQuantity("0");
-    setAdjustmentReason("stocktake_gain");
+    setAdjustmentReason(adjustmentReason);
     setAdjustmentNotes("");
     setErrorMessage("");
     setSuccessMessage("");
+    setAdjustmentPickerOpen(false);
   };
 
   const closeAdjustmentForm = () => {
@@ -434,6 +505,21 @@ export default function InventoryAdjustmentsPage() {
     }
   };
 
+  const importAdjustmentRows = async (
+    rows: InventoryAdjustmentValidationRow[]
+  ) => {
+    const result = await bulkAdjustInventory(
+      rows.flatMap((row) => (row.data ? [row.data] : []))
+    );
+
+    await loadPageData();
+    setSuccessMessage(
+      `批量库存调整完成：成功 ${result.successCount} 条，失败 ${result.failedCount} 条。`
+    );
+
+    return result;
+  };
+
   return (
     <main className="pageShell">
       <section className="pageHero">
@@ -441,7 +527,7 @@ export default function InventoryAdjustmentsPage() {
           <p className="eyebrow">仓库管理</p>
           <h2>库存调整</h2>
           <p>
-            处理盘点差异、破损报废、录入错误修正和样品领用等非正常库存变动。
+            主要用于系统上线期初库存录入，以及后续盘点时把账面库存修正到真实数量。
           </p>
         </div>
         <span className="statusPill">Supabase 数据</span>
@@ -465,9 +551,24 @@ export default function InventoryAdjustmentsPage() {
         <div className="sectionHeader">
           <div>
             <p className="eyebrow">当前库存</p>
-            <h3>选择要调整的 SKU</h3>
+            <h3>库存调整工作台</h3>
           </div>
           <div className="rowActions">
+            <button
+              className="primaryButton"
+              type="button"
+              onClick={openAdjustmentPicker}
+              disabled={loading}
+            >
+              新建调整单
+            </button>
+            <button
+              type="button"
+              onClick={() => setAdjustmentImportOpen(true)}
+              disabled={loading}
+            >
+              批量上传
+            </button>
             <button type="button" onClick={() => loadPageData()} disabled={loading}>
               {loading ? "正在刷新..." : "刷新列表"}
             </button>
@@ -533,65 +634,18 @@ export default function InventoryAdjustmentsPage() {
           </div>
         </form>
 
-        <div className="dataForm adjustmentForm">
-          <label>
-            调整仓库
-            <select
-              value={newAdjustmentWarehouseId}
-              onChange={(event) =>
-                setNewAdjustmentWarehouseId(event.target.value)
-              }
-              disabled={loading}
-            >
-              <option value="">请选择仓库</option>
-              {warehouses.map((warehouse) => (
-                <option key={warehouse.id} value={warehouse.id}>
-                  {warehouse.warehouse_code} / {warehouse.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label>
-            搜索 SKU
-            <input
-              value={newAdjustmentSkuKeyword}
-              onChange={(event) =>
-                setNewAdjustmentSkuKeyword(event.target.value)
-              }
-              placeholder="输入 SKU 编码或名称"
-              disabled={loading}
-            />
-          </label>
-
-          <label>
-            调整 SKU
-            <select
-              value={newAdjustmentSkuId}
-              onChange={(event) => setNewAdjustmentSkuId(event.target.value)}
-              disabled={loading}
-            >
-              <option value="">请选择 SKU</option>
-              {filteredSkuOptions.map((sku) => (
-                <option key={sku.id} value={sku.id}>
-                  {sku.sku_code} / {sku.sku_name} / {sku.unit}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <div className="rowActions fullField">
-            <button
-              className="primaryButton"
-              type="button"
-              onClick={openWarehouseSkuAdjustmentForm}
-              disabled={loading || !newAdjustmentWarehouseId || !newAdjustmentSkuId}
-            >
-              按仓库 + SKU 调整
-            </button>
-            <span className="fieldHint">
-              没有库存记录时按当前库存 0 处理，可增加库存或直接修正。
-            </span>
+        <div className="detailGrid">
+          <div className="detailItem">
+            <span>期初库存</span>
+            <strong>建议用“直接修正为指定库存”或批量上传</strong>
+          </div>
+          <div className="detailItem">
+            <span>盘点调整</span>
+            <strong>盘点后按真实数量修正，系统自动写调整流水</strong>
+          </div>
+          <div className="detailItem">
+            <span>批量规则</span>
+            <strong>上传后先预览校验，通过后才写入数据库</strong>
           </div>
         </div>
 
@@ -719,11 +773,164 @@ export default function InventoryAdjustmentsPage() {
         ) : null}
       </section>
 
+      {adjustmentPickerOpen ? (
+        <Modal
+          open={adjustmentPickerOpen}
+          eyebrow="库存调整"
+          title="新建库存调整单"
+          maxWidth="xl"
+          onClose={() => setAdjustmentPickerOpen(false)}
+        >
+          <div className="detailGrid">
+            <div className="detailItem">
+              <span>适用场景</span>
+              <strong>期初库存、月度盘点、数据修正</strong>
+            </div>
+            <div className="detailItem">
+              <span>推荐方式</span>
+              <strong>按盘点后的真实数量直接修正</strong>
+            </div>
+            <div className="detailItem">
+              <span>流水记录</span>
+              <strong>提交后自动写入 adjustment 库存流水</strong>
+            </div>
+          </div>
+
+          <div className="dataForm adjustmentForm">
+            <label>
+              调整仓库
+              <select
+                value={newAdjustmentWarehouseId}
+                onChange={(event) =>
+                  setNewAdjustmentWarehouseId(event.target.value)
+                }
+                disabled={loading}
+              >
+                <option value="">请选择仓库</option>
+                {warehouses.map((warehouse) => (
+                  <option key={warehouse.id} value={warehouse.id}>
+                    {warehouse.warehouse_code} / {warehouse.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              SKU 搜索
+              <input
+                value={newAdjustmentSkuKeyword}
+                onChange={(event) => {
+                  setNewAdjustmentSkuKeyword(event.target.value);
+                  setNewAdjustmentSkuId("");
+                }}
+                placeholder="输入 SKU 编码、名称或产品名称"
+                disabled={loading}
+              />
+            </label>
+
+            <label>
+              调整 SKU
+              <select
+                value={newAdjustmentSkuId}
+                onChange={(event) => setNewAdjustmentSkuId(event.target.value)}
+                disabled={loading}
+              >
+                <option value="">请选择 SKU</option>
+                {filteredSkuOptions.map((sku) => (
+                  <option key={sku.id} value={sku.id}>
+                    {sku.sku_code} / {sku.sku_name} /{" "}
+                    {sku.product?.name ?? "无所属产品"} / {sku.unit}
+                  </option>
+                ))}
+              </select>
+              <span className="fieldHint">
+                当前匹配 {filteredSkuOptions.length} 个 SKU，可先输入编码或名称缩小范围。
+              </span>
+            </label>
+
+            <label>
+              调整方式
+              <select
+                value={adjustmentMode}
+                onChange={(event) =>
+                  setAdjustmentMode(event.target.value as InventoryAdjustmentMode)
+                }
+                disabled={loading}
+              >
+                {adjustmentModeOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              调整原因
+              <select
+                value={adjustmentReason}
+                onChange={(event) =>
+                  setAdjustmentReason(
+                    event.target.value as InventoryAdjustmentReason
+                  )
+                }
+                disabled={loading}
+              >
+                {adjustmentReasonOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="fullField adjustmentPreviewBox">
+              <span>批量上传</span>
+              <strong>期初库存和盘点结果有很多 SKU 时，建议直接上传 CSV。</strong>
+              <div className="rowActions">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAdjustmentPickerOpen(false);
+                    setAdjustmentImportOpen(true);
+                  }}
+                  disabled={loading}
+                >
+                  打开批量上传
+                </button>
+              </div>
+            </div>
+
+            <div className="modalFooter fullField">
+              <span>没有库存记录时按当前库存 0 处理。</span>
+              <div className="rowActions">
+                <button
+                  type="button"
+                  onClick={() => setAdjustmentPickerOpen(false)}
+                >
+                  取消
+                </button>
+                <button
+                  className="primaryButton"
+                  type="button"
+                  onClick={openWarehouseSkuAdjustmentForm}
+                  disabled={
+                    loading || !newAdjustmentWarehouseId || !newAdjustmentSkuId
+                  }
+                >
+                  下一步填写数量
+                </button>
+              </div>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
+
       {selectedItem ? (
         <Modal
           open={Boolean(selectedItem)}
           eyebrow="库存调整"
-          title={selectedItem.sku?.sku_code ?? "未命名 SKU"}
+          title={`库存调整单：${selectedItem.sku?.sku_code ?? "未命名 SKU"}`}
           maxWidth="xl"
           onClose={closeAdjustmentForm}
         >
@@ -890,9 +1097,59 @@ export default function InventoryAdjustmentsPage() {
                   </button>
                 </div>
               </div>
-            </form>
+          </form>
         </Modal>
       ) : null}
+
+      <BulkImportDialog
+        open={adjustmentImportOpen}
+        title="批量上传库存调整"
+        description="适合系统上线期初库存和盘点结果导入。上传后先预览和逐行校验，通过后才会更新当前库存并写入 adjustment 库存流水。"
+        templateFileName="inventory-adjustment-template.csv"
+        fields={inventoryAdjustmentImportFields}
+        sampleRows={[
+          {
+            仓库编码: "WH-FIN-001",
+            "SKU 编码": "SKU-001",
+            调整方式: "直接修正库存",
+            调整数量: "",
+            调整后库存: "100",
+            调整原因: "期初库存",
+            备注: "系统上线期初录入"
+          },
+          {
+            仓库编码: "WH-FIN-001",
+            "SKU 编码": "SKU-002",
+            调整方式: "增加库存",
+            调整数量: "5",
+            调整后库存: "",
+            调整原因: "盘盈",
+            备注: "月度盘点"
+          }
+        ]}
+        validateRows={validateInventoryAdjustmentImportRows}
+        onImport={importAdjustmentRows}
+        onClose={() => setAdjustmentImportOpen(false)}
+        renderPreviewSummary={(rows) => {
+          const validRows = rows.filter((row) => row.errors.length === 0);
+          const setToRows = validRows.filter(
+            (row) => row.data?.adjustmentMode === "set_to"
+          ).length;
+          const increaseRows = validRows.filter(
+            (row) => row.data?.adjustmentMode === "increase"
+          ).length;
+          const decreaseRows = validRows.filter(
+            (row) => row.data?.adjustmentMode === "decrease"
+          ).length;
+
+          return (
+            <div className="debugNotice">
+              预览通过 {validRows.length} 行：直接修正 {setToRows} 行，增加库存{" "}
+              {increaseRows} 行，减少库存 {decreaseRows} 行。
+            </div>
+          );
+        }}
+      />
     </main>
   );
 }

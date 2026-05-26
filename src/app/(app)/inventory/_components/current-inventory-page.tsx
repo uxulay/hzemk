@@ -24,6 +24,7 @@ type CurrentInventoryPageMode = "materials" | "products";
 
 type CurrentInventoryPageProps = {
   mode: CurrentInventoryPageMode;
+  embedded?: boolean;
 };
 
 const stockStatusOptions: Array<{
@@ -100,14 +101,33 @@ function getUnit(row: CurrentInventoryRow) {
   return row.sku?.unit ?? row.unit ?? "-";
 }
 
-function getTransactionsHref(row: CurrentInventoryRow) {
-  const keyword = row.sku?.sku_code ?? row.sku?.sku_name ?? "";
+function getAvailableQuantity(row: CurrentInventoryRow) {
+  return Number(row.quantity_on_hand) - Number(row.reserved_quantity ?? 0);
+}
 
-  if (!keyword) {
-    return "/inventory/transactions";
+function getInventoryActionHref(
+  row: CurrentInventoryRow,
+  path: "/inventory/transactions" | "/inventory/adjustments" | "/inventory/inbound" | "/inventory/fba-outbound",
+  tab?: "other"
+) {
+  const keyword = row.sku?.sku_code ?? row.sku?.sku_name ?? "";
+  const params = new URLSearchParams();
+
+  if (tab) {
+    params.set("tab", tab);
   }
 
-  return `/inventory/transactions?skuKeyword=${encodeURIComponent(keyword)}`;
+  if (keyword) {
+    params.set("skuKeyword", keyword);
+  }
+
+  if (row.warehouse_id) {
+    params.set("warehouseId", row.warehouse_id);
+  }
+
+  const queryString = params.toString();
+
+  return queryString ? `${path}?${queryString}` : path;
 }
 
 function countUniqueSkus(rows: CurrentInventoryRow[]) {
@@ -141,8 +161,9 @@ function getProductSkuStockCounts(rows: ProductInventoryRow[]) {
   };
 }
 
-export function CurrentInventoryPage({ mode }: CurrentInventoryPageProps) {
+export function CurrentInventoryPage({ mode, embedded = false }: CurrentInventoryPageProps) {
   const config = pageConfig[mode];
+  const Shell = embedded ? "section" : "main";
   const [items, setItems] = useState<CurrentInventoryRow[]>([]);
   const [warehouses, setWarehouses] = useState<CurrentInventoryWarehouse[]>([]);
   const [warehouseId, setWarehouseId] = useState("");
@@ -268,15 +289,17 @@ export function CurrentInventoryPage({ mode }: CurrentInventoryPageProps) {
   };
 
   return (
-    <main className="pageShell">
-      <section className="pageHero">
-        <div>
-          <p className="eyebrow">仓库管理</p>
-          <h2>{config.title}</h2>
-          <p>{config.description}</p>
-        </div>
-        <span className="statusPill">Supabase 数据</span>
-      </section>
+    <Shell className={embedded ? "embeddedInventoryPage" : "pageShell"}>
+      {!embedded ? (
+        <section className="pageHero">
+          <div>
+            <p className="eyebrow">仓库管理</p>
+            <h2>{config.title}</h2>
+            <p>{config.description}</p>
+          </div>
+          <span className="statusPill">Supabase 数据</span>
+        </section>
+      ) : null}
 
       {errorMessage ? (
         <div className="debugError">
@@ -436,13 +459,13 @@ export function CurrentInventoryPage({ mode }: CurrentInventoryPageProps) {
                   <tr>
                     <th>原材料编码</th>
                     <th>原材料名称</th>
-                    <th>所属产品</th>
+                    <th>品牌/所属产品</th>
                     <th>仓库</th>
-                    <th>当前库存数量</th>
-                    <th>单位</th>
+                    <th>当前库存</th>
+                    <th>可用库存</th>
+                    <th>占用库存</th>
                     <th>安全库存</th>
                     <th>库存状态</th>
-                    <th>最后更新时间</th>
                     <th>操作</th>
                   </tr>
                 ) : (
@@ -452,9 +475,9 @@ export function CurrentInventoryPage({ mode }: CurrentInventoryPageProps) {
                     <th>产品名称</th>
                     <th>品牌</th>
                     <th>仓库</th>
-                    <th>当前库存数量</th>
-                    <th>单位</th>
-                    <th>最后更新时间</th>
+                    <th>当前库存</th>
+                    <th>可用库存</th>
+                    <th>占用库存</th>
                     <th>操作</th>
                   </tr>
                 )}
@@ -465,16 +488,24 @@ export function CurrentInventoryPage({ mode }: CurrentInventoryPageProps) {
                       <tr key={item.id}>
                         <td>{item.sku?.sku_code ?? "-"}</td>
                         <td>{item.sku?.sku_name ?? "-"}</td>
-                        <td>{item.sku?.product?.name ?? "-"}</td>
-                        <td>{getBrandCodeName(item.sku?.product?.brand)}</td>
+                        <td>
+                          <strong>{getBrandCodeName(item.sku?.product?.brand)}</strong>
+                          <span>{item.sku?.product?.name ?? "-"}</span>
+                        </td>
                         <td>
                           <strong>{item.warehouse?.name ?? "-"}</strong>
                           <span>{item.warehouse?.warehouse_code ?? "-"}</span>
                         </td>
                         <td className="quantityCell">
-                          {formatQuantity(item.quantity_on_hand)}
+                          <strong>{formatQuantity(item.quantity_on_hand)}</strong>
+                          <span>{getUnit(item)}</span>
                         </td>
-                        <td>{getUnit(item)}</td>
+                        <td className="quantityCell">
+                          {formatQuantity(getAvailableQuantity(item))}
+                        </td>
+                        <td className="quantityCell">
+                          {formatQuantity(item.reserved_quantity ?? 0)}
+                        </td>
                         <td>{formatQuantity(item.safety_stock_quantity)}</td>
                         <td>
                           <span
@@ -483,21 +514,31 @@ export function CurrentInventoryPage({ mode }: CurrentInventoryPageProps) {
                             {stockStatusLabels[item.stock_status]}
                           </span>
                         </td>
-                        <td>{formatDateTime(item.updated_at)}</td>
                         <td>
                           <div className="rowActions">
-                            <button
-                              className="secondaryButton"
-                              type="button"
-                              onClick={() => setSelectedItem(item)}
-                            >
-                              查看详情
-                            </button>
                             <Link
                               className="secondaryButton"
-                              href={getTransactionsHref(item)}
+                              href={getInventoryActionHref(item, "/inventory/transactions")}
                             >
                               查看流水
+                            </Link>
+                            <Link
+                              className="secondaryButton"
+                              href={getInventoryActionHref(item, "/inventory/adjustments")}
+                            >
+                              库存调整
+                            </Link>
+                            <Link
+                              className="secondaryButton"
+                              href={getInventoryActionHref(item, "/inventory/inbound", "other")}
+                            >
+                              其他入库
+                            </Link>
+                            <Link
+                              className="secondaryButton"
+                              href={getInventoryActionHref(item, "/inventory/fba-outbound", "other")}
+                            >
+                              其他出库
                             </Link>
                           </div>
                         </td>
@@ -508,29 +549,46 @@ export function CurrentInventoryPage({ mode }: CurrentInventoryPageProps) {
                         <td>{item.sku?.sku_code ?? "-"}</td>
                         <td>{item.sku?.sku_name ?? "-"}</td>
                         <td>{item.sku?.product?.name ?? "-"}</td>
+                        <td>{getBrandCodeName(item.sku?.product?.brand)}</td>
                         <td>
                           <strong>{item.warehouse?.name ?? "-"}</strong>
                           <span>{item.warehouse?.warehouse_code ?? "-"}</span>
                         </td>
                         <td className="quantityCell">
-                          {formatQuantity(item.quantity_on_hand)}
+                          <strong>{formatQuantity(item.quantity_on_hand)}</strong>
+                          <span>{getUnit(item)}</span>
                         </td>
-                        <td>{getUnit(item)}</td>
-                        <td>{formatDateTime(item.updated_at)}</td>
+                        <td className="quantityCell">
+                          {formatQuantity(getAvailableQuantity(item))}
+                        </td>
+                        <td className="quantityCell">
+                          {formatQuantity(item.reserved_quantity ?? 0)}
+                        </td>
                         <td>
                           <div className="rowActions">
-                            <button
-                              className="secondaryButton"
-                              type="button"
-                              onClick={() => setSelectedItem(item)}
-                            >
-                              查看详情
-                            </button>
                             <Link
                               className="secondaryButton"
-                              href={getTransactionsHref(item)}
+                              href={getInventoryActionHref(item, "/inventory/transactions")}
                             >
                               查看流水
+                            </Link>
+                            <Link
+                              className="secondaryButton"
+                              href={getInventoryActionHref(item, "/inventory/adjustments")}
+                            >
+                              库存调整
+                            </Link>
+                            <Link
+                              className="secondaryButton"
+                              href={getInventoryActionHref(item, "/inventory/inbound", "other")}
+                            >
+                              其他入库
+                            </Link>
+                            <Link
+                              className="secondaryButton"
+                              href={getInventoryActionHref(item, "/inventory/fba-outbound", "other")}
+                            >
+                              其他出库
                             </Link>
                           </div>
                         </td>
@@ -609,6 +667,6 @@ export function CurrentInventoryPage({ mode }: CurrentInventoryPageProps) {
           </div>
         </Modal>
       ) : null}
-    </main>
+    </Shell>
   );
 }

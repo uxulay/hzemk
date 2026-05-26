@@ -116,6 +116,7 @@ export type InventoryAdjustmentFilters = {
 export type InventoryAdjustmentMode = "increase" | "decrease" | "set_to";
 
 export type InventoryAdjustmentReason =
+  | "initial_stock"
   | "stocktake_gain"
   | "stocktake_loss"
   | "damage_loss"
@@ -380,6 +381,24 @@ export type OtherInventoryMovementImportInput = {
 export type OtherInventoryMovementValidationRow =
   BulkImportValidationRow<OtherInventoryMovementImportInput>;
 
+export type InventoryAdjustmentImportInput = {
+  warehouseId: string;
+  warehouseCode: string;
+  skuId: string;
+  skuCode: string;
+  skuName: string;
+  skuType: string;
+  unit: string;
+  adjustmentMode: InventoryAdjustmentMode;
+  adjustmentQuantity?: number;
+  targetQuantity?: number;
+  reason: InventoryAdjustmentReason;
+  remark?: string;
+};
+
+export type InventoryAdjustmentValidationRow =
+  BulkImportValidationRow<InventoryAdjustmentImportInput>;
+
 type MaybeRelation<T> = T | T[] | null;
 
 type RawReceivablePurchaseOrderItem = Omit<
@@ -562,6 +581,7 @@ const inventoryAdjustmentModeLabels: Record<InventoryAdjustmentMode, string> = {
 };
 
 const inventoryAdjustmentReasonLabels: Record<InventoryAdjustmentReason, string> = {
+  initial_stock: "期初库存",
   stocktake_gain: "盘盈",
   stocktake_loss: "盘亏",
   damage_loss: "破损报废",
@@ -1896,6 +1916,55 @@ export const otherOutboundImportFields: CsvTemplateField[] = [
   }
 ];
 
+export const inventoryAdjustmentImportFields: CsvTemplateField[] = [
+  {
+    key: "仓库编码",
+    label: "仓库编码",
+    required: true,
+    example: "WH-FIN-001",
+    aliases: ["warehouse_code"]
+  },
+  {
+    key: "SKU 编码",
+    label: "SKU 编码",
+    required: true,
+    example: "SKU-001",
+    aliases: ["sku_code"]
+  },
+  {
+    key: "调整方式",
+    label: "调整方式",
+    required: true,
+    example: "直接修正库存",
+    aliases: ["adjustment_mode"]
+  },
+  {
+    key: "调整数量",
+    label: "调整数量",
+    example: "10",
+    aliases: ["adjustment_quantity"]
+  },
+  {
+    key: "调整后库存",
+    label: "调整后库存",
+    example: "100",
+    aliases: ["target_quantity"]
+  },
+  {
+    key: "调整原因",
+    label: "调整原因",
+    required: true,
+    example: "期初库存",
+    aliases: ["reason"]
+  },
+  {
+    key: "备注",
+    label: "备注",
+    example: "系统上线期初录入",
+    aliases: ["remark"]
+  }
+];
+
 function getOtherMovementImportField(fields: CsvTemplateField[], key: string) {
   const field = fields.find((item) => item.key === key);
 
@@ -2076,6 +2145,204 @@ export async function validateOtherOutboundImportRows(rows: CsvDataRow[]) {
   });
 }
 
+function getInventoryAdjustmentImportField(key: string) {
+  const field = inventoryAdjustmentImportFields.find((item) => item.key === key);
+
+  if (!field) {
+    throw new Error(`库存调整导入字段不存在：${key}`);
+  }
+
+  return field;
+}
+
+function parseInventoryAdjustmentMode(
+  value: string
+): InventoryAdjustmentMode | null {
+  const normalized = value.trim().toLowerCase();
+  const modeMap: Record<string, InventoryAdjustmentMode> = {
+    increase: "increase",
+    "增加": "increase",
+    "增加库存": "increase",
+    decrease: "decrease",
+    "减少": "decrease",
+    "减少库存": "decrease",
+    set_to: "set_to",
+    setto: "set_to",
+    "修正": "set_to",
+    "直接修正": "set_to",
+    "直接修正库存": "set_to",
+    "期初": "set_to",
+    "期初库存": "set_to",
+    "盘点": "set_to"
+  };
+
+  return modeMap[normalized] ?? null;
+}
+
+function parseInventoryAdjustmentReason(
+  value: string
+): InventoryAdjustmentReason | null {
+  const normalized = value.trim().toLowerCase();
+  const reasonMap: Record<string, InventoryAdjustmentReason> = {
+    initial_stock: "initial_stock",
+    "期初": "initial_stock",
+    "期初库存": "initial_stock",
+    stocktake_gain: "stocktake_gain",
+    "盘盈": "stocktake_gain",
+    stocktake_loss: "stocktake_loss",
+    "盘亏": "stocktake_loss",
+    damage_loss: "damage_loss",
+    "破损": "damage_loss",
+    "破损报废": "damage_loss",
+    sample_use: "sample_use",
+    "样品": "sample_use",
+    "样品领用": "sample_use",
+    data_correction: "data_correction",
+    "数据修正": "data_correction",
+    other: "other",
+    "其他": "other"
+  };
+
+  return reasonMap[normalized] ?? null;
+}
+
+export async function validateInventoryAdjustmentImportRows(
+  rows: CsvDataRow[]
+): Promise<InventoryAdjustmentValidationRow[]> {
+  const [warehouses, skus] = await Promise.all([
+    getWarehousesForFilter(),
+    getSkuOptionsForInventory()
+  ]);
+  const warehouseByCode = new Map(
+    warehouses.map((warehouse) => [warehouse.warehouse_code.trim(), warehouse])
+  );
+  const skuByCode = new Map(skus.map((sku) => [sku.sku_code.trim(), sku]));
+  const warehouseCodeField = getInventoryAdjustmentImportField("仓库编码");
+  const skuCodeField = getInventoryAdjustmentImportField("SKU 编码");
+  const modeField = getInventoryAdjustmentImportField("调整方式");
+  const adjustmentQuantityField = getInventoryAdjustmentImportField("调整数量");
+  const targetQuantityField = getInventoryAdjustmentImportField("调整后库存");
+  const reasonField = getInventoryAdjustmentImportField("调整原因");
+  const remarkField = getInventoryAdjustmentImportField("备注");
+  const groupCount = new Map<string, number>();
+  const validationRows = rows.map<InventoryAdjustmentValidationRow>(
+    (row, index) => {
+      const rowNumber = index + 2;
+      const errors: string[] = [];
+      const warehouseCode = getCsvRowValue(row, warehouseCodeField);
+      const skuCode = getCsvRowValue(row, skuCodeField);
+      const modeText = getCsvRowValue(row, modeField);
+      const adjustmentQuantityText = getCsvRowValue(row, adjustmentQuantityField);
+      const targetQuantityText = getCsvRowValue(row, targetQuantityField);
+      const reasonText = getCsvRowValue(row, reasonField);
+      const remark = getCsvRowValue(row, remarkField);
+      const warehouse = warehouseCode ? warehouseByCode.get(warehouseCode) : null;
+      const sku = skuCode ? skuByCode.get(skuCode) : null;
+      const adjustmentMode = modeText
+        ? parseInventoryAdjustmentMode(modeText)
+        : null;
+      const reason = reasonText
+        ? parseInventoryAdjustmentReason(reasonText)
+        : null;
+      const adjustmentQuantity = adjustmentQuantityText
+        ? Number(adjustmentQuantityText)
+        : undefined;
+      const targetQuantity = targetQuantityText
+        ? Number(targetQuantityText)
+        : undefined;
+      const groupKey = warehouse && sku ? `${warehouse.id}:${sku.id}` : undefined;
+
+      if (groupKey) {
+        groupCount.set(groupKey, (groupCount.get(groupKey) ?? 0) + 1);
+      }
+
+      if (!warehouseCode) {
+        errors.push("仓库编码必填。");
+      } else if (!warehouse) {
+        errors.push(`仓库编码 ${warehouseCode} 不存在。`);
+      }
+
+      if (!skuCode) {
+        errors.push("SKU 编码必填。");
+      } else if (!sku) {
+        errors.push(`SKU 编码 ${skuCode} 不存在。`);
+      } else if (!isInventorySupportedSkuType(sku.sku_type)) {
+        errors.push("当前只支持辅料和成品 SKU。");
+      }
+
+      if (!modeText) {
+        errors.push("调整方式必填。");
+      } else if (!adjustmentMode) {
+        errors.push("调整方式只支持：直接修正库存、增加库存、减少库存。");
+      }
+
+      if (adjustmentMode === "set_to") {
+        if (!targetQuantityText) {
+          errors.push("直接修正库存时，调整后库存必填。");
+        } else if (!Number.isFinite(targetQuantity) || Number(targetQuantity) < 0) {
+          errors.push("调整后库存必须大于或等于 0。");
+        }
+      }
+
+      if (adjustmentMode === "increase" || adjustmentMode === "decrease") {
+        if (!adjustmentQuantityText) {
+          errors.push("增加或减少库存时，调整数量必填。");
+        } else if (
+          !Number.isFinite(adjustmentQuantity) ||
+          Number(adjustmentQuantity) <= 0
+        ) {
+          errors.push("调整数量必须大于 0。");
+        }
+      }
+
+      if (!reasonText) {
+        errors.push("调整原因必填。");
+      } else if (!reason) {
+        errors.push("调整原因只支持：期初库存、盘盈、盘亏、破损报废、样品领用、数据修正、其他。");
+      }
+
+      return {
+        rowNumber,
+        rawRow: row,
+        data:
+          warehouse && sku && adjustmentMode && reason && errors.length === 0
+            ? {
+                warehouseId: warehouse.id,
+                warehouseCode,
+                skuId: sku.id,
+                skuCode,
+                skuName: sku.sku_name,
+                skuType: sku.sku_type,
+                unit: sku.unit,
+                adjustmentMode,
+                adjustmentQuantity:
+                  adjustmentMode === "set_to"
+                    ? undefined
+                    : roundQuantity(Number(adjustmentQuantity)),
+                targetQuantity:
+                  adjustmentMode === "set_to"
+                    ? roundQuantity(Number(targetQuantity))
+                    : undefined,
+                reason,
+                remark
+              }
+            : undefined,
+        errors,
+        groupKey
+      };
+    }
+  );
+
+  for (const row of validationRows) {
+    if (row.groupKey && (groupCount.get(row.groupKey) ?? 0) > 1) {
+      row.errors.push("同一仓库同一 SKU 在文件里重复，请合并成一行。");
+      row.data = undefined;
+    }
+  }
+
+  return validationRows;
+}
+
 export async function bulkCreateOtherInbound(
   rows: OtherInventoryMovementImportInput[]
 ): Promise<BulkImportResult> {
@@ -2120,6 +2387,40 @@ export async function bulkCreateOtherOutbound(
         warehouseId: row.warehouseId,
         skuId: row.skuId,
         quantity: row.quantity,
+        reason: row.reason,
+        notes: row.remark
+      });
+      successCount += 1;
+    } catch (error) {
+      errors.push({
+        rowNumber: index + 2,
+        label: `${row.warehouseCode} / ${row.skuCode}`,
+        message: getUnknownErrorMessage(error)
+      });
+    }
+  }
+
+  return {
+    successCount,
+    failedCount: errors.length,
+    errors
+  };
+}
+
+export async function bulkAdjustInventory(
+  rows: InventoryAdjustmentImportInput[]
+): Promise<BulkImportResult> {
+  const errors: BulkImportResult["errors"] = [];
+  let successCount = 0;
+
+  for (const [index, row] of rows.entries()) {
+    try {
+      await adjustInventoryByWarehouseSku({
+        warehouseId: row.warehouseId,
+        skuId: row.skuId,
+        adjustmentMode: row.adjustmentMode,
+        adjustmentQuantity: row.adjustmentQuantity,
+        targetQuantity: row.targetQuantity,
         reason: row.reason,
         notes: row.remark
       });

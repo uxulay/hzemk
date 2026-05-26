@@ -80,6 +80,11 @@ export const navigationGroups: NavigationGroup[] = [
     label: "库存管理",
     items: [
       {
+        label: "库存总览",
+        href: "/inventory/overview",
+        roles: ["warehouse", "procurement", "operations", "plant_manager", "admin"]
+      },
+      {
         label: "入库管理",
         href: "/inventory/inbound",
         roles: ["warehouse", "procurement", "plant_manager", "admin"]
@@ -90,23 +95,13 @@ export const navigationGroups: NavigationGroup[] = [
         roles: ["warehouse", "operations", "admin"]
       },
       {
-        label: "原材料库存",
-        href: "/inventory/materials",
-        roles: ["warehouse", "procurement", "admin"]
-      },
-      {
-        label: "成品库存",
-        href: "/inventory/products",
-        roles: ["warehouse", "operations", "admin"]
+        label: "库存调整",
+        href: "/inventory/adjustments",
+        roles: ["warehouse", "plant_manager", "procurement", "admin"]
       },
       {
         label: "库存流水",
         href: "/inventory/transactions",
-        roles: ["warehouse", "plant_manager", "procurement", "admin"]
-      },
-      {
-        label: "库存调整",
-        href: "/inventory/adjustments",
         roles: ["warehouse", "plant_manager", "procurement", "admin"]
       }
     ]

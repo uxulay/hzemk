@@ -201,7 +201,7 @@ export default function FbaOutboundPage() {
     );
   };
 
-  const loadPageData = async () => {
+  const loadPageData = async (preferredWarehouseId = "") => {
     try {
       setLoading(true);
       setErrorMessage("");
@@ -212,7 +212,7 @@ export default function FbaOutboundPage() {
         getSkuOptionsForInventory()
       ]);
       const defaultWarehouseId =
-        outboundWarehouseId || getDefaultWarehouseId(warehouseData);
+        preferredWarehouseId || outboundWarehouseId || getDefaultWarehouseId(warehouseData);
 
       setWarehouses(warehouseData);
       setBrands(brandData);
@@ -235,8 +235,45 @@ export default function FbaOutboundPage() {
   };
 
   useEffect(() => {
-    loadPageData();
+    const params = new URLSearchParams(window.location.search);
+    const initialTab = params.get("tab");
+    const initialWarehouseId = params.get("warehouseId") ?? "";
+    const initialSkuKeyword = params.get("skuKeyword") ?? "";
+
+    if (initialTab === "other") {
+      setActiveTab("other");
+      setOtherOutboundOpen(true);
+    }
+
+    if (initialWarehouseId) {
+      setOutboundWarehouseId(initialWarehouseId);
+      setOtherWarehouseId(initialWarehouseId);
+    }
+
+    if (initialSkuKeyword) {
+      setOtherSkuKeyword(initialSkuKeyword);
+    }
+
+    loadPageData(initialWarehouseId);
   }, []);
+
+  useEffect(() => {
+    const keyword = otherSkuKeyword.trim().toLowerCase();
+
+    if (!keyword || otherSkuId) {
+      return;
+    }
+
+    const matchedSku = filteredSkuOptions.find(
+      (sku) =>
+        sku.sku_code.toLowerCase() === keyword ||
+        sku.sku_name.toLowerCase() === keyword
+    ) ?? filteredSkuOptions[0];
+
+    if (matchedSku) {
+      setOtherSkuId(matchedSku.id);
+    }
+  }, [filteredSkuOptions, otherSkuId, otherSkuKeyword]);
 
   const changeWarehouse = async (warehouseId: string) => {
     try {
@@ -267,6 +304,12 @@ export default function FbaOutboundPage() {
     setOtherNotes("");
     setErrorMessage("");
     setSuccessMessage("");
+  };
+
+  const openOtherOutboundImport = () => {
+    setActiveTab("other");
+    setOtherOutboundOpen(false);
+    setOtherImportOpen(true);
   };
 
   const submitOtherOutbound = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -403,7 +446,7 @@ export default function FbaOutboundPage() {
           <button
             className={activeTab === "other" ? "tabButton active" : "tabButton"}
             type="button"
-            onClick={() => setActiveTab("other")}
+            onClick={openOtherOutbound}
           >
             其他出库
           </button>
@@ -417,7 +460,7 @@ export default function FbaOutboundPage() {
             <h3>可出库备货需求</h3>
           </div>
           <div className="rowActions">
-            <button type="button" onClick={loadPageData} disabled={loading}>
+            <button type="button" onClick={() => loadPageData()} disabled={loading}>
               {loading ? "正在刷新..." : "刷新"}
             </button>
           </div>
@@ -547,19 +590,23 @@ export default function FbaOutboundPage() {
             <div className="sectionHeader">
               <div>
                 <p className="eyebrow">其他出库</p>
-                <h3>其他出库</h3>
+                <h3>其他出库单</h3>
               </div>
               <div className="rowActions">
-                <button type="button" onClick={openOtherOutbound} disabled={submitting}>
-                  其他出库
-                </button>
                 <button
                   className="primaryButton"
                   type="button"
-                  onClick={() => setOtherImportOpen(true)}
+                  onClick={openOtherOutbound}
                   disabled={submitting}
                 >
-                  批量导入
+                  新建其他出库单
+                </button>
+                <button
+                  type="button"
+                  onClick={openOtherOutboundImport}
+                  disabled={submitting}
+                >
+                  批量上传
                 </button>
                 <button
                   type="button"
@@ -834,7 +881,7 @@ export default function FbaOutboundPage() {
         <Modal
           open={otherOutboundOpen}
           eyebrow="其他出库"
-          title="新增其他出库"
+          title="新建其他出库单"
           maxWidth="xl"
           onClose={() => {
             if (!submitting) {
@@ -926,6 +973,20 @@ export default function FbaOutboundPage() {
                 disabled={submitting}
               />
             </label>
+
+            <div className="fullField adjustmentPreviewBox">
+              <span>批量上传</span>
+              <strong>适合样品、损耗、退供应商、借出等多 SKU 出库</strong>
+              <div className="rowActions">
+                <button
+                  type="button"
+                  onClick={openOtherOutboundImport}
+                  disabled={submitting}
+                >
+                  打开批量上传
+                </button>
+              </div>
+            </div>
 
             <div className="fullField adjustmentPreviewBox">
               <span>可用库存</span>
