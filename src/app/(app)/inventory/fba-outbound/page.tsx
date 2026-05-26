@@ -348,8 +348,6 @@ export default function FbaOutboundPage() {
       rows.flatMap((row) => (row.data ? [row.data] : []))
     );
 
-    await loadOtherOutboundData(otherWarehouseId || outboundWarehouseId);
-    await loadRequests(outboundWarehouseId);
     setSuccessMessage(
       `批量其他出库完成：成功 ${result.successCount} 条，失败 ${result.failedCount} 条。`
     );
@@ -1032,7 +1030,7 @@ export default function FbaOutboundPage() {
       <BulkImportDialog
         open={otherImportOpen}
         title="批量导入其他出库"
-        description="上传后先预览和校验库存是否足够。确认导入后逐行扣减库存并写入库存流水。"
+        description="上传后先预览和校验库存是否足够。确认导入后会一次性批量扣减库存并写入库存流水。"
         templateFileName="other-outbound-template.csv"
         fields={otherOutboundImportFields}
         sampleRows={[

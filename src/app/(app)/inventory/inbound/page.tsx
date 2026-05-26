@@ -455,7 +455,6 @@ export default function InventoryInboundPage() {
       rows.flatMap((row) => (row.data ? [row.data] : []))
     );
 
-    await loadPageData();
     setSuccessMessage(
       `批量其他入库完成：成功 ${result.successCount} 条，失败 ${result.failedCount} 条。`
     );
@@ -1123,7 +1122,7 @@ export default function InventoryInboundPage() {
       <BulkImportDialog
         open={otherImportOpen}
         title="批量导入初始库存 / 其他入库"
-        description="上传后先预览和校验，不会直接写入数据库。确认导入后逐行增加库存并写入库存流水。"
+        description="上传后先预览和校验，不会直接写入数据库。确认导入后会一次性批量增加库存并写入库存流水。"
         templateFileName="other-inbound-template.csv"
         fields={otherInboundImportFields}
         sampleRows={[

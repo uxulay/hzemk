@@ -399,6 +399,12 @@ export type InventoryAdjustmentImportInput = {
 export type InventoryAdjustmentValidationRow =
   BulkImportValidationRow<InventoryAdjustmentImportInput>;
 
+type InventoryBulkRpcResponse = {
+  success_count?: number;
+  failed_count?: number;
+  errors?: BulkImportResult["errors"];
+};
+
 type MaybeRelation<T> = T | T[] | null;
 
 type RawReceivablePurchaseOrderItem = Omit<
@@ -2346,99 +2352,96 @@ export async function validateInventoryAdjustmentImportRows(
 export async function bulkCreateOtherInbound(
   rows: OtherInventoryMovementImportInput[]
 ): Promise<BulkImportResult> {
-  const errors: BulkImportResult["errors"] = [];
-  let successCount = 0;
-
-  for (const [index, row] of rows.entries()) {
-    try {
-      await createOtherInbound({
-        warehouseId: row.warehouseId,
-        skuId: row.skuId,
-        quantity: row.quantity,
-        reason: row.reason,
-        notes: row.remark
-      });
-      successCount += 1;
-    } catch (error) {
-      errors.push({
-        rowNumber: index + 2,
-        label: `${row.warehouseCode} / ${row.skuCode}`,
-        message: getUnknownErrorMessage(error)
-      });
-    }
+  if (rows.length === 0) {
+    return { successCount: 0, failedCount: 0, errors: [] };
   }
 
-  return {
-    successCount,
-    failedCount: errors.length,
-    errors
-  };
+  const supabase = getSupabaseClient();
+  const payload = rows.map((row) => ({
+    warehouse_id: row.warehouseId,
+    sku_id: row.skuId,
+    quantity: row.quantity,
+    reason: row.reason,
+    remark: row.remark ?? "",
+    unit: row.unit,
+    sku_type: row.skuType,
+    warehouse_code: row.warehouseCode,
+    sku_code: row.skuCode
+  }));
+  const { data, error } = await withTimeout(
+    supabase.rpc("bulk_create_other_inbound", { payload }),
+    "批量其他入库"
+  );
+
+  if (error) {
+    return buildBulkRpcFailureResult({ rows, error });
+  }
+
+  return normalizeBulkRpcResult(data as InventoryBulkRpcResponse | null, rows.length);
 }
 
 export async function bulkCreateOtherOutbound(
   rows: OtherInventoryMovementImportInput[]
 ): Promise<BulkImportResult> {
-  const errors: BulkImportResult["errors"] = [];
-  let successCount = 0;
-
-  for (const [index, row] of rows.entries()) {
-    try {
-      await createOtherOutbound({
-        warehouseId: row.warehouseId,
-        skuId: row.skuId,
-        quantity: row.quantity,
-        reason: row.reason,
-        notes: row.remark
-      });
-      successCount += 1;
-    } catch (error) {
-      errors.push({
-        rowNumber: index + 2,
-        label: `${row.warehouseCode} / ${row.skuCode}`,
-        message: getUnknownErrorMessage(error)
-      });
-    }
+  if (rows.length === 0) {
+    return { successCount: 0, failedCount: 0, errors: [] };
   }
 
-  return {
-    successCount,
-    failedCount: errors.length,
-    errors
-  };
+  const supabase = getSupabaseClient();
+  const payload = rows.map((row) => ({
+    warehouse_id: row.warehouseId,
+    sku_id: row.skuId,
+    quantity: row.quantity,
+    reason: row.reason,
+    remark: row.remark ?? "",
+    unit: row.unit,
+    sku_type: row.skuType,
+    warehouse_code: row.warehouseCode,
+    sku_code: row.skuCode
+  }));
+  const { data, error } = await withTimeout(
+    supabase.rpc("bulk_create_other_outbound", { payload }),
+    "批量其他出库"
+  );
+
+  if (error) {
+    return buildBulkRpcFailureResult({ rows, error });
+  }
+
+  return normalizeBulkRpcResult(data as InventoryBulkRpcResponse | null, rows.length);
 }
 
 export async function bulkAdjustInventory(
   rows: InventoryAdjustmentImportInput[]
 ): Promise<BulkImportResult> {
-  const errors: BulkImportResult["errors"] = [];
-  let successCount = 0;
-
-  for (const [index, row] of rows.entries()) {
-    try {
-      await adjustInventoryByWarehouseSku({
-        warehouseId: row.warehouseId,
-        skuId: row.skuId,
-        adjustmentMode: row.adjustmentMode,
-        adjustmentQuantity: row.adjustmentQuantity,
-        targetQuantity: row.targetQuantity,
-        reason: row.reason,
-        notes: row.remark
-      });
-      successCount += 1;
-    } catch (error) {
-      errors.push({
-        rowNumber: index + 2,
-        label: `${row.warehouseCode} / ${row.skuCode}`,
-        message: getUnknownErrorMessage(error)
-      });
-    }
+  if (rows.length === 0) {
+    return { successCount: 0, failedCount: 0, errors: [] };
   }
 
-  return {
-    successCount,
-    failedCount: errors.length,
-    errors
-  };
+  const supabase = getSupabaseClient();
+  const payload = rows.map((row) => ({
+    warehouse_id: row.warehouseId,
+    sku_id: row.skuId,
+    adjustment_mode: row.adjustmentMode,
+    adjustment_quantity: row.adjustmentQuantity ?? null,
+    target_quantity: row.targetQuantity ?? null,
+    reason: row.reason,
+    remark: row.remark ?? "",
+    unit: row.unit,
+    sku_type: row.skuType,
+    warehouse_code: row.warehouseCode,
+    sku_code: row.skuCode
+  }));
+  const { data, error } = await withTimeout(
+    supabase.rpc("bulk_adjust_inventory", { payload }),
+    "批量库存调整"
+  );
+
+  if (error) {
+    return buildBulkRpcFailureResult({ rows, error });
+  }
+
+  return normalizeBulkRpcResult(data as InventoryBulkRpcResponse | null, rows.length);
 }
 
 async function getInventoryItemForAdjustment(
@@ -2494,6 +2497,34 @@ function getUnknownErrorMessage(error: unknown) {
   }
 
   return "未知错误";
+}
+
+function buildBulkRpcFailureResult(input: {
+  rows: Array<{ warehouseCode: string; skuCode: string }>;
+  error: unknown;
+}): BulkImportResult {
+  const message = getUnknownErrorMessage(input.error);
+
+  return {
+    successCount: 0,
+    failedCount: input.rows.length,
+    errors: input.rows.map((row, index) => ({
+      rowNumber: index + 2,
+      label: `${row.warehouseCode} / ${row.skuCode}`,
+      message
+    }))
+  };
+}
+
+function normalizeBulkRpcResult(
+  data: InventoryBulkRpcResponse | null,
+  fallbackSuccessCount: number
+): BulkImportResult {
+  return {
+    successCount: Number(data?.success_count ?? fallbackSuccessCount),
+    failedCount: Number(data?.failed_count ?? 0),
+    errors: Array.isArray(data?.errors) ? data.errors : []
+  };
 }
 
 function getAdjustmentTarget(input: {

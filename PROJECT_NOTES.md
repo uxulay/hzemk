@@ -218,6 +218,41 @@
 
 - 采购单供应商选择后续也可以改成可搜索选择器，适合供应商数量变多后继续优化。
 - 入库、出库、库存调整弹窗后续可以增加打印/导出单据能力。
+
+### 3.3.2 库存批量导入 RPC 优化（2026-05-26）
+
+本次统一优化库存模块的三个批量导入入口，没有改产品、SKU、辅料、供应商、仓库、品牌、BOM、采购单和 FBA 备货单导入，也没有关闭 RLS。
+
+已完成：
+
+- 新增 `supabase/dev-inventory-bulk-rpc.sql`，提供 3 个 Supabase RPC：
+  - `bulk_create_other_inbound(payload jsonb)`：批量处理其他入库 / 初始库存导入。
+  - `bulk_create_other_outbound(payload jsonb)`：批量处理其他出库。
+  - `bulk_adjust_inventory(payload jsonb)`：批量处理库存调整。
+- 三个 RPC 都在数据库函数内统一更新 `inventory_items` 并写入 `inventory_transactions`，如果中途失败，数据库会整体回滚，避免库存余额成功但流水失败，或流水成功但库存余额失败。
+- 其他入库允许同一文件内同仓库同 SKU 重复：库存按仓库 + SKU 合计增加，流水仍按原始导入明细逐行写入。
+- 其他出库允许同一文件内同仓库同 SKU 重复：导入校验和 RPC 都按合计数量检查 `quantity_on_hand - reserved_quantity`，不能扣成负数或扣超过可用库存。
+- 库存调整仍不允许同仓库同 SKU 重复，避免 `set_to`、`increase`、`decrease` 混用时产生顺序歧义。
+- `src/lib/api/inventory.ts` 保留单个操作函数 `createOtherInbound`、`createOtherOutbound`、`adjustInventoryByWarehouseSku`，只把 `bulkCreateOtherInbound`、`bulkCreateOtherOutbound`、`bulkAdjustInventory` 改成一次性调用对应 RPC。
+- `/inventory/inbound`、`/inventory/fba-outbound`、`/inventory/adjustments` 的批量导入成功后不再默认整页刷新，只显示成功消息；手动“刷新”按钮继续保留，单个入库 / 出库 / 调整原逻辑不变。
+- `BulkImportDialog` 增强了导入过程提示，区分“正在校验文件”和“正在批量写入数据库”，避免大文件导入时用户误以为页面卡死。
+
+使用方式：
+
+1. 先在 Supabase SQL Editor 执行 `supabase/dev-inventory-bulk-rpc.sql`。
+2. 再使用库存页面的批量导入功能。
+
+本次验证：
+
+- 已运行 `npm run typecheck`，通过。
+- 已运行 `npm run build`，通过。
+- 用户明确要求不要自动打开浏览器，所以本次没有做浏览器自动检查。
+
+如果批量导入提示 RPC 不存在，优先检查：
+
+- `supabase/dev-inventory-bulk-rpc.sql` 是否已经在 Supabase SQL Editor 执行。
+- 当前 Supabase 项目的 URL 和 anon key 是否指向同一个数据库。
+- RLS 策略文件是否执行过；本次 SQL 文件保持 RLS 开启，并补充了开发阶段需要的函数执行和库存写入权限。
 - 库存流水后续可以增加“导出当前筛选结果”。
 - 浏览器人工检查建议重点看 `/inventory/inbound`、`/inventory/fba-outbound`、`/inventory/adjustments` 和 `/purchase/orders` 的弹窗打开、关闭、提交按钮状态。
 

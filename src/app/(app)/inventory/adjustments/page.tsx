@@ -512,7 +512,6 @@ export default function InventoryAdjustmentsPage() {
       rows.flatMap((row) => (row.data ? [row.data] : []))
     );
 
-    await loadPageData();
     setSuccessMessage(
       `批量库存调整完成：成功 ${result.successCount} 条，失败 ${result.failedCount} 条。`
     );
@@ -1104,7 +1103,7 @@ export default function InventoryAdjustmentsPage() {
       <BulkImportDialog
         open={adjustmentImportOpen}
         title="批量上传库存调整"
-        description="适合系统上线期初库存和盘点结果导入。上传后先预览和逐行校验，通过后才会更新当前库存并写入 adjustment 库存流水。"
+        description="适合系统上线期初库存和盘点结果导入。上传后先预览和逐行校验，通过后会一次性批量更新当前库存并写入 adjustment 库存流水。"
         templateFileName="inventory-adjustment-template.csv"
         fields={inventoryAdjustmentImportFields}
         sampleRows={[

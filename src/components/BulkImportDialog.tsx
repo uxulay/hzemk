@@ -232,7 +232,15 @@ export function BulkImportDialog<TData>({
           </div>
         ) : null}
 
-        {parsing ? <div className="debugNotice">正在解析和校验 CSV...</div> : null}
+        {parsing ? (
+          <div className="debugNotice">正在校验文件，请稍候...</div>
+        ) : null}
+
+        {importing ? (
+          <div className="debugNotice">
+            正在批量写入数据库，请不要关闭窗口。数据多时可能需要多等一会儿。
+          </div>
+        ) : null}
 
         {previewRows.length > 0 ? (
           <>
@@ -345,7 +353,7 @@ export function BulkImportDialog<TData>({
               onClick={submitImport}
               disabled={!canImport}
             >
-              {importing ? "正在导入..." : "确认导入"}
+              {importing ? "正在批量写入..." : "确认导入"}
             </button>
           </div>
         </div>
