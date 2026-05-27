@@ -5,17 +5,22 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { Modal } from "@/components/Modal";
 import { Pagination } from "@/components/Pagination";
-import { SupplierSearchSelect } from "@/components/SupplierSearchSelect";
-import { getSuppliers, type Supplier } from "@/lib/api/master-data";
+import {
+  SupplierSearchSelect,
+  type SupplierSearchOption
+} from "@/components/SupplierSearchSelect";
+import { type Supplier } from "@/lib/api/master-data";
+import { searchMaterialSupplierOptions } from "@/lib/api/materials";
 import {
   createPurchaseOrder,
   createManualPurchaseOrder,
   createPurchaseOrderNo,
   getExistingPurchaseOrderNos,
   getPurchaseMaterialOptions,
+  getPurchaseOrdersPage,
   getPurchaseProfileOptions,
   getPurchaseOrderDetail,
-  getPurchaseOrders,
+  searchPurchaseMaterialOptions,
   getShortageMaterialRequirements,
   updatePurchaseOrder,
   updatePurchaseOrderStatus,
@@ -149,6 +154,22 @@ function getErrorMessage(error: unknown) {
   }
 
   return "操作失败，请稍后重试。";
+}
+
+function toSupplierRows(nextSuppliers: SupplierSearchOption[]): Supplier[] {
+  return nextSuppliers.map((supplier) => ({
+    id: supplier.id,
+    supplier_code: supplier.supplier_code,
+    name: supplier.name,
+    contact_name: supplier.contact_name ?? null,
+    phone: supplier.phone ?? null,
+    email: "",
+    address: "",
+    status: supplier.status ?? "active",
+    notes: null,
+    created_at: "",
+    updated_at: ""
+  }));
 }
 
 function formatQuantity(value: number | null | undefined) {
@@ -316,14 +337,19 @@ function MaterialSearchSelect({
   materials,
   value,
   disabled,
+  onSearch,
+  onOptionsChange,
   onChange
 }: {
   materials: PurchaseMaterialOption[];
   value: string;
   disabled: boolean;
+  onSearch: (keyword: string) => Promise<PurchaseMaterialOption[]>;
+  onOptionsChange: (materials: PurchaseMaterialOption[]) => void;
   onChange: (materialId: string) => void;
 }) {
   const [keyword, setKeyword] = useState("");
+  const [searching, setSearching] = useState(false);
   const selectedMaterial = materials.find((material) => material.id === value);
   const normalizedKeyword = keyword.trim().toLowerCase();
   const filteredMaterials = normalizedKeyword
@@ -338,6 +364,29 @@ function MaterialSearchSelect({
           .includes(normalizedKeyword)
       )
     : materials.slice(0, 8);
+
+  useEffect(() => {
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        setSearching(true);
+        const nextMaterials = await onSearch(keyword);
+
+        if (!cancelled) {
+          onOptionsChange(nextMaterials);
+        }
+      } finally {
+        if (!cancelled) {
+          setSearching(false);
+        }
+      }
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [keyword, onOptionsChange, onSearch]);
 
   return (
     <div className="tableSearchPicker">
@@ -355,7 +404,9 @@ function MaterialSearchSelect({
         <strong>{getPurchaseMaterialLabel(selectedMaterial)}</strong>
       ) : null}
       <div className="searchPickerList">
-        {filteredMaterials.length === 0 ? (
+        {searching ? (
+          <p className="tableHint">正在搜索辅料...</p>
+        ) : filteredMaterials.length === 0 ? (
           <p className="tableHint">没有匹配的辅料。</p>
         ) : (
           filteredMaterials.map((material) => (
@@ -504,6 +555,9 @@ export default function PurchaseOrdersPage() {
   const [supplierId, setSupplierId] = useState("");
   const [draftSupplierNotice, setDraftSupplierNotice] = useState("");
   const [supplierFilter, setSupplierFilter] = useState("all");
+  const [orderStatusFilter, setOrderStatusFilter] =
+    useState<PurchaseOrderStatus | "all">("all");
+  const [orderKeyword, setOrderKeyword] = useState("");
   const [orderDate, setOrderDate] = useState(getTodayInputValue());
   const [expectedArrivalDate, setExpectedArrivalDate] = useState("");
   const [notes, setNotes] = useState("");
@@ -521,6 +575,7 @@ export default function PurchaseOrdersPage() {
   >([]);
   const [shortagePage, setShortagePage] = useState(1);
   const [orderPage, setOrderPage] = useState(1);
+  const [totalPurchaseOrders, setTotalPurchaseOrders] = useState(0);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -541,25 +596,6 @@ export default function PurchaseOrdersPage() {
     [shortagePage, shortages]
   );
 
-  const filteredPurchaseOrders = useMemo(() => {
-    return purchaseOrders.filter((order) => {
-      if (supplierFilter === "all") {
-        return true;
-      }
-
-      if (supplierFilter === "none") {
-        return !order.supplier_id;
-      }
-
-      return order.supplier_id === supplierFilter;
-    });
-  }, [purchaseOrders, supplierFilter]);
-
-  const paginatedPurchaseOrders = useMemo(
-    () => paginateItems(filteredPurchaseOrders, orderPage),
-    [filteredPurchaseOrders, orderPage]
-  );
-
   const draftTotalAmount = draftItems.reduce((sum, item) => {
     const quantity = Number(item.orderedQuantity) || 0;
     const unitPrice = Number(item.unitPrice) || 0;
@@ -570,6 +606,16 @@ export default function PurchaseOrdersPage() {
   const imageGeneratedAt = useMemo(
     () => new Date().toISOString(),
     [imagePreviewOrder?.id]
+  );
+  const updatePurchaseMaterialOptions = useMemo(
+    () => (nextMaterials: PurchaseMaterialOption[]) => setMaterials(nextMaterials),
+    []
+  );
+  const updateSupplierOptions = useMemo(
+    () => (nextSuppliers: SupplierSearchOption[]) => {
+      setSuppliers(toSupplierRows(nextSuppliers));
+    },
+    []
   );
 
   const getSupplierNameById = (targetSupplierId: string) => {
@@ -611,15 +657,24 @@ export default function PurchaseOrdersPage() {
         purchaseProfileData
       ] = await Promise.all([
         getShortageMaterialRequirements(),
-        getPurchaseOrders(),
-        getSuppliers(),
+        getPurchaseOrdersPage({
+          page: orderPage,
+          pageSize: DEFAULT_PAGE_SIZE,
+          keyword: orderKeyword,
+          filters: {
+            status: orderStatusFilter,
+            supplierId: supplierFilter
+          }
+        }),
+        searchMaterialSupplierOptions("", 20),
         getPurchaseMaterialOptions(),
         getPurchaseProfileOptions()
       ]);
 
       setShortages(shortageData);
-      setPurchaseOrders(orderData);
-      setSuppliers(supplierData);
+      setPurchaseOrders(orderData.rows);
+      setTotalPurchaseOrders(orderData.total);
+      setSuppliers(toSupplierRows(supplierData));
       setMaterials(materialData);
       setPurchaseProfiles(purchaseProfileData);
       setSelectedRequirementIds((current) =>
@@ -629,6 +684,7 @@ export default function PurchaseOrdersPage() {
       setErrorMessage(getErrorMessage(error));
       setShortages([]);
       setPurchaseOrders([]);
+      setTotalPurchaseOrders(0);
       setSuppliers([]);
       setMaterials([]);
       setPurchaseProfiles([]);
@@ -639,11 +695,11 @@ export default function PurchaseOrdersPage() {
 
   useEffect(() => {
     loadPageData();
-  }, []);
+  }, [orderPage, orderKeyword, orderStatusFilter, supplierFilter]);
 
   useEffect(() => {
     setOrderPage(1);
-  }, [supplierFilter]);
+  }, [orderKeyword, orderStatusFilter, supplierFilter]);
 
   const toggleRequirement = (requirementId: string) => {
     setSelectedRequirementIds((current) =>
@@ -1570,6 +1626,34 @@ export default function PurchaseOrdersPage() {
 
         <div className="listToolbar purchaseOrderToolbar">
           <label>
+            搜索采购单 / 供应商 / 备注
+            <input
+              value={orderKeyword}
+              onChange={(event) => setOrderKeyword(event.target.value)}
+              disabled={loading}
+              placeholder="输入采购单号、供应商或备注"
+            />
+          </label>
+
+          <label>
+            状态
+            <select
+              value={orderStatusFilter}
+              onChange={(event) =>
+                setOrderStatusFilter(event.target.value as PurchaseOrderStatus | "all")
+              }
+              disabled={loading}
+            >
+              <option value="all">全部状态</option>
+              <option value="draft">草稿</option>
+              <option value="ordered">已下单</option>
+              <option value="partially_received">部分到货</option>
+              <option value="received">已到货</option>
+              <option value="cancelled">已取消</option>
+            </select>
+          </label>
+
+          <label>
             供应商
             <select
               value={supplierFilter}
@@ -1594,11 +1678,7 @@ export default function PurchaseOrdersPage() {
           <div className="emptyState">暂无采购单</div>
         ) : null}
 
-        {!loading && purchaseOrders.length > 0 && filteredPurchaseOrders.length === 0 ? (
-          <div className="emptyState">当前供应商筛选下暂无采购单</div>
-        ) : null}
-
-        {!loading && filteredPurchaseOrders.length > 0 ? (
+        {!loading && purchaseOrders.length > 0 ? (
           <div className="tableWrap">
             <table className="dataTable">
               <thead>
@@ -1617,7 +1697,7 @@ export default function PurchaseOrdersPage() {
                 </tr>
               </thead>
               <tbody>
-                {paginatedPurchaseOrders.map((order) => {
+                {purchaseOrders.map((order) => {
                   const updating = statusUpdatingId === order.id;
 
                   return (
@@ -1698,11 +1778,11 @@ export default function PurchaseOrdersPage() {
           </div>
         ) : null}
 
-        {!loading && filteredPurchaseOrders.length > 0 ? (
+        {!loading && totalPurchaseOrders > 0 ? (
           <Pagination
             page={orderPage}
             pageSize={DEFAULT_PAGE_SIZE}
-            total={filteredPurchaseOrders.length}
+            total={totalPurchaseOrders}
             onPageChange={setOrderPage}
           />
         ) : null}
@@ -2058,6 +2138,8 @@ export default function PurchaseOrdersPage() {
                 value={manualForm.supplierId}
                 disabled={submitting}
                 placeholder="搜索供应商"
+                onSearch={searchMaterialSupplierOptions}
+                onOptionsChange={updateSupplierOptions}
                 onChange={(nextSupplierId) => {
                   updateManualForm("supplierId", nextSupplierId);
                   if (nextSupplierId) {
@@ -2172,6 +2254,8 @@ export default function PurchaseOrdersPage() {
                               materials={materials}
                               value={item.materialId}
                               disabled={submitting}
+                              onSearch={searchPurchaseMaterialOptions}
+                              onOptionsChange={updatePurchaseMaterialOptions}
                               onChange={(materialId) =>
                                 updateManualItem(
                                   item.localId,
@@ -2332,6 +2416,8 @@ export default function PurchaseOrdersPage() {
                 value={supplierId}
                 disabled={submitting}
                 placeholder="搜索供应商"
+                onSearch={searchMaterialSupplierOptions}
+                onOptionsChange={updateSupplierOptions}
                 onChange={(nextSupplierId) => {
                   setSupplierId(nextSupplierId);
                   if (nextSupplierId) {

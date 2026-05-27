@@ -7,6 +7,8 @@ import { getSupabaseClient } from "@/lib/supabase/client";
 import { fetchAllSupabaseRows } from "@/lib/supabase/pagination";
 import { normalizeCsvValue } from "@/lib/utils/csv";
 import type { BrandSummary } from "@/lib/brand-utils";
+import type { ListPageParams, ListPageResult } from "@/lib/api/page-types";
+import { normalizeRpcPage } from "@/lib/api/page-types";
 
 export type FbaRequestStatus =
   | "draft"
@@ -142,6 +144,35 @@ export type FbaReplenishmentRequest = {
 export type GetFbaReplenishmentRequestsOptions = {
   status?: FbaRequestStatus | "all";
 };
+
+export type ReplenishmentRequestsSummary = {
+  totalRequests: number;
+  draftRequests: number;
+  submittedRequests: number;
+  acceptedRequests: number;
+  inProductionRequests: number;
+  completedRequests: number;
+  shippedRequests: number;
+  totalRequestedQuantity: number;
+};
+
+export type ReplenishmentRequestsPageFilters = {
+  status?: string;
+  priority?: string;
+  brandId?: string;
+  skuId?: string;
+  targetWarehouseId?: string;
+  targetShipDateStart?: string;
+  targetShipDateEnd?: string;
+};
+
+export type ReplenishmentRequestsPageParams =
+  ListPageParams<ReplenishmentRequestsPageFilters>;
+
+export type ReplenishmentRequestsPageResult = ListPageResult<
+  FbaReplenishmentRequest,
+  ReplenishmentRequestsSummary
+>;
 
 export type FbaReplenishmentImportInput = {
   rowNumber: number;
@@ -677,71 +708,118 @@ export async function createFbaReplenishmentDocument(
 export async function getFbaReplenishmentSkuOptions(): Promise<
   FbaReplenishmentSkuOption[]
 > {
+  return searchFbaReplenishmentSkuOptions();
+}
+
+export async function searchFbaReplenishmentSkuOptions(
+  keyword = "",
+  limit = 20
+): Promise<FbaReplenishmentSkuOption[]> {
   const supabase = getSupabaseClient();
-  const [skuRows, stockRows, bomRows] = await Promise.all([
-    fetchAllSupabaseRows<RawFbaReplenishmentSkuOption>(
-      () =>
-        supabase
-        .from("skus")
-        .select(
-          `
+  let skuQuery = supabase
+    .from("skus")
+    .select(
+      `
+        id,
+        product_id,
+        sku_code,
+        sku_name,
+        sku_type,
+        amazon_sku,
+        fnsku,
+        unit,
+        specs,
+        status,
+        product:products!skus_product_id_fkey (
+          id,
+          brand_id,
+          product_code,
+          name,
+          product_image_url,
+          brand:brands!products_brand_id_fkey (
             id,
-            product_id,
-            sku_code,
-            sku_name,
-            sku_type,
-            amazon_sku,
-            fnsku,
-            unit,
-            specs,
-            status,
-            product:products!skus_product_id_fkey (
-              id,
-              brand_id,
-              product_code,
-              name,
-              product_image_url,
-              brand:brands!products_brand_id_fkey (
-                id,
-                brand_code,
-                name,
-                english_name,
-                logo_url,
-                status
-              )
-            )
-          `
+            brand_code,
+            name,
+            english_name,
+            logo_url,
+            status
+          )
         )
-        .in("sku_type", finishedSkuTypes)
-        .order("sku_code", { ascending: true }),
-      "读取可备货 SKU"
+      `
+    )
+    .in("sku_type", finishedSkuTypes)
+    .eq("status", "active")
+    .order("sku_code", { ascending: true })
+    .limit(limit);
+
+  const normalizedKeyword = keyword.trim();
+
+  if (normalizedKeyword) {
+    skuQuery = skuQuery.or(
+      [
+        `sku_code.ilike.%${normalizedKeyword}%`,
+        `sku_name.ilike.%${normalizedKeyword}%`,
+        `amazon_sku.ilike.%${normalizedKeyword}%`,
+        `fnsku.ilike.%${normalizedKeyword}%`,
+        `specs.ilike.%${normalizedKeyword}%`
+      ].join(",")
+    );
+  }
+
+  const { data: skuData, error: skuError } = await withTimeout(
+    skuQuery,
+    "搜索可备货 SKU"
+  );
+
+  if (skuError) {
+    throw formatSupabaseError("搜索可备货 SKU", skuError);
+  }
+
+  const skuRows = (skuData ?? []) as unknown as RawFbaReplenishmentSkuOption[];
+  const skuIds = skuRows.map((sku) => sku.id);
+  const [stockResult, bomResult] = await Promise.all([
+    withTimeout(
+      skuIds.length > 0
+        ? supabase
+            .from("inventory_items")
+            .select("sku_id, product_sku_id, item_type, quantity_on_hand")
+            .in("product_sku_id", skuIds)
+        : Promise.resolve({ data: [], error: null } as any),
+      "读取当前页 SKU 库存"
     ),
-    fetchAllSupabaseRows<InventoryStockRow>(
-      () =>
-        supabase
-        .from("inventory_items")
-        .select("sku_id, item_type, quantity_on_hand"),
-      "读取成品库存"
-    ),
-    fetchAllSupabaseRows<ActiveBomRow>(
-      () =>
-        supabase
-        .from("bom_headers")
-        .select("product_sku_id")
-        .eq("status", "active"),
-      "读取启用 BOM"
+    withTimeout(
+      skuIds.length > 0
+        ? supabase
+            .from("bom_headers")
+            .select("product_sku_id")
+            .eq("status", "active")
+            .in("product_sku_id", skuIds)
+        : Promise.resolve({ data: [], error: null } as any),
+      "读取当前页启用 BOM"
     )
   ]);
+
+  if (stockResult.error) {
+    throw formatSupabaseError("读取当前页 SKU 库存", stockResult.error);
+  }
+
+  if (bomResult.error) {
+    throw formatSupabaseError("读取当前页启用 BOM", bomResult.error);
+  }
+
+  const stockRows = (stockResult.data ?? []) as Array<
+    InventoryStockRow & { product_sku_id?: string | null }
+  >;
+  const bomRows = (bomResult.data ?? []) as ActiveBomRow[];
 
   const stockBySkuId = new Map<string, number>();
 
   stockRows
     .filter((row) => isFinishedSkuType(row.item_type))
     .forEach((row) => {
-      stockBySkuId.set(
-        row.sku_id,
-        (stockBySkuId.get(row.sku_id) ?? 0) + Number(row.quantity_on_hand ?? 0)
-      );
+      const skuId = row.product_sku_id ?? row.sku_id;
+
+      stockBySkuId.set(skuId, (stockBySkuId.get(skuId) ?? 0) + Number(row.quantity_on_hand ?? 0));
     });
 
   const activeBomSkuIds = new Set(
@@ -931,6 +1009,10 @@ export async function bulkImportFbaReplenishmentRequests(
   };
 }
 
+/**
+ * @deprecated 主列表请使用 getReplenishmentRequestsPage。
+ * 保留原因：旧兼容入口，仍按批次读取避免 Supabase 1000 行截断，但不再作为主列表入口。
+ */
 export async function getFbaReplenishmentRequests(
   options: GetFbaReplenishmentRequestsOptions = {}
 ): Promise<FbaReplenishmentRequest[]> {
@@ -1057,4 +1139,47 @@ export async function getFbaReplenishmentRequests(
   );
 
   return rows.map(normalizeFbaReplenishmentRequest);
+}
+
+const emptyReplenishmentRequestsSummary: ReplenishmentRequestsSummary = {
+  totalRequests: 0,
+  draftRequests: 0,
+  submittedRequests: 0,
+  acceptedRequests: 0,
+  inProductionRequests: 0,
+  completedRequests: 0,
+  shippedRequests: 0,
+  totalRequestedQuantity: 0
+};
+
+export async function getReplenishmentRequestsPage(
+  params: ReplenishmentRequestsPageParams = {}
+): Promise<ReplenishmentRequestsPageResult> {
+  const page = params.page ?? 1;
+  const pageSize = params.pageSize ?? 20;
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase.rpc("get_replenishment_requests_page", {
+      p_page: page,
+      p_page_size: pageSize,
+      p_keyword: params.keyword?.trim() || null,
+      p_filters: params.filters ?? {},
+      p_sort_by: params.sortBy ?? "created_at",
+      p_sort_direction: params.sortDirection ?? "desc"
+    }),
+    "读取 FBA 备货分页列表"
+  );
+
+  if (error) {
+    throw formatSupabaseError("读取 FBA 备货分页列表", error);
+  }
+
+  return normalizeRpcPage<
+    FbaReplenishmentRequest,
+    ReplenishmentRequestsSummary
+  >(data, {
+    page,
+    pageSize,
+    summary: emptyReplenishmentRequestsSummary
+  });
 }

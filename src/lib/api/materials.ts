@@ -6,6 +6,8 @@ import type {
 } from "@/lib/bulk-types";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { fetchAllSupabaseRows } from "@/lib/supabase/pagination";
+import type { ListPageParams, ListPageResult } from "@/lib/api/page-types";
+import { normalizeRpcPage } from "@/lib/api/page-types";
 import { normalizeCsvValue } from "@/lib/utils/csv";
 
 export type MaterialStatus = "active" | "inactive";
@@ -45,6 +47,24 @@ export type MaterialListRow = MaterialRow & {
   material_requirement_usage_count: number;
   purchase_usage_count: number;
 };
+
+export type MaterialStats = {
+  totalMaterials: number;
+  activeMaterials: number;
+  inactiveMaterials: number;
+  inStockMaterials: number;
+  lowStockMaterials: number;
+};
+
+export type MaterialPageFilters = {
+  category?: string;
+  supplierId?: string;
+  status?: string;
+};
+
+export type MaterialPageParams = ListPageParams<MaterialPageFilters>;
+
+export type MaterialPageResult = ListPageResult<MaterialListRow, MaterialStats>;
 
 export type MaterialInventoryLocation = {
   id: string;
@@ -367,32 +387,103 @@ function getDuplicateSet(values: string[]) {
   );
 }
 
-async function getExistingSkuCodeSet() {
-  const supabase = getSupabaseClient();
-  const data = await fetchAllSupabaseRows<{ material_code: string }>(
-    () => supabase.from("materials").select("id, material_code"),
-    "读取辅料编码"
+async function getExistingSkuCodeSet(materialCodes?: string[]) {
+  const codes = Array.from(
+    new Set(
+      (materialCodes ?? [])
+        .map((code) => code.trim())
+        .filter(Boolean)
+    )
   );
 
+  if (codes.length === 0) {
+    return new Set<string>();
+  }
+
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase
+      .from("materials")
+      .select("id, material_code")
+      .in("material_code", codes),
+    "读取本次导入涉及的辅料编码"
+  );
+
+  if (error) {
+    throw formatSupabaseError("读取本次导入涉及的辅料编码", error);
+  }
+
   return new Set(
-    data.map((row) => row.material_code.toLowerCase())
+    (data ?? []).map((row) => row.material_code.toLowerCase())
   );
 }
 
-async function getMaterialSuppliersForLookup() {
+async function getMaterialSuppliersForLookup(supplierCodes?: string[]) {
   const supabase = getSupabaseClient();
-  return fetchAllSupabaseRows<MaterialSupplier>(
-    () =>
-      supabase
+  const codes = Array.from(
+    new Set(
+      (supplierCodes ?? [])
+        .map((code) => code.trim())
+        .filter(Boolean)
+    )
+  );
+
+  if (codes.length === 0) {
+    return [];
+  }
+
+  const { data, error } = await withTimeout(
+    supabase
       .from("suppliers")
       .select("id, supplier_code, name, contact_name, phone, status")
+      .in("supplier_code", codes)
       .order("supplier_code", { ascending: true }),
-    "读取供应商资料"
+    "读取本次导入涉及的供应商资料"
   );
+
+  if (error) {
+    throw formatSupabaseError("读取本次导入涉及的供应商资料", error);
+  }
+
+  return (data ?? []) as MaterialSupplier[];
+}
+
+export async function searchMaterialSupplierOptions(
+  keyword = "",
+  limit = 20
+): Promise<MaterialSupplier[]> {
+  const supabase = getSupabaseClient();
+  let query = supabase
+    .from("suppliers")
+    .select("id, supplier_code, name, contact_name, phone, status")
+    .eq("status", "active")
+    .order("supplier_code", { ascending: true })
+    .limit(limit);
+
+  const normalizedKeyword = keyword.trim();
+
+  if (normalizedKeyword) {
+    query = query.or(
+      [
+        `supplier_code.ilike.%${normalizedKeyword}%`,
+        `name.ilike.%${normalizedKeyword}%`,
+        `contact_name.ilike.%${normalizedKeyword}%`,
+        `phone.ilike.%${normalizedKeyword}%`
+      ].join(",")
+    );
+  }
+
+  const { data, error } = await withTimeout(query, "搜索供应商下拉列表");
+
+  if (error) {
+    throw formatSupabaseError("搜索供应商下拉列表", error);
+  }
+
+  return (data ?? []) as MaterialSupplier[];
 }
 
 export async function getMaterialSupplierOptions(): Promise<MaterialSupplier[]> {
-  return getMaterialSuppliersForLookup();
+  return searchMaterialSupplierOptions();
 }
 
 function findSupplierForImport(input: {
@@ -860,6 +951,10 @@ async function getPurchaseRecordsForMaterial(materialId: string) {
   );
 }
 
+/**
+ * @deprecated 主列表请使用 getMaterialsPage；下拉/校验请按关键词或本次导入编码查询。
+ * 保留原因：旧兼容入口，仍按批次读取避免 Supabase 1000 行截断，但不再作为主列表入口。
+ */
 export async function getMaterials(): Promise<MaterialListRow[]> {
   const supabase = getSupabaseClient();
   const materialRows = await fetchAllSupabaseRows<RawMaterialRow>(
@@ -893,6 +988,43 @@ export async function getMaterials(): Promise<MaterialListRow[]> {
       purchaseUsageCounts.get(row.id) ?? 0
     )
   );
+}
+
+const initialMaterialStats: MaterialStats = {
+  totalMaterials: 0,
+  activeMaterials: 0,
+  inactiveMaterials: 0,
+  inStockMaterials: 0,
+  lowStockMaterials: 0
+};
+
+export async function getMaterialsPage(
+  params: MaterialPageParams = {}
+): Promise<MaterialPageResult> {
+  const page = params.page ?? 1;
+  const pageSize = params.pageSize ?? 20;
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase.rpc("get_materials_page", {
+      p_page: page,
+      p_page_size: pageSize,
+      p_keyword: params.keyword?.trim() || null,
+      p_filters: params.filters ?? {},
+      p_sort_by: params.sortBy ?? "material_code",
+      p_sort_direction: params.sortDirection ?? "asc"
+    }),
+    "读取辅料分页列表"
+  );
+
+  if (error) {
+    throw formatSupabaseError("读取辅料分页列表", error);
+  }
+
+  return normalizeRpcPage<MaterialListRow, MaterialStats>(data, {
+    page,
+    pageSize,
+    summary: initialMaterialStats
+  });
 }
 
 export async function createMaterial(
@@ -1053,13 +1185,17 @@ export async function getMaterialDetail(
 export async function validateMaterialImportRows(
   rows: CsvDataRow[]
 ): Promise<BulkImportValidationRow<MaterialImportInput>[]> {
-  const [existingCodes, suppliers] = await Promise.all([
-    getExistingSkuCodeSet(),
-    getMaterialSuppliersForLookup()
-  ]);
-  const fileCodes = rows.map((row) =>
-    getCsvValue(row, ["辅料编码", "material_code", "sku_code"]).toLowerCase()
+  const fileMaterialCodes = rows.map((row) =>
+    getCsvValue(row, ["辅料编码", "material_code", "sku_code"])
   );
+  const fileSupplierCodes = rows.map((row) =>
+    getCsvValue(row, ["默认供应商编码", "supplier_code"])
+  );
+  const [existingCodes, suppliers] = await Promise.all([
+    getExistingSkuCodeSet(fileMaterialCodes),
+    getMaterialSuppliersForLookup(fileSupplierCodes)
+  ]);
+  const fileCodes = fileMaterialCodes.map((code) => code.toLowerCase());
   const duplicatedCodes = getDuplicateSet(fileCodes);
 
   return rows.map((row, index) => {

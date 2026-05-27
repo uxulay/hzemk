@@ -17,8 +17,7 @@ import {
 import {
   createWarehouse,
   getWarehouseInventory,
-  getWarehouseStats,
-  getWarehouses,
+  getWarehousesPage,
   toggleWarehouseStatus,
   updateWarehouse,
   type WarehouseInventoryRow,
@@ -27,7 +26,7 @@ import {
   type WarehouseStatus
 } from "@/lib/api/warehouses";
 import { downloadCsvTemplate, type CsvTemplateField } from "@/lib/utils/csv";
-import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
+import { DEFAULT_PAGE_SIZE } from "@/lib/utils/pagination";
 
 const warehouseStatusLabels: Record<string, string> = {
   active: "启用",
@@ -197,6 +196,7 @@ export default function AdminWarehousesPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedWarehouseIds, setSelectedWarehouseIds] = useState<string[]>([]);
   const [page, setPage] = useState(1);
+  const [totalWarehouses, setTotalWarehouses] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [warehouseToDelete, setWarehouseToDelete] =
@@ -210,24 +210,6 @@ export default function AdminWarehousesPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
-  const filteredWarehouses = useMemo(() => {
-    const keyword = searchKeyword.trim().toLowerCase();
-
-    return warehouses.filter((warehouse) => {
-      const matchesKeyword =
-        !keyword ||
-        warehouse.name.toLowerCase().includes(keyword) ||
-        warehouse.warehouse_code.toLowerCase().includes(keyword);
-      const matchesType =
-        warehouseTypeFilter === "all" ||
-        warehouse.warehouse_type === warehouseTypeFilter;
-      const matchesStatus =
-        statusFilter === "all" || warehouse.status === statusFilter;
-
-      return matchesKeyword && matchesType && matchesStatus;
-    });
-  }, [warehouses, searchKeyword, warehouseTypeFilter, statusFilter]);
-
   const selectedWarehouses = useMemo(
     () =>
       warehouses.filter((warehouse) =>
@@ -235,13 +217,9 @@ export default function AdminWarehousesPage() {
       ),
     [warehouses, selectedWarehouseIds]
   );
-  const paginatedWarehouses = useMemo(
-    () => paginateItems(filteredWarehouses, page),
-    [filteredWarehouses, page]
-  );
   const allFilteredSelected =
-    filteredWarehouses.length > 0 &&
-    filteredWarehouses.every((warehouse) =>
+    warehouses.length > 0 &&
+    warehouses.every((warehouse) =>
       selectedWarehouseIds.includes(warehouse.id)
     );
 
@@ -250,16 +228,22 @@ export default function AdminWarehousesPage() {
       setLoading(true);
       setErrorMessage("");
 
-      const [warehouseData, statsData] = await Promise.all([
-        getWarehouses(),
-        getWarehouseStats()
-      ]);
+      const warehousePage = await getWarehousesPage({
+        page,
+        pageSize: DEFAULT_PAGE_SIZE,
+        keyword: searchKeyword,
+        filters: {
+          warehouseType: warehouseTypeFilter,
+          status: statusFilter
+        }
+      });
 
-      setWarehouses(warehouseData);
-      setStats(statsData);
+      setWarehouses(warehousePage.rows);
+      setStats(warehousePage.summary);
+      setTotalWarehouses(warehousePage.total);
       setSelectedWarehouseIds((current) =>
         current.filter((warehouseId) =>
-          warehouseData.some((warehouse) => warehouse.id === warehouseId)
+          warehousePage.rows.some((warehouse) => warehouse.id === warehouseId)
         )
       );
       setSelectedWarehouse((current) => {
@@ -268,15 +252,17 @@ export default function AdminWarehousesPage() {
         }
 
         return (
-          warehouseData.find((warehouse) => warehouse.id === current.id) ?? null
+          warehousePage.rows.find((warehouse) => warehouse.id === current.id) ??
+          current
         );
       });
 
-      return warehouseData;
+      return warehousePage.rows;
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setWarehouses([]);
       setStats(initialStats);
+      setTotalWarehouses(0);
       setSelectedWarehouseIds([]);
       setSelectedWarehouse(null);
       setWarehouseInventory([]);
@@ -288,8 +274,12 @@ export default function AdminWarehousesPage() {
   };
 
   useEffect(() => {
-    loadPageData();
-  }, []);
+    const timer = setTimeout(() => {
+      loadPageData();
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [page, searchKeyword, statusFilter, warehouseTypeFilter]);
 
   useEffect(() => {
     setPage(1);
@@ -403,7 +393,7 @@ export default function AdminWarehousesPage() {
       setSelectedWarehouseIds((current) =>
         current.filter(
           (warehouseId) =>
-            !filteredWarehouses.some((warehouse) => warehouse.id === warehouseId)
+            !warehouses.some((warehouse) => warehouse.id === warehouseId)
         )
       );
       return;
@@ -413,7 +403,7 @@ export default function AdminWarehousesPage() {
       Array.from(
         new Set([
           ...current,
-          ...filteredWarehouses.map((warehouse) => warehouse.id)
+          ...warehouses.map((warehouse) => warehouse.id)
         ])
       )
     );
@@ -857,11 +847,11 @@ export default function AdminWarehousesPage() {
           <div className="debugNotice">正在读取仓库数据...</div>
         ) : null}
 
-        {!loading && filteredWarehouses.length === 0 ? (
+        {!loading && warehouses.length === 0 ? (
           <div className="emptyState">暂无仓库</div>
         ) : null}
 
-        {!loading && filteredWarehouses.length > 0 ? (
+        {!loading && warehouses.length > 0 ? (
           <div className="tableWrap">
             <table className="dataTable warehouseTable">
               <thead>
@@ -888,7 +878,7 @@ export default function AdminWarehousesPage() {
                 </tr>
               </thead>
               <tbody>
-                {paginatedWarehouses.map((warehouse) => {
+                {warehouses.map((warehouse) => {
                   const statusUpdating = statusUpdatingId === warehouse.id;
 
                   return (
@@ -982,11 +972,11 @@ export default function AdminWarehousesPage() {
           </div>
         ) : null}
 
-        {!loading && filteredWarehouses.length > 0 ? (
+        {!loading && totalWarehouses > 0 ? (
           <Pagination
             page={page}
             pageSize={DEFAULT_PAGE_SIZE}
-            total={filteredWarehouses.length}
+            total={totalWarehouses}
             onPageChange={setPage}
           />
         ) : null}

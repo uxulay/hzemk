@@ -558,6 +558,10 @@ export async function getSkusPage(
   };
 }
 
+/**
+ * @deprecated 主列表请使用 getSkusPage；表单选择请使用 getProductsForSkuForm 或业务侧远程搜索。
+ * 保留原因：debug/旧兼容入口，仍按批次读取避免 Supabase 1000 行截断，但不再作为主列表入口。
+ */
 export async function getSkus(): Promise<SkuListRow[]> {
   const supabase = getSupabaseClient();
   const [skuRows, inventorySummary] = await Promise.all([

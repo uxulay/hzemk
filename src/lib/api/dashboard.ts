@@ -1191,90 +1191,44 @@ async function countMaterialsWithoutSupplier() {
 
 async function countInactiveSupplierReferences() {
   const supabase = getSupabaseClient();
-  const suppliers = await fetchAllSupabaseRows<{ id: string }>(
-    () => supabase.from("suppliers").select("id").eq("status", "inactive"),
-    "读取停用供应商"
-  );
-
-  const supplierIds = suppliers.map((supplier) => supplier.id);
-
-  if (supplierIds.length === 0) {
-    return 0;
-  }
-
-  return getExactCount(
-    supabase
-      .from("materials")
-      .select("id", { count: "exact", head: true })
-      .in("default_supplier_id", supplierIds),
+  const { data, error } = await withTimeout(
+    supabase.rpc("count_inactive_supplier_references"),
     "统计停用供应商仍被辅料引用"
   );
+
+  if (error) {
+    throw formatSupabaseError("统计停用供应商仍被辅料引用", error);
+  }
+
+  return Number(data ?? 0);
 }
 
 async function countMissingBomSkus() {
   const supabase = getSupabaseClient();
-  const skus = await fetchAllSupabaseRows<{ id: string }>(
-    () =>
-      supabase
-      .from("skus")
-      .select("id")
-      .in("sku_type", ["finished_product", "finished_good"])
-      .eq("status", "active"),
-    "读取成品 SKU"
+  const { data, error } = await withTimeout(
+    supabase.rpc("count_missing_bom_skus"),
+    "统计缺少启用 BOM 的成品 SKU"
   );
 
-  if (!skus.length) {
-    return 0;
+  if (error) {
+    throw formatSupabaseError("统计缺少启用 BOM 的成品 SKU", error);
   }
 
-  const bomHeaders = await fetchAllSupabaseRows<{ product_sku_id: string }>(
-    () =>
-      supabase
-      .from("bom_headers")
-      .select("product_sku_id")
-      .eq("status", "active"),
-    "读取 BOM 主表"
-  );
-
-  const skuIdsWithBom = new Set(
-    bomHeaders.map((header) => header.product_sku_id)
-  );
-
-  return skus.filter((sku) => !skuIdsWithBom.has(sku.id)).length;
+  return Number(data ?? 0);
 }
 
 async function countAcceptedFbaWithoutProduction() {
   const supabase = getSupabaseClient();
-  const requests = await fetchAllSupabaseRows<{ id: string }>(
-    () =>
-      supabase
-      .from("fba_replenishment_requests")
-      .select("id")
-      .eq("status", "accepted"),
-    "读取已接单 FBA 备货需求"
+  const { data, error } = await withTimeout(
+    supabase.rpc("count_accepted_fba_without_production"),
+    "统计已接单未创建生产任务的 FBA 备货需求"
   );
 
-  if (!requests.length) {
-    return 0;
+  if (error) {
+    throw formatSupabaseError("统计已接单未创建生产任务的 FBA 备货需求", error);
   }
 
-  const requestIds = requests.map((request) => request.id);
-  const orders = await fetchAllSupabaseRows<{ replenishment_request_id: string | null }>(
-    () =>
-      supabase
-      .from("production_orders")
-      .select("replenishment_request_id")
-      .in("replenishment_request_id", requestIds),
-    "读取已创建生产任务"
-  );
-
-  const requestIdsWithOrder = new Set(
-    orders
-      .map((order) => order.replenishment_request_id)
-      .filter(Boolean)
-  );
-
-  return requestIds.filter((id) => !requestIdsWithOrder.has(id)).length;
+  return Number(data ?? 0);
 }
 
 async function getAcceptedFbaWithoutProduction(limit = 5) {

@@ -7,14 +7,14 @@ import {
   acceptFbaReplenishmentRequest,
   createProductionOrder,
   getProductionAssignees,
-  getProductionPlanningRequests,
+  getProductionPlanningPage,
   rejectFbaReplenishmentRequest,
   type PlanningFbaReplenishmentRequest,
   type PlanningRequestStatus,
   type ProductionProfile
 } from "@/lib/api/production";
 import { getBrandCodeName } from "@/lib/brand-utils";
-import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
+import { DEFAULT_PAGE_SIZE } from "@/lib/utils/pagination";
 
 type ProductionFormState = {
   plannedStartDate: string;
@@ -184,12 +184,18 @@ export default function ProductionPlanningPage() {
   );
   const [assignees, setAssignees] = useState<ProductionProfile[]>([]);
   const [brandFilter, setBrandFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState<PlanningRequestStatus | "all">(
+    "all"
+  );
+  const [priorityFilter, setPriorityFilter] = useState("all");
+  const [keyword, setKeyword] = useState("");
   const [selectedRequest, setSelectedRequest] =
     useState<PlanningFbaReplenishmentRequest | null>(null);
   const [detailRequest, setDetailRequest] =
     useState<PlanningFbaReplenishmentRequest | null>(null);
   const [form, setForm] = useState<ProductionFormState | null>(null);
   const [page, setPage] = useState(1);
+  const [totalRequests, setTotalRequests] = useState(0);
   const [loading, setLoading] = useState(true);
   const [actingRequestId, setActingRequestId] = useState("");
   const [submittingProduction, setSubmittingProduction] = useState(false);
@@ -222,29 +228,9 @@ export default function ProductionPlanningPage() {
       first.brand_code.localeCompare(second.brand_code, "zh-CN")
     );
   }, [requests]);
-  const filteredRequests = useMemo(() => {
-    if (brandFilter === "all") {
-      return requests;
-    }
-
-    return requests.filter((request) =>
-      request.items.some((item) => {
-        const product = item.product ?? item.sku?.product ?? null;
-
-        return brandFilter === "none"
-          ? !product?.brand?.id
-          : product?.brand?.id === brandFilter;
-      })
-    );
-  }, [brandFilter, requests]);
-  const paginatedRequests = useMemo(
-    () => paginateItems(filteredRequests, page),
-    [filteredRequests, page]
-  );
-
   useEffect(() => {
     setPage(1);
-  }, [brandFilter, requests.length]);
+  }, [brandFilter, keyword, priorityFilter, statusFilter]);
 
   const loadPageData = async () => {
     try {
@@ -252,15 +238,26 @@ export default function ProductionPlanningPage() {
       setErrorMessage("");
 
       const [requestData, assigneeData] = await Promise.all([
-        getProductionPlanningRequests(),
+        getProductionPlanningPage({
+          page,
+          pageSize: DEFAULT_PAGE_SIZE,
+          keyword,
+          filters: {
+            brandId: brandFilter,
+            priority: priorityFilter,
+            status: statusFilter
+          }
+        }),
         getProductionAssignees()
       ]);
 
-      setRequests(requestData);
+      setRequests(requestData.rows);
+      setTotalRequests(requestData.total);
       setAssignees(assigneeData);
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setRequests([]);
+      setTotalRequests(0);
       setAssignees([]);
     } finally {
       setLoading(false);
@@ -268,8 +265,12 @@ export default function ProductionPlanningPage() {
   };
 
   useEffect(() => {
-    loadPageData();
-  }, []);
+    const timer = setTimeout(() => {
+      loadPageData();
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [page, brandFilter, keyword, priorityFilter, statusFilter]);
 
   const handleAccept = async (requestId: string) => {
     try {
@@ -469,6 +470,46 @@ export default function ProductionPlanningPage() {
 
         <div className="listToolbar">
           <label>
+            搜索备货单 / SKU / 产品
+            <input
+              value={keyword}
+              onChange={(event) => setKeyword(event.target.value)}
+              disabled={loading}
+              placeholder="输入备货单号、SKU 或产品"
+            />
+          </label>
+
+          <label>
+            状态
+            <select
+              value={statusFilter}
+              onChange={(event) =>
+                setStatusFilter(event.target.value as PlanningRequestStatus | "all")
+              }
+              disabled={loading}
+            >
+              <option value="all">全部状态</option>
+              <option value="submitted">已提交</option>
+              <option value="accepted">已接单</option>
+            </select>
+          </label>
+
+          <label>
+            优先级
+            <select
+              value={priorityFilter}
+              onChange={(event) => setPriorityFilter(event.target.value)}
+              disabled={loading}
+            >
+              <option value="all">全部优先级</option>
+              <option value="urgent">紧急</option>
+              <option value="high">高</option>
+              <option value="normal">普通</option>
+              <option value="low">低</option>
+            </select>
+          </label>
+
+          <label>
             品牌
             <select
               value={brandFilter}
@@ -493,11 +534,11 @@ export default function ProductionPlanningPage() {
           </div>
         ) : null}
 
-        {!loading && !errorMessage && filteredRequests.length === 0 ? (
+        {!loading && !errorMessage && requests.length === 0 ? (
           <div className="emptyState">暂无待排产备货需求</div>
         ) : null}
 
-        {!loading && filteredRequests.length > 0 ? (
+        {!loading && requests.length > 0 ? (
           <div className="tableWrap">
             <table className="dataTable">
               <thead>
@@ -517,7 +558,7 @@ export default function ProductionPlanningPage() {
                 </tr>
               </thead>
               <tbody>
-                {paginatedRequests.map((request) => {
+                {requests.map((request) => {
                   const notes = parseNotes(request.notes);
                   const isActing = actingRequestId === request.id;
 
@@ -586,11 +627,11 @@ export default function ProductionPlanningPage() {
           </div>
         ) : null}
 
-        {!loading && filteredRequests.length > 0 ? (
+        {!loading && totalRequests > 0 ? (
           <Pagination
             page={page}
             pageSize={DEFAULT_PAGE_SIZE}
-            total={filteredRequests.length}
+            total={totalRequests}
             onPageChange={setPage}
           />
         ) : null}

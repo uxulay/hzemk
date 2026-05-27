@@ -1548,69 +1548,98 @@ export async function getWarehousesForFilter(): Promise<
   return (data ?? []) as InventoryTransactionWarehouse[];
 }
 
-export async function getSkuOptionsForInventory(): Promise<InventorySkuOption[]> {
+export async function getSkuOptionsForInventory(
+  keyword = "",
+  limit = 20
+): Promise<InventorySkuOption[]> {
   const supabase = getSupabaseClient();
-  const [skuData, materialData] = await Promise.all([
-    fetchAllSupabaseRows<RawInventorySkuOption>(
-    () =>
-      supabase
-        .from("skus")
-        .select(
-          `
+  const safeLimit = Math.min(Math.max(limit, 1), 50);
+  const normalizedKeyword = keyword.trim();
+  let skuQuery = supabase
+    .from("skus")
+    .select(
+      `
+        id,
+        product_id,
+        sku_code,
+        sku_name,
+        sku_type,
+        unit,
+        status,
+        product:products!skus_product_id_fkey (
+          id,
+          brand_id,
+          product_code,
+          name,
+          brand:brands!products_brand_id_fkey (
             id,
-            product_id,
-            sku_code,
-            sku_name,
-            sku_type,
-            unit,
-            status,
-            product:products!skus_product_id_fkey (
-              id,
-              brand_id,
-              product_code,
-              name,
-              brand:brands!products_brand_id_fkey (
-                id,
-                brand_code,
-                name,
-                english_name,
-                logo_url,
-                status
-              )
-            )
-          `
-        )
-        .in("sku_type", ["finished_good", "finished_product"])
-        .order("sku_code", { ascending: true }),
-    "读取库存可选 SKU"
-  ),
-    fetchAllSupabaseRows<InventoryMaterial>(
-      () =>
-        supabase
-          .from("materials")
-          .select(
-            `
-              id,
-              material_code,
-              material_name,
-              category,
-              unit,
-              specs,
-              default_supplier_id,
-              status,
-              supplier:suppliers!materials_default_supplier_id_fkey (
-                id,
-                supplier_code,
-                name
-              )
-            `
+            brand_code,
+            name,
+            english_name,
+            logo_url,
+            status
           )
-          .order("material_code", { ascending: true }),
-      "读取库存可选辅料"
+        )
+      `
     )
+    .in("sku_type", ["finished_good", "finished_product"])
+    .order("sku_code", { ascending: true })
+    .limit(safeLimit);
+  let materialQuery = supabase
+    .from("materials")
+    .select(
+      `
+        id,
+        material_code,
+        material_name,
+        category,
+        unit,
+        specs,
+        default_supplier_id,
+        status,
+        supplier:suppliers!materials_default_supplier_id_fkey (
+          id,
+          supplier_code,
+          name
+        )
+      `
+    )
+    .order("material_code", { ascending: true })
+    .limit(safeLimit);
+
+  if (normalizedKeyword) {
+    skuQuery = skuQuery.or(
+      [
+        `sku_code.ilike.%${normalizedKeyword}%`,
+        `sku_name.ilike.%${normalizedKeyword}%`
+      ].join(",")
+    );
+    materialQuery = materialQuery.or(
+      [
+        `material_code.ilike.%${normalizedKeyword}%`,
+        `material_name.ilike.%${normalizedKeyword}%`,
+        `specs.ilike.%${normalizedKeyword}%`
+      ].join(",")
+    );
+  } else {
+    skuQuery = skuQuery.eq("status", "active");
+    materialQuery = materialQuery.eq("status", "active");
+  }
+
+  const [skuData, materialData] = await Promise.all([
+    withTimeout(skuQuery, "搜索库存可选 SKU"),
+    withTimeout(materialQuery, "搜索库存可选辅料")
   ]);
 
-  const productOptions = skuData
+  if (skuData.error) {
+    throw formatSupabaseError("搜索库存可选 SKU", skuData.error);
+  }
+
+  if (materialData.error) {
+    throw formatSupabaseError("搜索库存可选辅料", materialData.error);
+  }
+
+  const productOptions = ((skuData.data ?? []) as unknown as RawInventorySkuOption[])
     .map((sku) =>
       normalizeInventorySkuOption({
         ...sku,
@@ -1618,19 +1647,21 @@ export async function getSkuOptionsForInventory(): Promise<InventorySkuOption[]>
         material_id: null,
       })
     );
-  const materialOptions: InventorySkuOption[] = materialData.map((material) => ({
-    id: material.id,
-    product_sku_id: null,
-    material_id: material.id,
-    product_id: null,
-    sku_code: material.material_code,
-    sku_name: material.material_name,
-    sku_type: "material",
-    unit: material.unit,
-    status: material.status,
-    product: null,
-    material
-  }));
+  const materialOptions: InventorySkuOption[] = ((materialData.data ?? []) as unknown as InventoryMaterial[]).map(
+    (material) => ({
+      id: material.id,
+      product_sku_id: null,
+      material_id: material.id,
+      product_id: null,
+      sku_code: material.material_code,
+      sku_name: material.material_name,
+      sku_type: "material",
+      unit: material.unit,
+      status: material.status,
+      product: null,
+      material
+    })
+  );
 
   return [...materialOptions, ...productOptions].sort((a, b) =>
     a.sku_code.localeCompare(b.sku_code, "zh-CN")
@@ -1741,6 +1772,110 @@ async function getSkuOptionsForInventoryByCodes(
   );
 }
 
+async function getSkuOptionForInventoryById(
+  id: string
+): Promise<InventorySkuOption | null> {
+  if (!id) {
+    return null;
+  }
+
+  const supabase = getSupabaseClient();
+  const [skuResult, materialResult] = await Promise.all([
+    withTimeout(
+      supabase
+        .from("skus")
+        .select(
+          `
+            id,
+            product_id,
+            sku_code,
+            sku_name,
+            sku_type,
+            unit,
+            status,
+            product:products!skus_product_id_fkey (
+              id,
+              brand_id,
+              product_code,
+              name,
+              brand:brands!products_brand_id_fkey (
+                id,
+                brand_code,
+                name,
+                english_name,
+                logo_url,
+                status
+              )
+            )
+          `
+        )
+        .eq("id", id)
+        .maybeSingle(),
+      "按 ID 读取库存可选 SKU"
+    ),
+    withTimeout(
+      supabase
+        .from("materials")
+        .select(
+          `
+            id,
+            material_code,
+            material_name,
+            category,
+            unit,
+            specs,
+            default_supplier_id,
+            status,
+            supplier:suppliers!materials_default_supplier_id_fkey (
+              id,
+              supplier_code,
+              name
+            )
+          `
+        )
+        .eq("id", id)
+        .maybeSingle(),
+      "按 ID 读取库存可选辅料"
+    )
+  ]);
+
+  if (skuResult.error) {
+    throw formatSupabaseError("按 ID 读取库存可选 SKU", skuResult.error);
+  }
+
+  if (materialResult.error) {
+    throw formatSupabaseError("按 ID 读取库存可选辅料", materialResult.error);
+  }
+
+  if (skuResult.data) {
+    return normalizeInventorySkuOption({
+      ...(skuResult.data as unknown as RawInventorySkuOption),
+      product_sku_id: id,
+      material_id: null
+    });
+  }
+
+  if (materialResult.data) {
+    const material = materialResult.data as unknown as InventoryMaterial;
+
+    return {
+      id: material.id,
+      product_sku_id: null,
+      material_id: material.id,
+      product_id: null,
+      sku_code: material.material_code,
+      sku_name: material.material_name,
+      sku_type: "material",
+      unit: material.unit,
+      status: material.status,
+      product: null,
+      material
+    };
+  }
+
+  return null;
+}
+
 export async function getInventoryItemByWarehouseAndSku(
   warehouseId: string,
   skuId: string
@@ -1750,7 +1885,7 @@ export async function getInventoryItemByWarehouseAndSku(
   }
 
   const supabase = getSupabaseClient();
-  const option = (await getSkuOptionsForInventory()).find((item) => item.id === skuId);
+  const option = await getSkuOptionForInventoryById(skuId);
   const identity = option ? getInventoryIdentityFromOption(option) : null;
   const { data, error } = await withTimeout(
     (() => {
@@ -2188,7 +2323,7 @@ async function updateInventoryItemQuantityById(input: {
 }
 
 async function getInventorySkuOptionById(skuId: string) {
-  const sku = (await getSkuOptionsForInventory()).find((item) => item.id === skuId);
+  const sku = await getSkuOptionForInventoryById(skuId);
 
   if (!sku) {
     throw new Error("SKU 不存在，请刷新页面后重试。");

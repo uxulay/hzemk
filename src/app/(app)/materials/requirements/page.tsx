@@ -1,16 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useMemo } from "react";
 import { Modal } from "@/components/Modal";
 import { Pagination } from "@/components/Pagination";
 import {
-  getMaterialRequirements,
+  getMaterialRequirementsPage,
   type MaterialRequirementRow,
   type MaterialRequirementStatus,
   type MaterialRequirementStatusFilter
 } from "@/lib/api/material-requirements";
-import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
+import { DEFAULT_PAGE_SIZE } from "@/lib/utils/pagination";
 
 const statusOptions: {
   value: MaterialRequirementStatusFilter;
@@ -77,39 +76,49 @@ export default function MaterialRequirementsPage() {
   const [requirements, setRequirements] = useState<MaterialRequirementRow[]>([]);
   const [statusFilter, setStatusFilter] =
     useState<MaterialRequirementStatusFilter>("all");
+  const [keyword, setKeyword] = useState("");
   const [selectedRequirement, setSelectedRequirement] =
     useState<MaterialRequirementRow | null>(null);
   const [page, setPage] = useState(1);
+  const [totalRequirements, setTotalRequirements] = useState(0);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
-
-  const paginatedRequirements = useMemo(
-    () => paginateItems(requirements, page),
-    [page, requirements]
-  );
 
   const loadRequirements = async () => {
     try {
       setLoading(true);
       setErrorMessage("");
 
-      const data = await getMaterialRequirements({ status: statusFilter });
-      setRequirements(data);
+      const data = await getMaterialRequirementsPage({
+        page,
+        pageSize: DEFAULT_PAGE_SIZE,
+        keyword,
+        filters: {
+          status: statusFilter
+        }
+      });
+      setRequirements(data.rows);
+      setTotalRequirements(data.total);
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setRequirements([]);
+      setTotalRequirements(0);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadRequirements();
-  }, [statusFilter]);
+    const timer = setTimeout(() => {
+      loadRequirements();
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [page, keyword, statusFilter]);
 
   useEffect(() => {
     setPage(1);
-  }, [statusFilter]);
+  }, [keyword, statusFilter]);
 
   return (
     <main className="pageShell">
@@ -133,6 +142,16 @@ export default function MaterialRequirementsPage() {
         </div>
 
         <div className="listToolbar">
+          <label>
+            搜索辅料 / 生产单 / SKU
+            <input
+              value={keyword}
+              onChange={(event) => setKeyword(event.target.value)}
+              disabled={loading}
+              placeholder="输入辅料、生产单号或 SKU"
+            />
+          </label>
+
           <label>
             状态
             <select
@@ -201,7 +220,7 @@ export default function MaterialRequirementsPage() {
                 </tr>
               </thead>
               <tbody>
-                {paginatedRequirements.map((requirement) => {
+                {requirements.map((requirement) => {
                   const isShortage =
                     requirement.status === "shortage" ||
                     Number(requirement.shortage_quantity) > 0;
@@ -267,7 +286,7 @@ export default function MaterialRequirementsPage() {
           <Pagination
             page={page}
             pageSize={DEFAULT_PAGE_SIZE}
-            total={requirements.length}
+            total={totalRequirements}
             onPageChange={setPage}
           />
         ) : null}

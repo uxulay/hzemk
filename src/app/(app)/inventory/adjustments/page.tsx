@@ -347,6 +347,19 @@ export default function InventoryAdjustmentsPage() {
     }
   }, [filteredSkuOptions, newAdjustmentSkuId, newAdjustmentSkuKeyword]);
 
+  useEffect(() => {
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const skuData = await getSkuOptionsForInventory(newAdjustmentSkuKeyword, 20);
+        setSkuOptions(skuData.filter((sku) => sku.status === "active"));
+      } catch (error) {
+        setErrorMessage(getErrorMessage(error));
+      }
+    }, 300);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [newAdjustmentSkuKeyword]);
+
   const submitFilters = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     loadPageData();

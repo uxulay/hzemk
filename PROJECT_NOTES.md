@@ -2194,6 +2194,113 @@ FBA 出库是单独动作，不能把成品入库自动等同于发往 FBA。
 - 已运行 `npm run build`，通过。
 - `npm run lint` 当前会进入 Next.js 15 的交互式 ESLint 配置提示，没有直接完成检查；本次未擅自选择 Strict/Base 生成配置。
 
+### 3.8.9 数据读取性能优化第二轮：基础资料 + BOM（2026-05-27）
+
+本轮只处理基础资料和 BOM，没有改采购、生产、备货、物料需求这些业务单据页面。
+
+已完成：
+
+- 新增 `supabase/performance-rpc-round-2-base-data.sql`，包含第二轮索引，以及 `get_materials_page`、`get_brands_page`、`get_warehouses_page`、`get_bom_page` 四个分页 RPC。
+- `/admin/materials` 改为调用 `get_materials_page`，辅料列表不再读取整张 `materials` 后前端筛选分页；关键词、分类、供应商、状态在数据库端筛选，库存数量、BOM 引用、物料需求引用、采购引用由数据库端聚合后返回当前页。
+- `/admin/brands` 改为调用 `get_brands_page`，品牌列表不再整表读取；关键词和状态在数据库端筛选，关联产品数由数据库端统计。
+- `/admin/warehouses` 改为调用 `get_warehouses_page`，仓库列表不再整表读取；关键词、仓库类型、状态在数据库端筛选，当前库存 SKU 数和库存总数由数据库端聚合。
+- `/bom` 改为调用 `get_bom_page`，BOM 主列表只读当前页摘要字段；BOM 明细仍只在打开详情或添加辅料时按 `bom_header_id` 单独读取。
+- BOM 创建时的成品 SKU 选择、BOM 明细辅料选择、辅料管理里的供应商选择改为默认前 20 条，并支持输入后 300ms 远程搜索。
+- 品牌下拉新增 `searchBrandOptions`，默认只返回前 20 条必要字段；原 `getBrandOptions` 改为复用该远程搜索能力。
+- 仓库下拉新增 `searchWarehouseOptions`，默认只返回前 20 条启用仓库必要字段。
+- 辅料批量导入校验改为只查询本次 CSV 里的辅料编码和供应商编码，不再为了校验编码读取整张 `materials` 或 `suppliers`。
+- BOM 旧的 `getBomList`、`getFinishedGoodSkus`、`getBomMaterials` 已改为走分页或远程搜索兜底，不再在 BOM 页面触发全量读取。
+
+需要在 Supabase 执行：
+
+1. 打开 `supabase/performance-rpc-round-2-base-data.sql`。
+2. 复制到 Supabase SQL Editor 执行。
+3. 执行成功后，第二轮页面才会有对应 RPC；如果未执行，相关页面会提示找不到函数。
+
+保留说明：
+
+- `src/lib/api/materials.ts` 里详情、引用统计、采购记录读取仍保留 `fetchAllSupabaseRows`，因为它们只在打开单个辅料详情或做删除保护时按指定 ID 查询，不是主列表首次加载。
+- `src/lib/api/warehouses.ts` 里仓库库存详情仍保留 `fetchAllSupabaseRows`，因为它只在点击某个仓库查看库存时按仓库 ID 查询。
+- `src/lib/api/brands.ts` 和 `src/lib/api/warehouses.ts` 里的旧 `getBrands`、`getWarehouses` 仍暂时保留给未纳入本轮的旧调用；本轮页面已改用新的分页接口。
+- 真实 `warehouses` 表没有 `contact_name` 和 `phone` 字段，所以仓库关键词搜索按真实字段支持 `warehouse_code`、`name`、`address`，没有凭空新增字段。
+- 真实 `bom_items` 表当前以 `material_id` 为主，没有 `component_sku_id` 字段，所以第二轮索引新增了 `bom_items(material_id)`，没有创建不存在字段的索引。
+
+验证：
+
+- 已运行 `npm run typecheck`，通过。
+- 已运行 `npm run build`，通过。
+
+### 3.8.10 数据读取性能优化第三轮：业务单据主列表（2026-05-27）
+
+本轮只处理业务单据主列表，没有继续改基础资料、BOM、SKU、当前库存、库存流水、权限或登录。
+
+已完成：
+
+- 新增 `supabase/performance-rpc-round-3-business-lists.sql`，包含第三轮业务列表索引，以及 `get_purchase_orders_page`、`get_production_orders_page`、`get_production_planning_page`、`get_replenishment_requests_page`、`get_material_requirements_page` 五个分页 RPC。
+- `/purchase/orders` 改为调用 `getPurchaseOrdersPage`，采购单主列表不再读取全部 `purchase_orders`；关键词、状态、供应商筛选在数据库端处理，列表只返回采购单摘要、供应商、仓库、明细条数和数量汇总。采购明细仍在打开详情、编辑、图片导出或入库时按采购单 ID 加载。
+- `/production/orders` 改为调用 `getProductionOrdersPage`，生产单主列表不再读取全部 `production_orders`；关键词、状态、品牌、物料状态筛选在数据库端处理，列表返回当前页生产任务摘要、SKU、产品、品牌、物料状态和入库/领料摘要。
+- `/production/planning` 改为调用 `getProductionPlanningPage`，排产列表不再一次性读取全部待排产备货需求；关键词、状态、优先级、品牌筛选在数据库端处理，默认只看已提交和已接单的排产范围。
+- `/replenishment` 改为调用 `getReplenishmentRequestsPage`，FBA 备货主列表不再读取全部备货单；关键词、状态、品牌筛选在数据库端处理，列表只返回当前页备货单摘要、SKU、产品、品牌、目标仓库和数量汇总。
+- `/materials/requirements` 改为调用 `getMaterialRequirementsPage`，物料需求列表不再读取全部 `material_requirements` 后前端筛选；关键词和状态在数据库端处理。
+- 采购单供应商选择、采购单辅料选择、备货单仓库选择、备货单 SKU 添加弹窗改为默认前 20 条，并支持输入后 300ms 远程搜索，不再为了一个下拉框读取整张基础资料表。
+
+需要在 Supabase 执行：
+
+1. 打开 `supabase/performance-rpc-round-3-business-lists.sql`。
+2. 复制到 Supabase SQL Editor 执行。
+3. 执行成功后，第三轮业务列表页面才会有对应 RPC；如果未执行，页面会提示找不到函数。
+
+保留说明：
+
+- `src/lib/api/purchase.ts` 里的旧 `getPurchaseOrders` 暂时保留给详情、导出或未迁移兼容入口；本轮 `/purchase/orders` 主列表已改用 `getPurchaseOrdersPage`。
+- `src/lib/api/production.ts` 里的旧 `getProductionPlanningRequests`、`getProductionOrders` 暂时保留给兼容入口；本轮 `/production/planning` 和 `/production/orders` 主列表已改用分页 RPC。
+- `src/lib/api/replenishment.ts` 里的旧 `getReplenishmentRequests` 暂时保留给可能的兼容入口；本轮 `/replenishment` 主列表已改用分页 RPC。
+- 生产领料预览、库存扣减、采购缺料清单等操作型读取仍保留原逻辑，因为它们不是本轮“业务单据主列表首次加载”的范围；如果数据继续增大，建议第四轮按操作场景继续拆分为远程搜索或 RPC。
+
+验证：
+
+- 已运行 `npm run typecheck`，通过。
+- 已运行 `npm run build`，通过。
+
+### 3.8.11 数据读取性能优化第四轮收尾（2026-05-27）
+
+本轮只做性能收尾，没有重做 UI，也没有大范围业务重构。
+
+已完成：
+
+- 审计剩余 `fetchAllSupabaseRows`。主列表已迁移过的旧函数统一加 `@deprecated` 注释，提醒后续不要再拿它们做页面主列表。
+- 品牌、仓库、供应商统计改成数据库 `count` 或当前需要字段查询，不再为了统计数量读取整张基础资料表。
+- 首页异常统计中“停用供应商仍被辅料引用”“成品 SKU 缺启用 BOM”“已接单 FBA 未创建生产任务”改为小 RPC，避免前端拉 ID 列表再对比。
+- 产品批量导入的品牌校验改成只查本次 CSV 出现过的品牌编码/名称，不再读取全部品牌。
+- 其他入库、其他出库、库存调整里的 SKU 选择器改成默认前 20 条；输入 SKU 关键词后 300ms 远程搜索成品 SKU 和辅料。
+- `getInventoryItemByWarehouseAndSku` 改为按当前选择的 SKU/辅料 ID 查询，不再先加载整套库存 SKU 选项。
+- 入库和出库页面的仓库选择改成默认前 20 条启用仓库，避免初始化读取全量仓库。
+
+本轮新增 SQL：
+
+- `supabase/performance-rpc-round-4-cleanup.sql`
+
+需要在 Supabase 执行：
+
+1. 打开 `supabase/performance-rpc-round-4-cleanup.sql`。
+2. 复制到 Supabase SQL Editor 执行。
+3. 执行成功后，首页第四轮新增的三个统计 RPC 才能正常使用。
+
+保留说明：
+
+- `src/lib/api/brands.ts`、`products.ts`、`skus.ts`、`materials.ts`、`suppliers.ts`、`warehouses.ts`、`purchase.ts`、`production.ts`、`replenishment.ts`、`master-data.ts` 里的旧全量函数已标记废弃，保留给 `/debug/master-data`、过渡页或旧兼容入口；主业务列表不要再使用。
+- `src/lib/api/materials.ts` 的辅料详情、采购记录、库存汇总、引用统计按辅料 ID 或当前页 ID 限制范围查询，保留 `fetchAllSupabaseRows`；风险是单个辅料历史记录极多时仍会读取较多，后续可单独给详情弹窗加分页。
+- `src/lib/api/warehouses.ts` 的仓库库存详情按单个仓库 ID 查询，保留 `fetchAllSupabaseRows`；风险是单仓库存 SKU 极多时详情弹窗可继续分页。
+- `src/lib/api/suppliers.ts` 的供应商关联采购单和默认辅料按单个供应商 ID 查询，保留 `fetchAllSupabaseRows`；风险是单个供应商历史采购很多时详情弹窗可继续分页。
+- `src/lib/api/production.ts` 的领料预览、BOM 算料、生产单旧兼容读取属于操作型流程或旧入口；已按物料 ID、BOM ID 或生产单关联范围限制，后续如果单据明细极大再拆 RPC。
+- `src/lib/api/inventory.ts` 的库存流水旧兼容函数、可入库/可出库队列、FBA 出库数量统计仍保留；主库存列表和流水列表已走分页 RPC，操作队列后续可按页面分页继续优化。
+- `src/lib/api/bulk-management.ts` 的 `getRowsByIds` 只按当前勾选 ID 读取，用于批量操作回显，不是整表读取。
+
+验证：
+
+- 已运行 `npm run typecheck`，通过。
+- `npm run build` 等本轮最终验证结果见本次收尾输出。
+
 ## 10. 给后续 Codex 的开发提醒
 
 后续开发前请先阅读 `PROJECT_NOTES.md`。

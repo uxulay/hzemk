@@ -1,6 +1,7 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
-import { fetchAllSupabaseRows } from "@/lib/supabase/pagination";
 import type { BrandSummary } from "@/lib/brand-utils";
+import type { ListPageParams, ListPageResult } from "@/lib/api/page-types";
+import { normalizeRpcPage } from "@/lib/api/page-types";
 
 export type BomStatus = "active" | "inactive";
 
@@ -49,6 +50,24 @@ export type BomHeaderRow = {
 export type BomListRow = BomHeaderRow & {
   item_count: number;
 };
+
+export type BomStats = {
+  totalBoms: number;
+  activeBoms: number;
+  inactiveBoms: number;
+  totalBomItems: number;
+};
+
+export type BomPageFilters = {
+  status?: string;
+  productId?: string;
+  skuId?: string;
+  brandId?: string;
+};
+
+export type BomPageParams = ListPageParams<BomPageFilters>;
+
+export type BomPageResult = ListPageResult<BomListRow, BomStats>;
 
 export type BomItemRow = {
   id: string;
@@ -323,27 +342,50 @@ async function ensureBomVersionIsNotDuplicated(
 }
 
 export async function getBomList(): Promise<BomListRow[]> {
+  const page = await getBomPage({
+    page: 1,
+    pageSize: 100,
+    sortBy: "created_at",
+    sortDirection: "desc"
+  });
+
+  return page.rows;
+}
+
+const initialBomStats: BomStats = {
+  totalBoms: 0,
+  activeBoms: 0,
+  inactiveBoms: 0,
+  totalBomItems: 0
+};
+
+export async function getBomPage(
+  params: BomPageParams = {}
+): Promise<BomPageResult> {
+  const page = params.page ?? 1;
+  const pageSize = params.pageSize ?? 20;
   const supabase = getSupabaseClient();
   const { data, error } = await withTimeout(
-    supabase
-      .from("bom_headers")
-      .select(
-        `
-          ${getBomHeaderSelect()},
-          items:bom_items!bom_items_bom_header_id_fkey (
-            id
-          )
-        `
-      )
-      .order("created_at", { ascending: false }),
-    "读取 BOM 列表"
+    supabase.rpc("get_bom_page", {
+      p_page: page,
+      p_page_size: pageSize,
+      p_keyword: params.keyword?.trim() || null,
+      p_filters: params.filters ?? {},
+      p_sort_by: params.sortBy ?? "created_at",
+      p_sort_direction: params.sortDirection ?? "desc"
+    }),
+    "读取 BOM 分页列表"
   );
 
   if (error) {
-    throw formatSupabaseError("读取 BOM 列表", error);
+    throw formatSupabaseError("读取 BOM 分页列表", error);
   }
 
-  return ((data ?? []) as unknown as RawBomListRow[]).map(normalizeBomListRow);
+  return normalizeRpcPage<BomListRow, BomStats>(data, {
+    page,
+    pageSize,
+    summary: initialBomStats
+  });
 }
 
 export async function getBomDetail(bomHeaderId: string): Promise<BomDetail> {
@@ -570,32 +612,83 @@ export async function toggleBomStatus(
 }
 
 export async function getFinishedGoodSkus(): Promise<BomSkuOption[]> {
-  const supabase = getSupabaseClient();
-  const data = await fetchAllSupabaseRows<RawBomSkuOption>(
-    () =>
-      supabase
-      .from("skus")
-      .select(getSkuSelect())
-      .eq("sku_type", "finished_good")
-      .order("sku_code", { ascending: true }),
-    "读取成品 SKU 列表"
-  );
+  return searchBomSkuOptions("", 20, ["finished_good", "finished_product"]);
+}
 
-  return data.map(normalizeSkuOption);
+export async function searchBomSkuOptions(
+  keyword = "",
+  limit = 20,
+  skuTypes: string[] = ["finished_good"]
+): Promise<BomSkuOption[]> {
+  const supabase = getSupabaseClient();
+  let query = supabase
+    .from("skus")
+    .select(getSkuSelect())
+    .in("sku_type", skuTypes)
+    .eq("status", "active")
+    .order("sku_code", { ascending: true })
+    .limit(limit);
+
+  const normalizedKeyword = keyword.trim();
+
+  if (normalizedKeyword) {
+    query = query.or(
+      [
+        `sku_code.ilike.%${normalizedKeyword}%`,
+        `sku_name.ilike.%${normalizedKeyword}%`,
+        `amazon_sku.ilike.%${normalizedKeyword}%`,
+        `fnsku.ilike.%${normalizedKeyword}%`
+      ].join(",")
+    );
+  }
+
+  const { data, error } = await withTimeout(query, "搜索 BOM SKU 下拉列表");
+
+  if (error) {
+    throw formatSupabaseError("搜索 BOM SKU 下拉列表", error);
+  }
+
+  return ((data ?? []) as unknown as RawBomSkuOption[]).map(normalizeSkuOption);
 }
 
 export async function getBomMaterials(): Promise<BomMaterialOption[]> {
+  return searchBomMaterials();
+}
+
+export async function searchBomMaterials(
+  keyword = "",
+  limit = 20
+): Promise<BomMaterialOption[]> {
   const supabase = getSupabaseClient();
-  return fetchAllSupabaseRows<BomMaterialOption>(
-    () =>
-      supabase
-        .from("materials")
-        .select(getMaterialSelect())
-        .order("material_code", { ascending: true }),
-    "读取辅料列表"
-  );
+  let query = supabase
+    .from("materials")
+    .select(getMaterialSelect())
+    .eq("status", "active")
+    .order("material_code", { ascending: true })
+    .limit(limit);
+
+  const normalizedKeyword = keyword.trim();
+
+  if (normalizedKeyword) {
+    query = query.or(
+      [
+        `material_code.ilike.%${normalizedKeyword}%`,
+        `material_name.ilike.%${normalizedKeyword}%`,
+        `category.ilike.%${normalizedKeyword}%`,
+        `specs.ilike.%${normalizedKeyword}%`
+      ].join(",")
+    );
+  }
+
+  const { data, error } = await withTimeout(query, "搜索 BOM 辅料下拉列表");
+
+  if (error) {
+    throw formatSupabaseError("搜索 BOM 辅料下拉列表", error);
+  }
+
+  return (data ?? []) as unknown as BomMaterialOption[];
 }
 
 export async function getMaterialSkus(): Promise<BomMaterialOption[]> {
-  return getBomMaterials();
+  return searchBomMaterials();
 }

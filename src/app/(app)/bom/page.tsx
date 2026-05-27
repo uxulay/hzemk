@@ -31,9 +31,9 @@ import {
   addBomItem,
   createBomHeader,
   getBomDetail,
-  getBomList,
-  getBomMaterials,
-  getFinishedGoodSkus,
+  getBomPage,
+  searchBomMaterials,
+  searchBomSkuOptions,
   toggleBomStatus,
   updateBomItem,
   type BomDetail,
@@ -45,7 +45,7 @@ import {
 } from "@/lib/api/bom";
 import { getBrandCodeName } from "@/lib/brand-utils";
 import { downloadCsvTemplate, type CsvTemplateField } from "@/lib/utils/csv";
-import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
+import { DEFAULT_PAGE_SIZE } from "@/lib/utils/pagination";
 
 const bomStatusLabels: Record<BomStatus, string> = {
   active: "启用",
@@ -85,6 +85,13 @@ const initialItemForm: BomItemFormState = {
   quantityPer: "",
   lossRate: "0",
   notes: ""
+};
+
+const initialBomStats = {
+  totalBoms: 0,
+  activeBoms: 0,
+  inactiveBoms: 0,
+  totalBomItems: 0
 };
 
 const bomImportFields: CsvTemplateField[] = [
@@ -181,12 +188,18 @@ function getMaterialOptionLabel(material: BomMaterialOption) {
   return `${material.material_code} / ${material.material_name}${category}${specs}`;
 }
 
+function searchFinishedGoodSkuOptions(keyword: string) {
+  return searchBomSkuOptions(keyword, 20, ["finished_good", "finished_product"]);
+}
+
 type BomSkuSearchSelectProps = {
   label: string;
   skus: BomSkuOption[];
   value: string;
   disabled?: boolean;
   placeholder: string;
+  onSearch: (keyword: string) => Promise<BomSkuOption[]>;
+  onOptionsChange: (skus: BomSkuOption[]) => void;
   onChange: (skuId: string) => void;
 };
 
@@ -196,16 +209,42 @@ function BomSkuSearchSelect({
   value,
   disabled = false,
   placeholder,
+  onSearch,
+  onOptionsChange,
   onChange
 }: BomSkuSearchSelectProps) {
   const [keyword, setKeyword] = useState("");
+  const [searching, setSearching] = useState(false);
   const selectedSku = skus.find((sku) => sku.id === value);
   const normalizedKeyword = keyword.trim().toLowerCase();
   const filteredSkus = normalizedKeyword
     ? skus.filter((sku) =>
         getSkuOptionLabel(sku).toLowerCase().includes(normalizedKeyword)
       )
-    : skus.slice(0, 8);
+    : skus.slice(0, 20);
+
+  useEffect(() => {
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        setSearching(true);
+        const nextSkus = await onSearch(keyword);
+
+        if (!cancelled) {
+          onOptionsChange(nextSkus);
+        }
+      } finally {
+        if (!cancelled) {
+          setSearching(false);
+        }
+      }
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [keyword, onOptionsChange, onSearch]);
 
   return (
     <div className="fieldBlock">
@@ -227,7 +266,9 @@ function BomSkuSearchSelect({
         </div>
       ) : null}
       <div className="searchPickerList">
-        {filteredSkus.length === 0 ? (
+        {searching ? (
+          <p className="tableHint">正在搜索 SKU...</p>
+        ) : filteredSkus.length === 0 ? (
           <p className="tableHint">没有匹配的 SKU。</p>
         ) : (
           filteredSkus.map((sku) => (
@@ -256,6 +297,8 @@ type BomMaterialSearchSelectProps = {
   value: string;
   disabled?: boolean;
   placeholder: string;
+  onSearch: (keyword: string) => Promise<BomMaterialOption[]>;
+  onOptionsChange: (materials: BomMaterialOption[]) => void;
   onChange: (materialId: string) => void;
 };
 
@@ -265,16 +308,42 @@ function BomMaterialSearchSelect({
   value,
   disabled = false,
   placeholder,
+  onSearch,
+  onOptionsChange,
   onChange
 }: BomMaterialSearchSelectProps) {
   const [keyword, setKeyword] = useState("");
+  const [searching, setSearching] = useState(false);
   const selectedMaterial = materials.find((material) => material.id === value);
   const normalizedKeyword = keyword.trim().toLowerCase();
   const filteredMaterials = normalizedKeyword
     ? materials.filter((material) =>
         getMaterialOptionLabel(material).toLowerCase().includes(normalizedKeyword)
       )
-    : materials.slice(0, 8);
+    : materials.slice(0, 20);
+
+  useEffect(() => {
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        setSearching(true);
+        const nextMaterials = await onSearch(keyword);
+
+        if (!cancelled) {
+          onOptionsChange(nextMaterials);
+        }
+      } finally {
+        if (!cancelled) {
+          setSearching(false);
+        }
+      }
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [keyword, onOptionsChange, onSearch]);
 
   return (
     <div className="fieldBlock">
@@ -298,7 +367,9 @@ function BomMaterialSearchSelect({
         </div>
       ) : null}
       <div className="searchPickerList">
-        {filteredMaterials.length === 0 ? (
+        {searching ? (
+          <p className="tableHint">正在搜索辅料...</p>
+        ) : filteredMaterials.length === 0 ? (
           <p className="tableHint">没有匹配的辅料。</p>
         ) : (
           filteredMaterials.map((material) => (
@@ -389,6 +460,8 @@ export default function BomPage() {
   const [bomToDelete, setBomToDelete] = useState<BomListRow | null>(null);
   const [bomItemToDelete, setBomItemToDelete] = useState<BomItemRow | null>(null);
   const [page, setPage] = useState(1);
+  const [totalBoms, setTotalBoms] = useState(0);
+  const [bomStats, setBomStats] = useState(initialBomStats);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [submittingHeader, setSubmittingHeader] = useState(false);
@@ -446,36 +519,11 @@ export default function BomPage() {
       first.brand_code.localeCompare(second.brand_code, "zh-CN")
     );
   }, [finishedGoodSkus]);
-  const filteredBoms = useMemo(() => {
-    const keyword = searchKeyword.trim().toLowerCase();
-
-    return boms.filter((bom) => {
-      const brandId = bom.product_sku?.product?.brand?.id ?? null;
-      const matchesBrand =
-        brandFilter === "all" ||
-        (brandFilter === "none" ? !brandId : brandId === brandFilter);
-      const matchesKeyword =
-        !keyword ||
-        bom.bom_code.toLowerCase().includes(keyword) ||
-        bom.version.toLowerCase().includes(keyword) ||
-        (bom.product_sku?.sku_code ?? "").toLowerCase().includes(keyword) ||
-        (bom.product_sku?.sku_name ?? "").toLowerCase().includes(keyword) ||
-        (bom.product_sku?.product?.name ?? "").toLowerCase().includes(keyword);
-
-      return matchesBrand && matchesKeyword;
-    });
-  }, [boms, brandFilter, searchKeyword]);
   const allBomsSelected =
-    filteredBoms.length > 0 &&
-    filteredBoms.every((bom) => selectedBomIds.includes(bom.id));
-
-  const paginatedBoms = useMemo(
-    () => paginateItems(filteredBoms, page),
-    [filteredBoms, page]
-  );
-  const activeBomCount = filteredBoms.filter((bom) => bom.status === "active").length;
-  const inactiveBomCount = filteredBoms.filter((bom) => bom.status === "inactive").length;
-  const totalBomItems = filteredBoms.reduce((sum, bom) => sum + bom.item_count, 0);
+    boms.length > 0 && boms.every((bom) => selectedBomIds.includes(bom.id));
+  const activeBomCount = bomStats.activeBoms;
+  const inactiveBomCount = bomStats.inactiveBoms;
+  const totalBomItems = bomStats.totalBomItems;
 
   useEffect(() => {
     setPage(1);
@@ -500,26 +548,37 @@ export default function BomPage() {
       setLoading(true);
       setErrorMessage("");
 
-      const [bomData, finishedGoodData, materialData] = await Promise.all([
-        getBomList(),
-        getFinishedGoodSkus(),
-        getBomMaterials()
+      const [bomPage, finishedGoodData, materialData] = await Promise.all([
+        getBomPage({
+          page,
+          pageSize: DEFAULT_PAGE_SIZE,
+          keyword: searchKeyword,
+          filters: {
+            brandId: brandFilter
+          }
+        }),
+        searchFinishedGoodSkuOptions(""),
+        searchBomMaterials("")
       ]);
 
-      setBoms(bomData);
+      setBoms(bomPage.rows);
+      setTotalBoms(bomPage.total);
+      setBomStats(bomPage.summary);
       setFinishedGoodSkus(finishedGoodData);
       setMaterials(materialData);
       setSelectedBomIds((current) =>
-        current.filter((bomId) => bomData.some((bom) => bom.id === bomId))
+        current.filter((bomId) => bomPage.rows.some((bom) => bom.id === bomId))
       );
 
-      if (selectedBomId && !bomData.some((bom) => bom.id === selectedBomId)) {
+      if (selectedBomId && !bomPage.rows.some((bom) => bom.id === selectedBomId)) {
         setSelectedBomId("");
         setBomDetail(null);
       }
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setBoms([]);
+      setTotalBoms(0);
+      setBomStats(initialBomStats);
       setFinishedGoodSkus([]);
       setMaterials([]);
       setSelectedBomIds([]);
@@ -530,8 +589,12 @@ export default function BomPage() {
   };
 
   useEffect(() => {
-    loadPageData();
-  }, []);
+    const timer = setTimeout(() => {
+      loadPageData();
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [page, searchKeyword, brandFilter]);
 
   const refreshCurrentDetail = async () => {
     if (selectedBomId) {
@@ -637,13 +700,13 @@ export default function BomPage() {
   const toggleAllBoms = () => {
     if (allBomsSelected) {
       setSelectedBomIds((current) =>
-        current.filter((bomId) => !filteredBoms.some((bom) => bom.id === bomId))
+        current.filter((bomId) => !boms.some((bom) => bom.id === bomId))
       );
       return;
     }
 
     setSelectedBomIds((current) =>
-      Array.from(new Set([...current, ...filteredBoms.map((bom) => bom.id)]))
+      Array.from(new Set([...current, ...boms.map((bom) => bom.id)]))
     );
   };
 
@@ -796,7 +859,7 @@ export default function BomPage() {
       />
 
       <section className="modernStatGrid bomStatGrid">
-        <StatCard title="当前筛选 BOM" value={filteredBoms.length} change="符合当前条件" tone="blue" icon={<FactoryIcon size={20} />} />
+        <StatCard title="当前筛选 BOM" value={totalBoms} change="符合当前条件" tone="blue" icon={<FactoryIcon size={20} />} />
         <StatCard title="启用 BOM" value={activeBomCount} change="可用于生产" tone="green" icon={<FactoryIcon size={20} />} />
         <StatCard title="停用 BOM" value={inactiveBomCount} change="暂不使用" tone="orange" icon={<FactoryIcon size={20} />} />
         <StatCard title="辅料明细" value={totalBomItems} change="BOM 用料行" tone="purple" icon={<DatabaseIcon size={20} />} />
@@ -840,6 +903,8 @@ export default function BomPage() {
             value={headerForm.productSkuId}
             disabled={submittingHeader || loading}
             placeholder="搜索成品 SKU 编码、名称或产品"
+            onSearch={searchFinishedGoodSkuOptions}
+            onOptionsChange={setFinishedGoodSkus}
             onChange={(productSkuId) =>
               setHeaderForm((current) => ({
                 ...current,
@@ -959,11 +1024,11 @@ export default function BomPage() {
 
         {loading ? <div className="debugNotice">正在读取 BOM 数据...</div> : null}
 
-        {!loading && filteredBoms.length === 0 ? (
+        {!loading && boms.length === 0 ? (
           <div className="emptyState">暂无 BOM</div>
         ) : null}
 
-        {!loading && filteredBoms.length > 0 ? (
+        {!loading && boms.length > 0 ? (
           <div className="tableWrap">
             <table className="dataTable bomTable">
               <thead>
@@ -991,7 +1056,7 @@ export default function BomPage() {
                 </tr>
               </thead>
               <tbody>
-                {paginatedBoms.map((bom) => {
+                {boms.map((bom) => {
                   const updating = statusUpdatingId === bom.id;
 
                   return (
@@ -1070,11 +1135,11 @@ export default function BomPage() {
           </div>
         ) : null}
 
-        {!loading && filteredBoms.length > 0 ? (
+        {!loading && totalBoms > 0 ? (
           <Pagination
             page={page}
             pageSize={DEFAULT_PAGE_SIZE}
-            total={filteredBoms.length}
+            total={totalBoms}
             onPageChange={setPage}
           />
         ) : null}
@@ -1138,6 +1203,8 @@ export default function BomPage() {
                 value={itemForm.materialId}
                 disabled={submittingItem}
                 placeholder="搜索辅料编码、名称、分类或规格"
+                onSearch={searchBomMaterials}
+                onOptionsChange={setMaterials}
                 onChange={(materialId) =>
                   setItemForm((current) => ({
                     ...current,

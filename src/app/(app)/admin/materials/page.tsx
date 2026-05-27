@@ -9,14 +9,16 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Modal } from "@/components/Modal";
 import { Pagination } from "@/components/Pagination";
 import { SupplierSearchSelect } from "@/components/SupplierSearchSelect";
+import type { SupplierSearchOption } from "@/components/SupplierSearchSelect";
 import {
   bulkImportMaterials,
   createMaterial,
   deactivateMaterialsByIds,
   deleteMaterialsByIds,
   getMaterialDetail,
-  getMaterials,
   getMaterialSupplierOptions,
+  getMaterialsPage,
+  searchMaterialSupplierOptions,
   toggleMaterialStatus,
   updateMaterial,
   validateMaterialImportRows,
@@ -27,7 +29,7 @@ import {
   type MaterialStatus
 } from "@/lib/api/materials";
 import { downloadCsvTemplate, type CsvTemplateField } from "@/lib/utils/csv";
-import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
+import { DEFAULT_PAGE_SIZE } from "@/lib/utils/pagination";
 
 type MaterialFormState = {
   skuCode: string;
@@ -264,6 +266,23 @@ function getTransactionsHref(material: MaterialListRow) {
   )}`;
 }
 
+function setSupplierSearchOptions(
+  setSuppliers: (suppliers: MaterialSupplier[]) => void
+) {
+  return (nextSuppliers: SupplierSearchOption[]) => {
+    setSuppliers(
+      nextSuppliers.map((supplier) => ({
+        id: supplier.id,
+        supplier_code: supplier.supplier_code,
+        name: supplier.name,
+        contact_name: supplier.contact_name ?? null,
+        phone: supplier.phone ?? null,
+        status: supplier.status ?? "active"
+      }))
+    );
+  };
+}
+
 export default function AdminMaterialsPage() {
   const { user } = useMockRole();
   const canManageMaterials = user.role === "admin" || user.role === "procurement";
@@ -279,10 +298,11 @@ export default function AdminMaterialsPage() {
   );
   const [searchKeyword, setSearchKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [unitFilter, setUnitFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
   const [supplierFilter, setSupplierFilter] = useState("all");
   const [selectedMaterialIds, setSelectedMaterialIds] = useState<string[]>([]);
   const [page, setPage] = useState(1);
+  const [totalMaterials, setTotalMaterials] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [materialToDelete, setMaterialToDelete] =
@@ -295,26 +315,12 @@ export default function AdminMaterialsPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const updateSupplierOptions = useMemo(
+    () => setSupplierSearchOptions(setSuppliers),
+    []
+  );
 
-  const stats = useMemo<MaterialStats>(() => {
-    if (materials.length === 0) {
-      return initialStats;
-    }
-
-    return {
-      totalMaterials: materials.length,
-      activeMaterials: materials.filter(
-        (material) => material.status === "active"
-      ).length,
-      inactiveMaterials: materials.filter(
-        (material) => material.status === "inactive"
-      ).length,
-      inStockMaterials: materials.filter(
-        (material) => material.inventory_quantity > 0
-      ).length,
-      lowStockMaterials: materials.filter(isLowStock).length
-    };
-  }, [materials]);
+  const [stats, setStats] = useState<MaterialStats>(initialStats);
 
   const unitOptions = useMemo(() => {
     const actualUnits = materials
@@ -341,42 +347,14 @@ export default function AdminMaterialsPage() {
     );
   }, [materials, suppliers]);
 
-  const filteredMaterials = useMemo(() => {
-    const keyword = searchKeyword.trim().toLowerCase();
-
-    return materials.filter((material) => {
-      const matchesKeyword =
-        !keyword ||
-        material.sku_code.toLowerCase().includes(keyword) ||
-        material.sku_name.toLowerCase().includes(keyword) ||
-        (material.category ?? "").toLowerCase().includes(keyword) ||
-        (material.specs ?? "").toLowerCase().includes(keyword) ||
-        (material.notes ?? "").toLowerCase().includes(keyword);
-      const matchesStatus =
-        statusFilter === "all" || material.status === statusFilter;
-      const matchesUnit = unitFilter === "all" || material.unit === unitFilter;
-      const matchesSupplier =
-        supplierFilter === "all" ||
-        (supplierFilter === "none"
-          ? !material.default_supplier_id
-          : material.default_supplier_id === supplierFilter);
-
-      return matchesKeyword && matchesStatus && matchesUnit && matchesSupplier;
-    });
-  }, [materials, searchKeyword, statusFilter, supplierFilter, unitFilter]);
-
   const selectedMaterialRows = useMemo(
     () =>
       materials.filter((material) => selectedMaterialIds.includes(material.id)),
     [materials, selectedMaterialIds]
   );
-  const paginatedMaterials = useMemo(
-    () => paginateItems(filteredMaterials, page),
-    [filteredMaterials, page]
-  );
   const allFilteredSelected =
-    filteredMaterials.length > 0 &&
-    filteredMaterials.every((material) =>
+    materials.length > 0 &&
+    materials.every((material) =>
       selectedMaterialIds.includes(material.id)
     );
 
@@ -385,16 +363,33 @@ export default function AdminMaterialsPage() {
       setLoading(true);
       setErrorMessage("");
 
-      const [materialData, supplierData] = await Promise.all([
-        getMaterials(),
-        getMaterialSupplierOptions()
-      ]);
+      const materialPage = await getMaterialsPage({
+        page,
+        pageSize: DEFAULT_PAGE_SIZE,
+        keyword: searchKeyword,
+        filters: {
+          category: categoryFilter,
+          supplierId: supplierFilter,
+          status: statusFilter
+        }
+      });
+      const supplierById = new Map<string, MaterialSupplier>();
+      const supplierData = await getMaterialSupplierOptions();
 
-      setMaterials(materialData);
-      setSuppliers(supplierData);
+      supplierData.forEach((supplier) => supplierById.set(supplier.id, supplier));
+      materialPage.rows.forEach((material) => {
+        if (material.default_supplier) {
+          supplierById.set(material.default_supplier.id, material.default_supplier);
+        }
+      });
+
+      setMaterials(materialPage.rows);
+      setStats(materialPage.summary);
+      setTotalMaterials(materialPage.total);
+      setSuppliers([...supplierById.values()]);
       setSelectedMaterialIds((current) =>
         current.filter((materialId) =>
-          materialData.some((material) => material.id === materialId)
+          materialPage.rows.some((material) => material.id === materialId)
         )
       );
       setSelectedDetailMaterial((current) => {
@@ -402,11 +397,16 @@ export default function AdminMaterialsPage() {
           return null;
         }
 
-        return materialData.find((material) => material.id === current.id) ?? null;
+        return (
+          materialPage.rows.find((material) => material.id === current.id) ??
+          current
+        );
       });
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setMaterials([]);
+      setStats(initialStats);
+      setTotalMaterials(0);
       setSuppliers([]);
       setSelectedMaterialIds([]);
       setSelectedDetailMaterial(null);
@@ -417,12 +417,16 @@ export default function AdminMaterialsPage() {
   };
 
   useEffect(() => {
-    loadPageData();
-  }, []);
+    const timer = setTimeout(() => {
+      loadPageData();
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [page, searchKeyword, statusFilter, supplierFilter, categoryFilter]);
 
   useEffect(() => {
     setPage(1);
-  }, [searchKeyword, statusFilter, supplierFilter, unitFilter]);
+  }, [searchKeyword, statusFilter, supplierFilter, categoryFilter]);
 
   const refreshAll = async () => {
     const detailMaterial = selectedDetailMaterial;
@@ -545,7 +549,7 @@ export default function AdminMaterialsPage() {
       setSelectedMaterialIds((current) =>
         current.filter(
           (materialId) =>
-            !filteredMaterials.some((material) => material.id === materialId)
+            !materials.some((material) => material.id === materialId)
         )
       );
       return;
@@ -553,7 +557,7 @@ export default function AdminMaterialsPage() {
 
     setSelectedMaterialIds((current) =>
       Array.from(
-        new Set([...current, ...filteredMaterials.map((material) => material.id)])
+        new Set([...current, ...materials.map((material) => material.id)])
       )
     );
   };
@@ -782,6 +786,8 @@ export default function AdminMaterialsPage() {
             suppliers={supplierOptions}
             value={materialForm.defaultSupplierId}
             disabled={creating}
+            onSearch={searchMaterialSupplierOptions}
+            onOptionsChange={updateSupplierOptions}
             onChange={(supplierId) =>
               setMaterialForm((current) => ({
                 ...current,
@@ -925,6 +931,8 @@ export default function AdminMaterialsPage() {
               suppliers={supplierOptions}
               value={editForm.defaultSupplierId}
               disabled={updating}
+              onSearch={searchMaterialSupplierOptions}
+              onOptionsChange={updateSupplierOptions}
               onChange={(supplierId) =>
                 setEditForm((current) =>
                   current
@@ -1073,15 +1081,21 @@ export default function AdminMaterialsPage() {
           </label>
 
           <label>
-            单位
+            分类
             <select
-              value={unitFilter}
-              onChange={(event) => setUnitFilter(event.target.value)}
+              value={categoryFilter}
+              onChange={(event) => setCategoryFilter(event.target.value)}
             >
-              <option value="all">全部单位</option>
-              {unitOptions.map((unit) => (
-                <option key={unit} value={unit}>
-                  {unit}
+              <option value="all">全部分类</option>
+              {Array.from(
+                new Set(
+                  materials
+                    .map((material) => material.category)
+                    .filter((category): category is string => Boolean(category))
+                )
+              ).map((category) => (
+                <option key={category} value={category}>
+                  {category}
                 </option>
               ))}
             </select>
@@ -1124,11 +1138,11 @@ export default function AdminMaterialsPage() {
 
         {loading ? <div className="debugNotice">正在读取辅料数据...</div> : null}
 
-        {!loading && filteredMaterials.length === 0 ? (
+        {!loading && materials.length === 0 ? (
           <div className="emptyState">暂无辅料</div>
         ) : null}
 
-        {!loading && filteredMaterials.length > 0 ? (
+        {!loading && materials.length > 0 ? (
           <div className="tableWrap">
             <table className="dataTable skuTable">
               <thead>
@@ -1162,7 +1176,7 @@ export default function AdminMaterialsPage() {
                 </tr>
               </thead>
               <tbody>
-                {paginatedMaterials.map((material) => {
+                {materials.map((material) => {
                   const statusUpdating = statusUpdatingId === material.id;
 
                   return (
@@ -1259,11 +1273,11 @@ export default function AdminMaterialsPage() {
           </div>
         ) : null}
 
-        {!loading && filteredMaterials.length > 0 ? (
+        {!loading && totalMaterials > 0 ? (
           <Pagination
             page={page}
             pageSize={DEFAULT_PAGE_SIZE}
-            total={filteredMaterials.length}
+            total={totalMaterials}
             onPageChange={setPage}
           />
         ) : null}

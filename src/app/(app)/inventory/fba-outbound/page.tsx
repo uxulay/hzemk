@@ -5,7 +5,7 @@ import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { Modal } from "@/components/Modal";
 import { getBrandOptions, type BrandRow } from "@/lib/api/brands";
 import { getBrandCodeName } from "@/lib/brand-utils";
-import { getWarehouses, type Warehouse } from "@/lib/api/master-data";
+import { searchWarehouseOptions, type WarehouseRow as Warehouse } from "@/lib/api/warehouses";
 import {
   bulkCreateOtherOutbound,
   createOtherOutbound,
@@ -207,7 +207,7 @@ export default function FbaOutboundPage() {
       setErrorMessage("");
 
       const [warehouseData, brandData, skuData] = await Promise.all([
-        getWarehouses(),
+        searchWarehouseOptions("", 20),
         getBrandOptions(),
         getSkuOptionsForInventory()
       ]);
@@ -274,6 +274,19 @@ export default function FbaOutboundPage() {
       setOtherSkuId(matchedSku.id);
     }
   }, [filteredSkuOptions, otherSkuId, otherSkuKeyword]);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const skuData = await getSkuOptionsForInventory(otherSkuKeyword, 20);
+        setSkuOptions(skuData.filter((sku) => sku.status === "active"));
+      } catch (error) {
+        setErrorMessage(getErrorMessage(error));
+      }
+    }, 300);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [otherSkuKeyword]);
 
   const changeWarehouse = async (warehouseId: string) => {
     try {
@@ -914,7 +927,10 @@ export default function FbaOutboundPage() {
               搜索 SKU
               <input
                 value={otherSkuKeyword}
-                onChange={(event) => setOtherSkuKeyword(event.target.value)}
+                onChange={(event) => {
+                  setOtherSkuKeyword(event.target.value);
+                  setOtherSkuId("");
+                }}
                 placeholder="输入 SKU 编码 / SKU 名称"
                 disabled={submitting}
               />

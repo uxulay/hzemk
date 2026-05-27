@@ -2,6 +2,8 @@ import { getSupabaseClient } from "@/lib/supabase/client";
 import { fetchAllSupabaseRows } from "@/lib/supabase/pagination";
 import { createInventoryTransaction } from "@/lib/api/inventory";
 import type { BrandSummary } from "@/lib/brand-utils";
+import type { ListPageParams, ListPageResult } from "@/lib/api/page-types";
+import { normalizeRpcPage } from "@/lib/api/page-types";
 
 export type PlanningRequestStatus =
   | "submitted"
@@ -275,6 +277,57 @@ export type ProductionOrderTrackingRow = {
   total_planned_quantity: number;
   total_completed_quantity: number;
 };
+
+export type ProductionOrdersSummary = {
+  totalOrders: number;
+  plannedOrders: number;
+  materialPendingOrders: number;
+  inProgressOrders: number;
+  completedOrders: number;
+  cancelledOrders: number;
+};
+
+export type ProductionOrdersPageFilters = {
+  status?: string;
+  materialStatus?: string;
+  skuId?: string;
+  productId?: string;
+  brandId?: string;
+  startDate?: string;
+  endDate?: string;
+};
+
+export type ProductionOrdersPageParams =
+  ListPageParams<ProductionOrdersPageFilters>;
+
+export type ProductionOrdersPageResult = ListPageResult<
+  ProductionOrderTrackingRow,
+  ProductionOrdersSummary
+>;
+
+export type ProductionPlanningSummary = {
+  totalRequests: number;
+  submittedRequests: number;
+  acceptedRequests: number;
+  urgentRequests: number;
+  totalRequestedQuantity: number;
+};
+
+export type ProductionPlanningPageFilters = {
+  status?: string;
+  priority?: string;
+  brandId?: string;
+  targetShipDateStart?: string;
+  targetShipDateEnd?: string;
+};
+
+export type ProductionPlanningPageParams =
+  ListPageParams<ProductionPlanningPageFilters>;
+
+export type ProductionPlanningPageResult = ListPageResult<
+  PlanningFbaReplenishmentRequest,
+  ProductionPlanningSummary
+>;
 
 export type ProductionOrderStatusFilter = ProductionOrderStatus | "all";
 export type ProductionMaterialStatusFilter = ProductionMaterialStatus | "all";
@@ -1637,6 +1690,10 @@ async function generateMaterialRequirementsForOrderItems(
   return rows.length;
 }
 
+/**
+ * @deprecated 主列表请使用 getProductionPlanningPage。
+ * 保留原因：旧兼容入口，仍按批次读取避免 Supabase 1000 行截断，但不再作为主列表入口。
+ */
 export async function getProductionPlanningRequests(): Promise<
   PlanningFbaReplenishmentRequest[]
 > {
@@ -1762,6 +1819,46 @@ export async function getProductionPlanningRequests(): Promise<
   return rows.map(normalizePlanningRequest);
 }
 
+const emptyProductionPlanningSummary: ProductionPlanningSummary = {
+  totalRequests: 0,
+  submittedRequests: 0,
+  acceptedRequests: 0,
+  urgentRequests: 0,
+  totalRequestedQuantity: 0
+};
+
+export async function getProductionPlanningPage(
+  params: ProductionPlanningPageParams = {}
+): Promise<ProductionPlanningPageResult> {
+  const page = params.page ?? 1;
+  const pageSize = params.pageSize ?? 20;
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase.rpc("get_production_planning_page", {
+      p_page: page,
+      p_page_size: pageSize,
+      p_keyword: params.keyword?.trim() || null,
+      p_filters: params.filters ?? {},
+      p_sort_by: params.sortBy ?? "created_at",
+      p_sort_direction: params.sortDirection ?? "desc"
+    }),
+    "读取排产分页列表"
+  );
+
+  if (error) {
+    throw formatSupabaseError("读取排产分页列表", error);
+  }
+
+  return normalizeRpcPage<
+    PlanningFbaReplenishmentRequest,
+    ProductionPlanningSummary
+  >(data, {
+    page,
+    pageSize,
+    summary: emptyProductionPlanningSummary
+  });
+}
+
 export async function getProductionAssignees(): Promise<ProductionProfile[]> {
   const supabase = getSupabaseClient();
   const { data, error } = await withTimeout(
@@ -1779,6 +1876,10 @@ export async function getProductionAssignees(): Promise<ProductionProfile[]> {
   return (data ?? []) as ProductionProfile[];
 }
 
+/**
+ * @deprecated 主列表请使用 getProductionOrdersPage；详情/操作流程请按当前生产单 ID 查询。
+ * 保留原因：旧兼容入口，仍按批次读取避免 Supabase 1000 行截断，但不再作为主列表入口。
+ */
 export async function getProductionOrders(): Promise<ProductionOrderTrackingRow[]> {
   const supabase = getSupabaseClient();
   const data = await fetchAllSupabaseRows<RawProductionOrderTrackingRow>(
@@ -1795,6 +1896,47 @@ export async function getProductionOrders(): Promise<ProductionOrderTrackingRow[
   );
 
   return hydrateProductionOrderIssueStatuses(rows);
+}
+
+const emptyProductionOrdersSummary: ProductionOrdersSummary = {
+  totalOrders: 0,
+  plannedOrders: 0,
+  materialPendingOrders: 0,
+  inProgressOrders: 0,
+  completedOrders: 0,
+  cancelledOrders: 0
+};
+
+export async function getProductionOrdersPage(
+  params: ProductionOrdersPageParams = {}
+): Promise<ProductionOrdersPageResult> {
+  const page = params.page ?? 1;
+  const pageSize = params.pageSize ?? 20;
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase.rpc("get_production_orders_page", {
+      p_page: page,
+      p_page_size: pageSize,
+      p_keyword: params.keyword?.trim() || null,
+      p_filters: params.filters ?? {},
+      p_sort_by: params.sortBy ?? "created_at",
+      p_sort_direction: params.sortDirection ?? "desc"
+    }),
+    "读取生产任务分页列表"
+  );
+
+  if (error) {
+    throw formatSupabaseError("读取生产任务分页列表", error);
+  }
+
+  return normalizeRpcPage<ProductionOrderTrackingRow, ProductionOrdersSummary>(
+    data,
+    {
+      page,
+      pageSize,
+      summary: emptyProductionOrdersSummary
+    }
+  );
 }
 
 export async function getProductionOrderDetail(

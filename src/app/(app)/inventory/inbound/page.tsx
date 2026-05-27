@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { Modal } from "@/components/Modal";
-import { getWarehouses, type Warehouse } from "@/lib/api/master-data";
+import { searchWarehouseOptions, type WarehouseRow as Warehouse } from "@/lib/api/warehouses";
 import {
   bulkCreateOtherInbound,
   createOtherInbound,
@@ -199,7 +199,7 @@ export default function InventoryInboundPage() {
         await Promise.all([
         getReceivablePurchaseOrders(),
         getReceivableProductionOrders(),
-        getWarehouses(),
+        searchWarehouseOptions("", 20),
         getSkuOptionsForInventory()
       ]);
 
@@ -279,6 +279,19 @@ export default function InventoryInboundPage() {
       setOtherSkuId(matchedSku.id);
     }
   }, [filteredSkuOptions, otherSkuId, otherSkuKeyword]);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const skuData = await getSkuOptionsForInventory(otherSkuKeyword, 20);
+        setSkuOptions(skuData.filter((sku) => sku.status === "active"));
+      } catch (error) {
+        setErrorMessage(getErrorMessage(error));
+      }
+    }, 300);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [otherSkuKeyword]);
 
   useEffect(() => {
     if (!selectedPurchaseOrder) {
@@ -1019,7 +1032,10 @@ export default function InventoryInboundPage() {
               搜索 SKU
               <input
                 value={otherSkuKeyword}
-                onChange={(event) => setOtherSkuKeyword(event.target.value)}
+                onChange={(event) => {
+                  setOtherSkuKeyword(event.target.value);
+                  setOtherSkuId("");
+                }}
                 placeholder="输入 SKU 编码 / SKU 名称"
                 disabled={submitting}
               />

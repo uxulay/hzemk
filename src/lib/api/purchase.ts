@@ -1,5 +1,7 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { fetchAllSupabaseRows } from "@/lib/supabase/pagination";
+import type { ListPageParams, ListPageResult } from "@/lib/api/page-types";
+import { normalizeRpcPage } from "@/lib/api/page-types";
 
 export type PurchaseOrderStatus =
   | "draft"
@@ -135,6 +137,32 @@ export type PurchaseOrder = {
   item_count: number;
   source: PurchaseOrderSource;
 };
+
+export type PurchaseOrderSummary = {
+  totalOrders: number;
+  draftOrders: number;
+  orderedOrders: number;
+  partiallyReceivedOrders: number;
+  receivedOrders: number;
+  cancelledOrders: number;
+  orderedQuantityTotal: number;
+  receivedQuantityTotal: number;
+};
+
+export type PurchaseOrdersPageFilters = {
+  status?: string;
+  supplierId?: string;
+  warehouseId?: string;
+  startDate?: string;
+  endDate?: string;
+};
+
+export type PurchaseOrdersPageParams = ListPageParams<PurchaseOrdersPageFilters>;
+
+export type PurchaseOrdersPageResult = ListPageResult<
+  PurchaseOrder,
+  PurchaseOrderSummary
+>;
 
 export type CreatePurchaseOrderInput = {
   supplierId: string;
@@ -513,6 +541,10 @@ export async function getShortageMaterialRequirements(): Promise<
   );
 }
 
+/**
+ * @deprecated 主列表请使用 getPurchaseOrdersPage；详情请使用 getPurchaseOrderDetail。
+ * 保留原因：旧兼容入口，仍按批次读取避免 Supabase 1000 行截断，但不再作为主列表入口。
+ */
 export async function getPurchaseOrders(): Promise<PurchaseOrder[]> {
   const supabase = getSupabaseClient();
   const data = await fetchAllSupabaseRows<RawPurchaseOrder>(
@@ -525,6 +557,46 @@ export async function getPurchaseOrders(): Promise<PurchaseOrder[]> {
   );
 
   return data.map(normalizePurchaseOrder);
+}
+
+const emptyPurchaseOrderSummary: PurchaseOrderSummary = {
+  totalOrders: 0,
+  draftOrders: 0,
+  orderedOrders: 0,
+  partiallyReceivedOrders: 0,
+  receivedOrders: 0,
+  cancelledOrders: 0,
+  orderedQuantityTotal: 0,
+  receivedQuantityTotal: 0
+};
+
+export async function getPurchaseOrdersPage(
+  params: PurchaseOrdersPageParams = {}
+): Promise<PurchaseOrdersPageResult> {
+  const page = params.page ?? 1;
+  const pageSize = params.pageSize ?? 20;
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase.rpc("get_purchase_orders_page", {
+      p_page: page,
+      p_page_size: pageSize,
+      p_keyword: params.keyword?.trim() || null,
+      p_filters: params.filters ?? {},
+      p_sort_by: params.sortBy ?? "created_at",
+      p_sort_direction: params.sortDirection ?? "desc"
+    }),
+    "读取采购单分页列表"
+  );
+
+  if (error) {
+    throw formatSupabaseError("读取采购单分页列表", error);
+  }
+
+  return normalizeRpcPage<PurchaseOrder, PurchaseOrderSummary>(data, {
+    page,
+    pageSize,
+    summary: emptyPurchaseOrderSummary
+  });
 }
 
 export async function getPurchaseOrderDetail(
@@ -550,35 +622,59 @@ export async function getPurchaseOrderDetail(
 export async function getPurchaseMaterialOptions(): Promise<
   PurchaseMaterialOption[]
 > {
-  const supabase = getSupabaseClient();
-  const data = await fetchAllSupabaseRows<RawPurchaseMaterialOption>(
-    () =>
-      supabase
-      .from("materials")
-      .select(
-        `
-          id,
-          material_code,
-          material_name,
-          unit,
-          specs,
-          default_supplier_id,
-          default_supplier:suppliers!materials_default_supplier_id_fkey (
-            id,
-            supplier_code,
-            name,
-            contact_name,
-            phone,
-            status
-          )
-        `
-      )
-      .eq("status", "active")
-      .order("material_code", { ascending: true }),
-    "读取辅料列表"
-  );
+  return searchPurchaseMaterialOptions();
+}
 
-  return data.map((material) => normalizePurchaseMaterialOption(material));
+export async function searchPurchaseMaterialOptions(
+  keyword = "",
+  limit = 20
+): Promise<PurchaseMaterialOption[]> {
+  const supabase = getSupabaseClient();
+  let query = supabase
+    .from("materials")
+    .select(
+      `
+        id,
+        material_code,
+        material_name,
+        unit,
+        specs,
+        default_supplier_id,
+        default_supplier:suppliers!materials_default_supplier_id_fkey (
+          id,
+          supplier_code,
+          name,
+          contact_name,
+          phone,
+          status
+        )
+      `
+    )
+    .eq("status", "active")
+    .order("material_code", { ascending: true })
+    .limit(limit);
+
+  const normalizedKeyword = keyword.trim();
+
+  if (normalizedKeyword) {
+    query = query.or(
+      [
+        `material_code.ilike.%${normalizedKeyword}%`,
+        `material_name.ilike.%${normalizedKeyword}%`,
+        `specs.ilike.%${normalizedKeyword}%`
+      ].join(",")
+    );
+  }
+
+  const { data, error } = await withTimeout(query, "搜索采购辅料列表");
+
+  if (error) {
+    throw formatSupabaseError("搜索采购辅料列表", error);
+  }
+
+  return ((data ?? []) as unknown as RawPurchaseMaterialOption[]).map(
+    normalizePurchaseMaterialOption
+  );
 }
 
 export async function getPurchaseProfileOptions(): Promise<PurchaseProfileOption[]> {

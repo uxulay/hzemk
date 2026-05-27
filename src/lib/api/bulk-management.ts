@@ -281,18 +281,51 @@ async function getRowsByIds<TRow>(table: string, columns: string, ids: string[])
   return data;
 }
 
-async function getBrandsForImport() {
-  const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase.from("brands").select("id, brand_code, name, status"),
-    "读取品牌资料"
+async function getBrandsForImport(brandTexts: string[]) {
+  const uniqueTexts = Array.from(
+    new Set(
+      brandTexts
+        .map((value) => normalizeCsvValue(value))
+        .filter(Boolean)
+    )
   );
 
-  if (error) {
-    throw formatSupabaseError("读取品牌资料", error);
+  if (uniqueTexts.length === 0) {
+    return [];
   }
 
-  return (data ?? []) as BrandMinimal[];
+  const supabase = getSupabaseClient();
+  const [codeResult, nameResult] = await Promise.all([
+    withTimeout(
+      supabase
+        .from("brands")
+        .select("id, brand_code, name, status")
+        .in("brand_code", uniqueTexts),
+      "按品牌编码读取品牌资料"
+    ),
+    withTimeout(
+      supabase
+        .from("brands")
+        .select("id, brand_code, name, status")
+        .in("name", uniqueTexts),
+      "按品牌名称读取品牌资料"
+    )
+  ]);
+
+  if (codeResult.error) {
+    throw formatSupabaseError("按品牌编码读取品牌资料", codeResult.error);
+  }
+
+  if (nameResult.error) {
+    throw formatSupabaseError("按品牌名称读取品牌资料", nameResult.error);
+  }
+
+  return [
+    ...new Map(
+      [...(codeResult.data ?? []), ...(nameResult.data ?? [])]
+        .map((brand) => [brand.id, brand as BrandMinimal])
+    ).values()
+  ];
 }
 
 async function hasReference(
@@ -511,9 +544,21 @@ export async function validateProductImportRows(
   const productCodes = rows.map((row) =>
     normalizeCsvValue(row.spu || row.product_code)
   );
+  const brandTexts = rows
+    .map((row) =>
+      getCsvValue(row, [
+        "brand",
+        "brand_code",
+        "brand_name",
+        "品牌",
+        "品牌编码",
+        "品牌名称"
+      ])
+    )
+    .filter(Boolean);
   const [existingCodes, brands] = await Promise.all([
     getExistingCodeSet("products", "product_code", productCodes),
-    getBrandsForImport()
+    getBrandsForImport(brandTexts)
   ]);
   const seenCodes = new Set<string>();
   const brandByCode = new Map(

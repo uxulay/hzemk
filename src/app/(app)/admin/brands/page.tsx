@@ -16,8 +16,7 @@ import {
 } from "@/lib/api/bulk-management";
 import {
   createBrand,
-  getBrandStats,
-  getBrands,
+  getBrandsPage,
   toggleBrandStatus,
   updateBrand,
   type BrandListRow,
@@ -25,7 +24,7 @@ import {
   type BrandStatus
 } from "@/lib/api/brands";
 import { downloadCsvTemplate, type CsvTemplateField } from "@/lib/utils/csv";
-import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
+import { DEFAULT_PAGE_SIZE } from "@/lib/utils/pagination";
 
 const brandStatusLabels: Record<string, string> = {
   active: "启用",
@@ -133,6 +132,7 @@ export default function AdminBrandsPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedBrandIds, setSelectedBrandIds] = useState<string[]>([]);
   const [page, setPage] = useState(1);
+  const [totalBrands, setTotalBrands] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [brandToDelete, setBrandToDelete] = useState<BrandListRow | null>(null);
@@ -144,60 +144,48 @@ export default function AdminBrandsPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
-  const filteredBrands = useMemo(() => {
-    const keyword = searchKeyword.trim().toLowerCase();
-
-    return brands.filter((brand) => {
-      const matchesKeyword =
-        !keyword ||
-        brand.brand_code.toLowerCase().includes(keyword) ||
-        brand.name.toLowerCase().includes(keyword) ||
-        (brand.english_name ?? "").toLowerCase().includes(keyword);
-      const matchesStatus =
-        statusFilter === "all" || brand.status === statusFilter;
-
-      return matchesKeyword && matchesStatus;
-    });
-  }, [brands, searchKeyword, statusFilter]);
-
   const selectedBrands = useMemo(
     () => brands.filter((brand) => selectedBrandIds.includes(brand.id)),
     [brands, selectedBrandIds]
   );
-  const paginatedBrands = useMemo(
-    () => paginateItems(filteredBrands, page),
-    [filteredBrands, page]
-  );
   const allFilteredSelected =
-    filteredBrands.length > 0 &&
-    filteredBrands.every((brand) => selectedBrandIds.includes(brand.id));
+    brands.length > 0 &&
+    brands.every((brand) => selectedBrandIds.includes(brand.id));
 
   const loadPageData = async () => {
     try {
       setLoading(true);
       setErrorMessage("");
 
-      const [brandData, statsData] = await Promise.all([
-        getBrands(),
-        getBrandStats()
-      ]);
+      const brandPage = await getBrandsPage({
+        page,
+        pageSize: DEFAULT_PAGE_SIZE,
+        keyword: searchKeyword,
+        filters: {
+          status: statusFilter
+        }
+      });
 
-      setBrands(brandData);
-      setStats(statsData);
+      setBrands(brandPage.rows);
+      setStats(brandPage.summary);
+      setTotalBrands(brandPage.total);
       setSelectedBrandIds((current) =>
-        current.filter((brandId) => brandData.some((brand) => brand.id === brandId))
+        current.filter((brandId) =>
+          brandPage.rows.some((brand) => brand.id === brandId)
+        )
       );
       setSelectedBrand((current) => {
         if (!current) {
           return null;
         }
 
-        return brandData.find((brand) => brand.id === current.id) ?? null;
+        return brandPage.rows.find((brand) => brand.id === current.id) ?? current;
       });
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setBrands([]);
       setStats(initialStats);
+      setTotalBrands(0);
       setSelectedBrandIds([]);
       setSelectedBrand(null);
     } finally {
@@ -206,8 +194,12 @@ export default function AdminBrandsPage() {
   };
 
   useEffect(() => {
-    loadPageData();
-  }, []);
+    const timer = setTimeout(() => {
+      loadPageData();
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [page, searchKeyword, statusFilter]);
 
   useEffect(() => {
     setPage(1);
@@ -302,13 +294,13 @@ export default function AdminBrandsPage() {
   const toggleAllFilteredBrands = () => {
     if (allFilteredSelected) {
       setSelectedBrandIds((current) =>
-        current.filter((brandId) => !filteredBrands.some((brand) => brand.id === brandId))
+        current.filter((brandId) => !brands.some((brand) => brand.id === brandId))
       );
       return;
     }
 
     setSelectedBrandIds((current) =>
-      Array.from(new Set([...current, ...filteredBrands.map((brand) => brand.id)]))
+      Array.from(new Set([...current, ...brands.map((brand) => brand.id)]))
     );
   };
 
@@ -680,11 +672,11 @@ export default function AdminBrandsPage() {
 
         {loading ? <div className="debugNotice">正在读取品牌数据...</div> : null}
 
-        {!loading && filteredBrands.length === 0 ? (
+        {!loading && brands.length === 0 ? (
           <div className="emptyState">暂无品牌</div>
         ) : null}
 
-        {!loading && filteredBrands.length > 0 ? (
+        {!loading && brands.length > 0 ? (
           <div className="tableWrap">
             <table className="dataTable productTable">
               <thead>
@@ -711,7 +703,7 @@ export default function AdminBrandsPage() {
                 </tr>
               </thead>
               <tbody>
-                {paginatedBrands.map((brand) => {
+                {brands.map((brand) => {
                   const statusUpdating = statusUpdatingId === brand.id;
 
                   return (
@@ -784,11 +776,11 @@ export default function AdminBrandsPage() {
           </div>
         ) : null}
 
-        {!loading && filteredBrands.length > 0 ? (
+        {!loading && totalBrands > 0 ? (
           <Pagination
             page={page}
             pageSize={DEFAULT_PAGE_SIZE}
-            total={filteredBrands.length}
+            total={totalBrands}
             onPageChange={setPage}
           />
         ) : null}

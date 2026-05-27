@@ -189,6 +189,10 @@ function countDefaultMaterialsBySupplier(materials: SupplierDefaultMaterialLink[
   return materialCountBySupplier;
 }
 
+/**
+ * @deprecated 主列表请使用 getSuppliersPage；下拉请使用 searchMaterialSupplierOptions 等远程搜索入口。
+ * 保留原因：旧兼容入口，仍按批次读取避免 Supabase 1000 行截断，但不再作为主列表入口。
+ */
 export async function getSuppliers(): Promise<SupplierListRow[]> {
   const supabase = getSupabaseClient();
   const [supplierRows, purchaseOrderRows, defaultMaterialRows] =
@@ -325,44 +329,85 @@ export async function getSuppliersPage(
 
 export async function getSupplierStats(): Promise<SupplierStats> {
   const supabase = getSupabaseClient();
-  const [supplierRows, purchaseOrderRows, defaultMaterialRows] =
+  const [
+    totalResult,
+    activeResult,
+    inactiveResult,
+    purchaseOrderRows,
+    defaultMaterialRows
+  ] =
     await Promise.all([
-    fetchAllSupabaseRows<{ id: string; status: string }>(
-      () => supabase.from("suppliers").select("id, status"),
+    withTimeout(
+      supabase.from("suppliers").select("id", { count: "exact", head: true }),
       "统计供应商数量"
     ),
-    fetchAllSupabaseRows<SupplierPurchaseOrderLink>(
-      () => supabase.from("purchase_orders").select("id, supplier_id"),
+    withTimeout(
+      supabase
+        .from("suppliers")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "active"),
+      "统计启用供应商数量"
+    ),
+    withTimeout(
+      supabase
+        .from("suppliers")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "inactive"),
+      "统计停用供应商数量"
+    ),
+    withTimeout(
+      supabase
+        .from("purchase_orders")
+        .select("supplier_id")
+        .not("supplier_id", "is", null),
       "统计已产生采购单的供应商数量"
     ),
-    fetchAllSupabaseRows<SupplierDefaultMaterialLink>(
-      () =>
-        supabase
+    withTimeout(
+      supabase
         .from("materials")
-        .select("id, default_supplier_id")
+        .select("default_supplier_id")
         .not("default_supplier_id", "is", null),
       "统计已关联辅料的供应商数量"
     )
   ]);
 
+  if (totalResult.error) {
+    throw formatSupabaseError("统计供应商数量", totalResult.error);
+  }
+  if (activeResult.error) {
+    throw formatSupabaseError("统计启用供应商数量", activeResult.error);
+  }
+  if (inactiveResult.error) {
+    throw formatSupabaseError("统计停用供应商数量", inactiveResult.error);
+  }
+  if (purchaseOrderRows.error) {
+    throw formatSupabaseError(
+      "统计已产生采购单的供应商数量",
+      purchaseOrderRows.error
+    );
+  }
+  if (defaultMaterialRows.error) {
+    throw formatSupabaseError(
+      "统计已关联辅料的供应商数量",
+      defaultMaterialRows.error
+    );
+  }
+
   const supplierIdsWithPurchaseOrders = new Set(
-    purchaseOrderRows
+    ((purchaseOrderRows.data ?? []) as SupplierPurchaseOrderLink[])
       .map((purchaseOrder) => purchaseOrder.supplier_id)
       .filter((supplierId): supplierId is string => Boolean(supplierId))
   );
   const supplierIdsWithDefaultMaterials = new Set(
-    defaultMaterialRows
+    ((defaultMaterialRows.data ?? []) as SupplierDefaultMaterialLink[])
       .map((material) => material.default_supplier_id)
       .filter((supplierId): supplierId is string => Boolean(supplierId))
   );
 
   return {
-    totalSuppliers: supplierRows.length,
-    activeSuppliers: supplierRows.filter((supplier) => supplier.status === "active")
-      .length,
-    inactiveSuppliers: supplierRows.filter(
-      (supplier) => supplier.status === "inactive"
-    ).length,
+    totalSuppliers: totalResult.count ?? 0,
+    activeSuppliers: activeResult.count ?? 0,
+    inactiveSuppliers: inactiveResult.count ?? 0,
     suppliersWithPurchaseOrders: supplierIdsWithPurchaseOrders.size,
     suppliersWithDefaultMaterials: supplierIdsWithDefaultMaterials.size
   };

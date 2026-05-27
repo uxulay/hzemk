@@ -134,6 +134,9 @@ export async function getRoles(): Promise<Role[]> {
   return (data ?? []) as Role[];
 }
 
+/**
+ * @deprecated 仅供 debug/过渡页面使用；业务主列表请使用 products.ts 的分页/远程搜索入口。
+ */
 export async function getProducts(): Promise<Product[]> {
   const supabase = getSupabaseClient();
   const data = await fetchAllSupabaseRows<RawProduct>(
@@ -160,6 +163,9 @@ export async function getProducts(): Promise<Product[]> {
   return data.map(normalizeProduct);
 }
 
+/**
+ * @deprecated 仅供 debug/过渡页面使用；业务选择器请使用对应远程搜索入口。
+ */
 export async function getSkus(): Promise<Sku[]> {
   const supabase = getSupabaseClient();
   const data = await fetchAllSupabaseRows<Sku>(
@@ -191,6 +197,9 @@ export async function getProductSkus(productId: string): Promise<Sku[]> {
   return data;
 }
 
+/**
+ * @deprecated 仅供 debug/过渡页面使用；业务选择器/导入校验请按关键词或编码集合查询。
+ */
 export async function getMaterials(): Promise<Material[]> {
   const supabase = getSupabaseClient();
   const data = await fetchAllSupabaseRows<Material>(
@@ -205,6 +214,9 @@ export async function getMaterials(): Promise<Material[]> {
   return data;
 }
 
+/**
+ * @deprecated 仅供 debug/过渡页面使用；业务选择器请使用远程搜索入口。
+ */
 export async function getSuppliers(): Promise<Supplier[]> {
   const supabase = getSupabaseClient();
   return fetchAllSupabaseRows<Supplier>(
@@ -217,6 +229,9 @@ export async function getSuppliers(): Promise<Supplier[]> {
   );
 }
 
+/**
+ * @deprecated 仅供 debug/过渡页面和少量操作页兼容；新选择器请使用 searchWarehouseOptions。
+ */
 export async function getWarehouses(): Promise<Warehouse[]> {
   const supabase = getSupabaseClient();
   return fetchAllSupabaseRows<Warehouse>(

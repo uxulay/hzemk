@@ -205,6 +205,10 @@ function normalizeProduct(row: RawProductRow): ProductRow {
   };
 }
 
+/**
+ * @deprecated 主列表请使用 getProductsPage；下拉请选择对应远程搜索入口。
+ * 保留原因：旧兼容入口，仍按批次读取避免 Supabase 1000 行截断，但不再作为主列表入口。
+ */
 export async function getProducts(): Promise<ProductListRow[]> {
   const supabase = getSupabaseClient();
   const [productRows, skuRows] = await Promise.all([

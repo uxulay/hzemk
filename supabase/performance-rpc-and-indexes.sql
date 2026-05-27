@@ -55,13 +55,13 @@ with params as (
 ),
 inventory_summary as (
   select
-    coalesce(product_sku_id, sku_id) as sku_id,
-    sum(quantity_on_hand)::numeric as quantity_on_hand,
-    sum(reserved_quantity)::numeric as reserved_quantity,
+    coalesce(ii.product_sku_id, ii.sku_id) as sku_id,
+    sum(ii.quantity_on_hand)::numeric as quantity_on_hand,
+    sum(ii.reserved_quantity)::numeric as reserved_quantity,
     count(*)::integer as inventory_row_count
-  from public.inventory_items
-  where coalesce(product_sku_id, sku_id) is not null
-  group by coalesce(product_sku_id, sku_id)
+  from public.inventory_items ii
+  where coalesce(ii.product_sku_id, ii.sku_id) is not null
+  group by coalesce(ii.product_sku_id, ii.sku_id)
 ),
 filtered as (
   select
@@ -123,17 +123,17 @@ filtered as (
     )
 ),
 paged as (
-  select *
+  select filtered.*
   from filtered, params
   order by
-    case when params.sort_by = 'sku_name' and params.sort_direction = 'asc' then sku_name end asc,
-    case when params.sort_by = 'sku_name' and params.sort_direction = 'desc' then sku_name end desc,
-    case when params.sort_by = 'created_at' and params.sort_direction = 'asc' then created_at end asc,
-    case when params.sort_by = 'created_at' and params.sort_direction = 'desc' then created_at end desc,
-    case when params.sort_by = 'updated_at' and params.sort_direction = 'asc' then updated_at end asc,
-    case when params.sort_by = 'updated_at' and params.sort_direction = 'desc' then updated_at end desc,
-    case when params.sort_direction = 'desc' then sku_code end desc,
-    sku_code asc
+    case when params.sort_by = 'sku_name' and params.sort_direction = 'asc' then filtered.sku_name end asc,
+    case when params.sort_by = 'sku_name' and params.sort_direction = 'desc' then filtered.sku_name end desc,
+    case when params.sort_by = 'created_at' and params.sort_direction = 'asc' then filtered.created_at end asc,
+    case when params.sort_by = 'created_at' and params.sort_direction = 'desc' then filtered.created_at end desc,
+    case when params.sort_by = 'updated_at' and params.sort_direction = 'asc' then filtered.updated_at end asc,
+    case when params.sort_by = 'updated_at' and params.sort_direction = 'desc' then filtered.updated_at end desc,
+    case when params.sort_direction = 'desc' then filtered.sku_code end desc,
+    filtered.sku_code asc
   offset ((select page from params) - 1) * (select page_size from params)
   limit (select page_size from params)
 )
@@ -142,57 +142,57 @@ select jsonb_build_object(
   coalesce(
     jsonb_agg(
       jsonb_build_object(
-        'id', id,
-        'product_id', product_id,
-        'default_supplier_id', default_supplier_id,
-        'sku_code', sku_code,
-        'sku_name', sku_name,
-        'sku_type', sku_type,
-        'amazon_sku', amazon_sku,
-        'fnsku', fnsku,
-        'unit', unit,
-        'specs', specs,
-        'status', status,
-        'created_at', created_at,
-        'updated_at', updated_at,
-        'inventory_quantity', inventory_quantity,
-        'reserved_quantity', reserved_quantity,
-        'inventory_row_count', inventory_row_count,
+        'id', paged.id,
+        'product_id', paged.product_id,
+        'default_supplier_id', paged.default_supplier_id,
+        'sku_code', paged.sku_code,
+        'sku_name', paged.sku_name,
+        'sku_type', paged.sku_type,
+        'amazon_sku', paged.amazon_sku,
+        'fnsku', paged.fnsku,
+        'unit', paged.unit,
+        'specs', paged.specs,
+        'status', paged.status,
+        'created_at', paged.created_at,
+        'updated_at', paged.updated_at,
+        'inventory_quantity', paged.inventory_quantity,
+        'reserved_quantity', paged.reserved_quantity,
+        'inventory_row_count', paged.inventory_row_count,
         'default_supplier',
-          case when default_supplier_id is null then null else jsonb_build_object(
-            'id', default_supplier_id,
-            'supplier_code', supplier_code,
-            'name', supplier_name,
-            'contact_name', supplier_contact_name,
-            'phone', supplier_phone,
-            'status', supplier_status
+          case when paged.default_supplier_id is null then null else jsonb_build_object(
+            'id', paged.default_supplier_id,
+            'supplier_code', paged.supplier_code,
+            'name', paged.supplier_name,
+            'contact_name', paged.supplier_contact_name,
+            'phone', paged.supplier_phone,
+            'status', paged.supplier_status
           ) end,
         'product',
-          case when product_id is null then null else jsonb_build_object(
-            'id', product_id,
-            'brand_id', brand_id,
-            'product_code', product_code,
-            'name', product_name,
-            'product_image_url', product_image_url,
-            'status', product_status,
+          case when paged.product_id is null then null else jsonb_build_object(
+            'id', paged.product_id,
+            'brand_id', paged.brand_id,
+            'product_code', paged.product_code,
+            'name', paged.product_name,
+            'product_image_url', paged.product_image_url,
+            'status', paged.product_status,
             'brand',
-              case when brand_id is null then null else jsonb_build_object(
-                'id', brand_id,
-                'brand_code', brand_code,
-                'name', brand_name,
-                'english_name', brand_english_name,
-                'logo_url', brand_logo_url,
-                'status', brand_status
+              case when paged.brand_id is null then null else jsonb_build_object(
+                'id', paged.brand_id,
+                'brand_code', paged.brand_code,
+                'name', paged.brand_name,
+                'english_name', paged.brand_english_name,
+                'logo_url', paged.brand_logo_url,
+                'status', paged.brand_status
               ) end
           ) end
       )
     ),
     '[]'::jsonb
   ),
-  'total', coalesce(max(total_count), 0),
+  'total', coalesce(max(paged.total_count), 0),
   'page', (select page from params),
   'pageSize', (select page_size from params),
-  'totalPages', greatest(1, ceil(coalesce(max(total_count), 0)::numeric / (select page_size from params))::integer)
+  'totalPages', greatest(1, ceil(coalesce(max(paged.total_count), 0)::numeric / (select page_size from params))::integer)
 )
 from paged;
 $$;
@@ -285,59 +285,59 @@ filtered as (
   from joined, params
   where (
       (params.mode = 'materials' and (
-        material_id is not null
-        or item_type = 'material'
-        or legacy_sku_type = 'material'
+        joined.material_id is not null
+        or joined.item_type = 'material'
+        or joined.legacy_sku_type = 'material'
       ))
       or (params.mode <> 'materials' and (
-        product_sku_id is not null
-        or item_type in ('finished_product', 'finished_good', 'product_sku')
-        or coalesce(product_sku_type, legacy_sku_type) in ('finished_product', 'finished_good')
+        joined.product_sku_id is not null
+        or joined.item_type in ('finished_product', 'finished_good', 'product_sku')
+        or coalesce(joined.product_sku_type, joined.legacy_sku_type) in ('finished_product', 'finished_good')
       ))
     )
     and (
       params.warehouse_id is null
-      or warehouse_id::text = params.warehouse_id
+      or joined.warehouse_id::text = params.warehouse_id
     )
     and (
       params.mode = 'materials'
       or params.brand_id is null
-      or (params.brand_id = 'none' and coalesce(product_brand_id, legacy_brand_id) is null)
-      or coalesce(product_brand_id, legacy_brand_id)::text = params.brand_id
+      or (params.brand_id = 'none' and coalesce(joined.product_brand_id, joined.legacy_brand_id) is null)
+      or coalesce(joined.product_brand_id, joined.legacy_brand_id)::text = params.brand_id
     )
     and (
       params.mode <> 'materials'
       or params.stock_status is null
-      or stock_status = params.stock_status
+      or joined.stock_status = params.stock_status
     )
     and (
       params.keyword is null
-      or coalesce(material_code, '') ilike '%' || params.keyword || '%'
-      or coalesce(material_name, '') ilike '%' || params.keyword || '%'
-      or coalesce(material_specs, '') ilike '%' || params.keyword || '%'
-      or coalesce(product_sku_code, legacy_sku_code, '') ilike '%' || params.keyword || '%'
-      or coalesce(product_sku_name, legacy_sku_name, '') ilike '%' || params.keyword || '%'
-      or coalesce(product_product_name, legacy_product_name, '') ilike '%' || params.keyword || '%'
+      or coalesce(joined.material_code, '') ilike '%' || params.keyword || '%'
+      or coalesce(joined.material_name, '') ilike '%' || params.keyword || '%'
+      or coalesce(joined.material_specs, '') ilike '%' || params.keyword || '%'
+      or coalesce(joined.product_sku_code, joined.legacy_sku_code, '') ilike '%' || params.keyword || '%'
+      or coalesce(joined.product_sku_name, joined.legacy_sku_name, '') ilike '%' || params.keyword || '%'
+      or coalesce(joined.product_product_name, joined.legacy_product_name, '') ilike '%' || params.keyword || '%'
     )
 ),
 summary as (
   select
-    count(distinct coalesce(material_id, product_sku_id, sku_id))::integer as sku_kind_count,
-    coalesce(sum(quantity_on_hand), 0)::numeric as total_quantity,
-    count(*) filter (where stock_status = 'low_stock')::integer as low_stock_count,
-    count(*) filter (where stock_status = 'out_of_stock')::integer as out_of_stock_count,
-    count(distinct coalesce(product_sku_id, sku_id)) filter (where quantity_on_hand > 0)::integer as in_stock_sku_count,
-    count(distinct coalesce(product_sku_id, sku_id)) filter (where quantity_on_hand <= 0)::integer as out_of_stock_sku_count
+    count(distinct coalesce(filtered.material_id, filtered.product_sku_id, filtered.sku_id))::integer as sku_kind_count,
+    coalesce(sum(filtered.quantity_on_hand), 0)::numeric as total_quantity,
+    count(*) filter (where filtered.stock_status = 'low_stock')::integer as low_stock_count,
+    count(*) filter (where filtered.stock_status = 'out_of_stock')::integer as out_of_stock_count,
+    count(distinct coalesce(filtered.product_sku_id, filtered.sku_id)) filter (where filtered.quantity_on_hand > 0)::integer as in_stock_sku_count,
+    count(distinct coalesce(filtered.product_sku_id, filtered.sku_id)) filter (where filtered.quantity_on_hand <= 0)::integer as out_of_stock_sku_count
   from filtered
 ),
 paged as (
-  select *
+  select filtered.*
   from filtered, params
   order by
-    case when params.sort_by = 'quantity' and params.sort_direction = 'asc' then quantity_on_hand end asc,
-    case when params.sort_by = 'quantity' and params.sort_direction = 'desc' then quantity_on_hand end desc,
-    case when params.sort_direction = 'asc' then updated_at end asc,
-    updated_at desc
+    case when params.sort_by = 'quantity' and params.sort_direction = 'asc' then filtered.quantity_on_hand end asc,
+    case when params.sort_by = 'quantity' and params.sort_direction = 'desc' then filtered.quantity_on_hand end desc,
+    case when params.sort_direction = 'asc' then filtered.updated_at end asc,
+    filtered.updated_at desc
   offset ((select page from params) - 1) * (select page_size from params)
   limit (select page_size from params)
 )
@@ -346,90 +346,90 @@ select jsonb_build_object(
   coalesce(
     jsonb_agg(
       jsonb_build_object(
-        'id', id,
-        'warehouse_id', warehouse_id,
-        'sku_id', sku_id,
-        'product_sku_id', product_sku_id,
-        'material_id', material_id,
-        'item_type', item_type,
-        'quantity_on_hand', quantity_on_hand,
-        'reserved_quantity', reserved_quantity,
-        'safety_stock_quantity', safety_stock_quantity,
-        'unit', unit,
-        'updated_at', updated_at,
-        'stock_status', stock_status,
+        'id', paged.id,
+        'warehouse_id', paged.warehouse_id,
+        'sku_id', paged.sku_id,
+        'product_sku_id', paged.product_sku_id,
+        'material_id', paged.material_id,
+        'item_type', paged.item_type,
+        'quantity_on_hand', paged.quantity_on_hand,
+        'reserved_quantity', paged.reserved_quantity,
+        'safety_stock_quantity', paged.safety_stock_quantity,
+        'unit', paged.unit,
+        'updated_at', paged.updated_at,
+        'stock_status', paged.stock_status,
         'warehouse', jsonb_build_object(
-          'id', warehouse_id,
-          'warehouse_code', warehouse_code,
-          'name', warehouse_name,
-          'warehouse_type', warehouse_type,
-          'status', warehouse_status
+          'id', paged.warehouse_id,
+          'warehouse_code', paged.warehouse_code,
+          'name', paged.warehouse_name,
+          'warehouse_type', paged.warehouse_type,
+          'status', paged.warehouse_status
         ),
         'sku',
-          case when sku_id is null then null else jsonb_build_object(
-            'id', sku_id,
-            'product_id', legacy_product_id,
-            'sku_code', legacy_sku_code,
-            'sku_name', legacy_sku_name,
-            'sku_type', legacy_sku_type,
-            'unit', legacy_unit,
+          case when paged.sku_id is null then null else jsonb_build_object(
+            'id', paged.sku_id,
+            'product_id', paged.legacy_product_id,
+            'sku_code', paged.legacy_sku_code,
+            'sku_name', paged.legacy_sku_name,
+            'sku_type', paged.legacy_sku_type,
+            'unit', paged.legacy_unit,
             'product',
-              case when legacy_product_id is null then null else jsonb_build_object(
-                'id', legacy_product_id,
-                'brand_id', legacy_brand_id,
-                'product_code', legacy_product_code,
-                'name', legacy_product_name,
+              case when paged.legacy_product_id is null then null else jsonb_build_object(
+                'id', paged.legacy_product_id,
+                'brand_id', paged.legacy_brand_id,
+                'product_code', paged.legacy_product_code,
+                'name', paged.legacy_product_name,
                 'brand',
-                  case when legacy_brand_id is null then null else jsonb_build_object(
-                    'id', legacy_brand_id,
-                    'brand_code', legacy_brand_code,
-                    'name', legacy_brand_name,
-                    'english_name', legacy_brand_english_name,
-                    'logo_url', legacy_brand_logo_url,
-                    'status', legacy_brand_status
+                  case when paged.legacy_brand_id is null then null else jsonb_build_object(
+                    'id', paged.legacy_brand_id,
+                    'brand_code', paged.legacy_brand_code,
+                    'name', paged.legacy_brand_name,
+                    'english_name', paged.legacy_brand_english_name,
+                    'logo_url', paged.legacy_brand_logo_url,
+                    'status', paged.legacy_brand_status
                   ) end
               ) end
           ) end,
         'product_sku',
-          case when product_sku_id is null then null else jsonb_build_object(
-            'id', product_sku_id,
-            'product_id', product_product_id,
-            'sku_code', product_sku_code,
-            'sku_name', product_sku_name,
-            'sku_type', product_sku_type,
-            'unit', product_sku_unit,
+          case when paged.product_sku_id is null then null else jsonb_build_object(
+            'id', paged.product_sku_id,
+            'product_id', paged.product_product_id,
+            'sku_code', paged.product_sku_code,
+            'sku_name', paged.product_sku_name,
+            'sku_type', paged.product_sku_type,
+            'unit', paged.product_sku_unit,
             'product',
-              case when product_product_id is null then null else jsonb_build_object(
-                'id', product_product_id,
-                'brand_id', product_brand_id,
-                'product_code', product_product_code,
-                'name', product_product_name,
+              case when paged.product_product_id is null then null else jsonb_build_object(
+                'id', paged.product_product_id,
+                'brand_id', paged.product_brand_id,
+                'product_code', paged.product_product_code,
+                'name', paged.product_product_name,
                 'brand',
-                  case when product_brand_id is null then null else jsonb_build_object(
-                    'id', product_brand_id,
-                    'brand_code', product_brand_code,
-                    'name', product_brand_name,
-                    'english_name', product_brand_english_name,
-                    'logo_url', product_brand_logo_url,
-                    'status', product_brand_status
+                  case when paged.product_brand_id is null then null else jsonb_build_object(
+                    'id', paged.product_brand_id,
+                    'brand_code', paged.product_brand_code,
+                    'name', paged.product_brand_name,
+                    'english_name', paged.product_brand_english_name,
+                    'logo_url', paged.product_brand_logo_url,
+                    'status', paged.product_brand_status
                   ) end
               ) end
           ) end,
         'material',
-          case when material_id is null then null else jsonb_build_object(
-            'id', material_id,
-            'material_code', material_code,
-            'material_name', material_name,
-            'category', material_category,
-            'unit', material_unit,
-            'specs', material_specs,
-            'default_supplier_id', material_default_supplier_id,
-            'status', material_status,
+          case when paged.material_id is null then null else jsonb_build_object(
+            'id', paged.material_id,
+            'material_code', paged.material_code,
+            'material_name', paged.material_name,
+            'category', paged.material_category,
+            'unit', paged.material_unit,
+            'specs', paged.material_specs,
+            'default_supplier_id', paged.material_default_supplier_id,
+            'status', paged.material_status,
             'supplier',
-              case when material_default_supplier_id is null then null else jsonb_build_object(
-                'id', material_default_supplier_id,
-                'supplier_code', supplier_code,
-                'name', supplier_name
+              case when paged.material_default_supplier_id is null then null else jsonb_build_object(
+                'id', paged.material_default_supplier_id,
+                'supplier_code', paged.supplier_code,
+                'name', paged.supplier_name
               ) end
           ) end
       )
@@ -445,10 +445,10 @@ select jsonb_build_object(
       'inStockSkuCount', coalesce((select in_stock_sku_count from summary), 0),
       'outOfStockSkuCount', coalesce((select out_of_stock_sku_count from summary), 0)
     ),
-  'total', coalesce(max(total_count), 0),
+  'total', coalesce(max(paged.total_count), 0),
   'page', (select page from params),
   'pageSize', (select page_size from params),
-  'totalPages', greatest(1, ceil(coalesce(max(total_count), 0)::numeric / (select page_size from params))::integer)
+  'totalPages', greatest(1, ceil(coalesce(max(paged.total_count), 0)::numeric / (select page_size from params))::integer)
 )
 from paged;
 $$;
@@ -538,45 +538,45 @@ joined as (
 filtered as (
   select joined.*, count(*) over ()::integer as total_count
   from joined, params
-  where (params.transaction_type is null or transaction_type = params.transaction_type)
-    and (params.warehouse_id is null or warehouse_id::text = params.warehouse_id)
+  where (params.transaction_type is null or joined.transaction_type = params.transaction_type)
+    and (params.warehouse_id is null or joined.warehouse_id::text = params.warehouse_id)
     and (
       params.brand_id is null
-      or (params.brand_id = 'none' and (material_id is not null or coalesce(product_brand_id, legacy_brand_id) is null))
-      or coalesce(product_brand_id, legacy_brand_id)::text = params.brand_id
+      or (params.brand_id = 'none' and (joined.material_id is not null or coalesce(joined.product_brand_id, joined.legacy_brand_id) is null))
+      or coalesce(joined.product_brand_id, joined.legacy_brand_id)::text = params.brand_id
     )
     and (
       params.start_date is null
-      or occurred_at >= (params.start_date::date)::timestamptz
+      or joined.occurred_at >= (params.start_date::date)::timestamptz
     )
     and (
       params.end_date is null
-      or occurred_at < ((params.end_date::date + interval '1 day')::timestamptz)
+      or joined.occurred_at < ((params.end_date::date + interval '1 day')::timestamptz)
     )
     and (
       params.keyword is null
-      or coalesce(material_code, '') ilike '%' || params.keyword || '%'
-      or coalesce(material_name, '') ilike '%' || params.keyword || '%'
-      or coalesce(material_specs, '') ilike '%' || params.keyword || '%'
-      or coalesce(product_sku_code, legacy_sku_code, '') ilike '%' || params.keyword || '%'
-      or coalesce(product_sku_name, legacy_sku_name, '') ilike '%' || params.keyword || '%'
-      or coalesce(product_product_name, legacy_product_name, '') ilike '%' || params.keyword || '%'
-      or coalesce(transaction_no, '') ilike '%' || params.keyword || '%'
+      or coalesce(joined.material_code, '') ilike '%' || params.keyword || '%'
+      or coalesce(joined.material_name, '') ilike '%' || params.keyword || '%'
+      or coalesce(joined.material_specs, '') ilike '%' || params.keyword || '%'
+      or coalesce(joined.product_sku_code, joined.legacy_sku_code, '') ilike '%' || params.keyword || '%'
+      or coalesce(joined.product_sku_name, joined.legacy_sku_name, '') ilike '%' || params.keyword || '%'
+      or coalesce(joined.product_product_name, joined.legacy_product_name, '') ilike '%' || params.keyword || '%'
+      or coalesce(joined.transaction_no, '') ilike '%' || params.keyword || '%'
     )
 ),
 summary as (
   select
-    count(*) filter (where transaction_type = 'material_in')::integer as material_in,
-    count(*) filter (where transaction_type = 'material_out')::integer as material_out,
-    count(*) filter (where transaction_type = 'product_in')::integer as product_in,
-    count(*) filter (where transaction_type = 'product_out')::integer as product_out,
-    count(*) filter (where transaction_type = 'adjustment')::integer as adjustment
+    count(*) filter (where filtered.transaction_type = 'material_in')::integer as material_in,
+    count(*) filter (where filtered.transaction_type = 'material_out')::integer as material_out,
+    count(*) filter (where filtered.transaction_type = 'product_in')::integer as product_in,
+    count(*) filter (where filtered.transaction_type = 'product_out')::integer as product_out,
+    count(*) filter (where filtered.transaction_type = 'adjustment')::integer as adjustment
   from filtered
 ),
 paged as (
-  select *
+  select filtered.*
   from filtered
-  order by occurred_at desc, created_at desc
+  order by filtered.occurred_at desc, filtered.created_at desc
   offset ((select page from params) - 1) * (select page_size from params)
   limit (select page_size from params)
 )
@@ -585,117 +585,117 @@ select jsonb_build_object(
   coalesce(
     jsonb_agg(
       jsonb_build_object(
-        'id', id,
-        'transaction_no', transaction_no,
-        'warehouse_id', warehouse_id,
-        'sku_id', sku_id,
-        'product_sku_id', product_sku_id,
-        'material_id', material_id,
-        'transaction_type', transaction_type,
-        'quantity', quantity,
-        'production_order_id', production_order_id,
-        'purchase_order_id', purchase_order_id,
-        'replenishment_request_id', replenishment_request_id,
-        'operator_id', operator_id,
-        'occurred_at', occurred_at,
-        'notes', notes,
-        'created_at', created_at,
+        'id', paged.id,
+        'transaction_no', paged.transaction_no,
+        'warehouse_id', paged.warehouse_id,
+        'sku_id', paged.sku_id,
+        'product_sku_id', paged.product_sku_id,
+        'material_id', paged.material_id,
+        'transaction_type', paged.transaction_type,
+        'quantity', paged.quantity,
+        'production_order_id', paged.production_order_id,
+        'purchase_order_id', paged.purchase_order_id,
+        'replenishment_request_id', paged.replenishment_request_id,
+        'operator_id', paged.operator_id,
+        'occurred_at', paged.occurred_at,
+        'notes', paged.notes,
+        'created_at', paged.created_at,
         'related_order_type',
           case
-            when purchase_order_id is not null then 'purchase_order'
-            when production_order_id is not null then 'production_order'
-            when replenishment_request_id is not null then 'fba_replenishment_request'
+            when paged.purchase_order_id is not null then 'purchase_order'
+            when paged.production_order_id is not null then 'production_order'
+            when paged.replenishment_request_id is not null then 'fba_replenishment_request'
             else null
           end,
-        'related_order_no', coalesce(purchase_order_no, production_order_no, request_no),
+        'related_order_no', coalesce(paged.purchase_order_no, paged.production_order_no, paged.request_no),
         'warehouse', jsonb_build_object(
-          'id', warehouse_id,
-          'warehouse_code', warehouse_code,
-          'name', warehouse_name,
-          'warehouse_type', warehouse_type,
-          'status', warehouse_status
+          'id', paged.warehouse_id,
+          'warehouse_code', paged.warehouse_code,
+          'name', paged.warehouse_name,
+          'warehouse_type', paged.warehouse_type,
+          'status', paged.warehouse_status
         ),
         'purchase_order',
-          case when purchase_order_id is null then null else jsonb_build_object(
-            'id', purchase_order_id,
-            'purchase_order_no', purchase_order_no
+          case when paged.purchase_order_id is null then null else jsonb_build_object(
+            'id', paged.purchase_order_id,
+            'purchase_order_no', paged.purchase_order_no
           ) end,
         'production_order',
-          case when production_order_id is null then null else jsonb_build_object(
-            'id', production_order_id,
-            'production_order_no', production_order_no
+          case when paged.production_order_id is null then null else jsonb_build_object(
+            'id', paged.production_order_id,
+            'production_order_no', paged.production_order_no
           ) end,
         'replenishment_request',
-          case when replenishment_request_id is null then null else jsonb_build_object(
-            'id', replenishment_request_id,
-            'request_no', request_no
+          case when paged.replenishment_request_id is null then null else jsonb_build_object(
+            'id', paged.replenishment_request_id,
+            'request_no', paged.request_no
           ) end,
         'operator',
-          case when operator_id is null then null else jsonb_build_object(
-            'id', operator_id,
-            'full_name', operator_full_name,
-            'email', operator_email
+          case when paged.operator_id is null then null else jsonb_build_object(
+            'id', paged.operator_id,
+            'full_name', paged.operator_full_name,
+            'email', paged.operator_email
           ) end,
         'sku',
-          case when sku_id is null then null else jsonb_build_object(
-            'id', sku_id,
-            'product_id', legacy_product_id,
-            'sku_code', legacy_sku_code,
-            'sku_name', legacy_sku_name,
-            'sku_type', legacy_sku_type,
-            'unit', legacy_unit,
+          case when paged.sku_id is null then null else jsonb_build_object(
+            'id', paged.sku_id,
+            'product_id', paged.legacy_product_id,
+            'sku_code', paged.legacy_sku_code,
+            'sku_name', paged.legacy_sku_name,
+            'sku_type', paged.legacy_sku_type,
+            'unit', paged.legacy_unit,
             'product',
-              case when legacy_product_id is null then null else jsonb_build_object(
-                'id', legacy_product_id,
-                'brand_id', legacy_brand_id,
-                'product_code', legacy_product_code,
-                'name', legacy_product_name,
+              case when paged.legacy_product_id is null then null else jsonb_build_object(
+                'id', paged.legacy_product_id,
+                'brand_id', paged.legacy_brand_id,
+                'product_code', paged.legacy_product_code,
+                'name', paged.legacy_product_name,
                 'brand',
-                  case when legacy_brand_id is null then null else jsonb_build_object(
-                    'id', legacy_brand_id,
-                    'brand_code', legacy_brand_code,
-                    'name', legacy_brand_name,
-                    'english_name', legacy_brand_english_name,
-                    'logo_url', legacy_brand_logo_url,
-                    'status', legacy_brand_status
+                  case when paged.legacy_brand_id is null then null else jsonb_build_object(
+                    'id', paged.legacy_brand_id,
+                    'brand_code', paged.legacy_brand_code,
+                    'name', paged.legacy_brand_name,
+                    'english_name', paged.legacy_brand_english_name,
+                    'logo_url', paged.legacy_brand_logo_url,
+                    'status', paged.legacy_brand_status
                   ) end
               ) end
           ) end,
         'product_sku',
-          case when product_sku_id is null then null else jsonb_build_object(
-            'id', product_sku_id,
-            'product_id', product_product_id,
-            'sku_code', product_sku_code,
-            'sku_name', product_sku_name,
-            'sku_type', product_sku_type,
-            'unit', product_sku_unit,
+          case when paged.product_sku_id is null then null else jsonb_build_object(
+            'id', paged.product_sku_id,
+            'product_id', paged.product_product_id,
+            'sku_code', paged.product_sku_code,
+            'sku_name', paged.product_sku_name,
+            'sku_type', paged.product_sku_type,
+            'unit', paged.product_sku_unit,
             'product',
-              case when product_product_id is null then null else jsonb_build_object(
-                'id', product_product_id,
-                'brand_id', product_brand_id,
-                'product_code', product_product_code,
-                'name', product_product_name,
+              case when paged.product_product_id is null then null else jsonb_build_object(
+                'id', paged.product_product_id,
+                'brand_id', paged.product_brand_id,
+                'product_code', paged.product_product_code,
+                'name', paged.product_product_name,
                 'brand',
-                  case when product_brand_id is null then null else jsonb_build_object(
-                    'id', product_brand_id,
-                    'brand_code', product_brand_code,
-                    'name', product_brand_name,
-                    'english_name', product_brand_english_name,
-                    'logo_url', product_brand_logo_url,
-                    'status', product_brand_status
+                  case when paged.product_brand_id is null then null else jsonb_build_object(
+                    'id', paged.product_brand_id,
+                    'brand_code', paged.product_brand_code,
+                    'name', paged.product_brand_name,
+                    'english_name', paged.product_brand_english_name,
+                    'logo_url', paged.product_brand_logo_url,
+                    'status', paged.product_brand_status
                   ) end
               ) end
           ) end,
         'material',
-          case when material_id is null then null else jsonb_build_object(
-            'id', material_id,
-            'material_code', material_code,
-            'material_name', material_name,
-            'category', material_category,
-            'unit', material_unit,
-            'specs', material_specs,
-            'default_supplier_id', material_default_supplier_id,
-            'status', material_status
+          case when paged.material_id is null then null else jsonb_build_object(
+            'id', paged.material_id,
+            'material_code', paged.material_code,
+            'material_name', paged.material_name,
+            'category', paged.material_category,
+            'unit', paged.material_unit,
+            'specs', paged.material_specs,
+            'default_supplier_id', paged.material_default_supplier_id,
+            'status', paged.material_status
           ) end
       )
     ),
@@ -709,10 +709,10 @@ select jsonb_build_object(
       'product_out', coalesce((select product_out from summary), 0),
       'adjustment', coalesce((select adjustment from summary), 0)
     ),
-  'total', coalesce(max(total_count), 0),
+  'total', coalesce(max(paged.total_count), 0),
   'page', (select page from params),
   'pageSize', (select page_size from params),
-  'totalPages', greatest(1, ceil(coalesce(max(total_count), 0)::numeric / (select page_size from params))::integer)
+  'totalPages', greatest(1, ceil(coalesce(max(paged.total_count), 0)::numeric / (select page_size from params))::integer)
 )
 from paged;
 $$;
@@ -730,8 +730,8 @@ pending_production_inbound as (
   from public.production_orders po
   left join lateral (
     select
-      sum(planned_quantity) as planned_quantity,
-      sum(completed_quantity) as completed_quantity
+      sum(poi.planned_quantity) as planned_quantity,
+      sum(poi.completed_quantity) as completed_quantity
     from public.production_order_items poi
     where poi.production_order_id = po.id
   ) item_totals on true
@@ -742,44 +742,44 @@ pending_production_inbound as (
 inventory_warnings as (
   select
     count(*) filter (
-      where material_id is not null
-        and quantity_on_hand - reserved_quantity < coalesce(safety_stock_quantity, 0)
+      where ii.material_id is not null
+        and ii.quantity_on_hand - ii.reserved_quantity < coalesce(ii.safety_stock_quantity, 0)
     )::integer as low_stock_materials,
     count(*) filter (
-      where (product_sku_id is not null or item_type in ('finished_product', 'finished_good'))
-        and (quantity_on_hand < 0 or quantity_on_hand < reserved_quantity)
+      where (ii.product_sku_id is not null or ii.item_type in ('finished_product', 'finished_good'))
+        and (ii.quantity_on_hand < 0 or ii.quantity_on_hand < ii.reserved_quantity)
     )::integer as abnormal_finished_stock
-  from public.inventory_items
+  from public.inventory_items ii
 )
 select jsonb_build_object(
-  'fbaSubmitted', (select count(*) from public.fba_replenishment_requests where status = 'submitted'),
-  'fbaAccepted', (select count(*) from public.fba_replenishment_requests where status = 'accepted'),
-  'fbaInProduction', (select count(*) from public.fba_replenishment_requests where status = 'in_production'),
-  'fbaCompleted', (select count(*) from public.fba_replenishment_requests where status = 'completed'),
+  'fbaSubmitted', (select count(*) from public.fba_replenishment_requests r where r.status = 'submitted'),
+  'fbaAccepted', (select count(*) from public.fba_replenishment_requests r where r.status = 'accepted'),
+  'fbaInProduction', (select count(*) from public.fba_replenishment_requests r where r.status = 'in_production'),
+  'fbaCompleted', (select count(*) from public.fba_replenishment_requests r where r.status = 'completed'),
   'overdueFba', (
-    select count(*) from public.fba_replenishment_requests, today_value
-    where status in ('submitted', 'accepted', 'in_production', 'completed')
-      and target_ship_date < today_value.today
+    select count(*) from public.fba_replenishment_requests r, today_value
+    where r.status in ('submitted', 'accepted', 'in_production', 'completed')
+      and r.target_ship_date < today_value.today
   ),
-  'productionPlanned', (select count(*) from public.production_orders where status = 'planned'),
-  'productionMaterialPending', (select count(*) from public.production_orders where status = 'material_pending'),
-  'productionInProgress', (select count(*) from public.production_orders where status = 'in_progress'),
+  'productionPlanned', (select count(*) from public.production_orders po where po.status = 'planned'),
+  'productionMaterialPending', (select count(*) from public.production_orders po where po.status = 'material_pending'),
+  'productionInProgress', (select count(*) from public.production_orders po where po.status = 'in_progress'),
   'overdueProduction', (
-    select count(*) from public.production_orders, today_value
-    where status in ('planned', 'material_pending', 'in_progress')
-      and planned_end_date < today_value.today
+    select count(*) from public.production_orders po, today_value
+    where po.status in ('planned', 'material_pending', 'in_progress')
+      and po.planned_end_date < today_value.today
   ),
-  'shortageMaterials', (select count(*) from public.material_requirements where status = 'shortage'),
-  'readyMaterials', (select count(*) from public.material_requirements where status in ('ready', 'reserved', 'received')),
-  'purchaseDraft', (select count(*) from public.purchase_orders where status = 'draft'),
-  'purchaseOrdered', (select count(*) from public.purchase_orders where status in ('ordered', 'partially_received')),
+  'shortageMaterials', (select count(*) from public.material_requirements mr where mr.status = 'shortage'),
+  'readyMaterials', (select count(*) from public.material_requirements mr where mr.status in ('ready', 'reserved', 'received')),
+  'purchaseDraft', (select count(*) from public.purchase_orders po where po.status = 'draft'),
+  'purchaseOrdered', (select count(*) from public.purchase_orders po where po.status in ('ordered', 'partially_received')),
   'overduePurchase', (
-    select count(*) from public.purchase_orders, today_value
-    where status in ('ordered', 'partially_received')
-      and expected_arrival_date < today_value.today
+    select count(*) from public.purchase_orders po, today_value
+    where po.status in ('ordered', 'partially_received')
+      and po.expected_arrival_date < today_value.today
   ),
-  'productsWithoutBrand', (select count(*) from public.products where brand_id is null),
-  'materialsWithoutSupplier', (select count(*) from public.materials where default_supplier_id is null),
+  'productsWithoutBrand', (select count(*) from public.products p where p.brand_id is null),
+  'materialsWithoutSupplier', (select count(*) from public.materials m where m.default_supplier_id is null),
   'inactiveSupplierReferences', (
     select count(*)
     from public.materials m
@@ -822,19 +822,19 @@ as $$
 select jsonb_build_object(
   'lowStockMaterials',
     count(*) filter (
-      where material_id is not null
-        and quantity_on_hand - reserved_quantity < coalesce(safety_stock_quantity, 0)
+      where ii.material_id is not null
+        and ii.quantity_on_hand - ii.reserved_quantity < coalesce(ii.safety_stock_quantity, 0)
     ),
   'outOfStockMaterials',
     count(*) filter (
-      where material_id is not null
-        and quantity_on_hand - reserved_quantity <= 0
+      where ii.material_id is not null
+        and ii.quantity_on_hand - ii.reserved_quantity <= 0
     ),
   'abnormalFinishedStock',
     count(*) filter (
-      where (product_sku_id is not null or item_type in ('finished_product', 'finished_good'))
-        and (quantity_on_hand < 0 or quantity_on_hand < reserved_quantity)
+      where (ii.product_sku_id is not null or ii.item_type in ('finished_product', 'finished_good'))
+        and (ii.quantity_on_hand < 0 or ii.quantity_on_hand < ii.reserved_quantity)
     )
 )
-from public.inventory_items;
+from public.inventory_items ii;
 $$;

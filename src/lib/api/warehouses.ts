@@ -1,5 +1,7 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { fetchAllSupabaseRows } from "@/lib/supabase/pagination";
+import type { ListPageParams, ListPageResult } from "@/lib/api/page-types";
+import { normalizeRpcPage } from "@/lib/api/page-types";
 
 export type WarehouseStatus = "active" | "inactive";
 
@@ -43,6 +45,15 @@ export type WarehouseStats = {
   fbaStagingWarehouses: number;
   warehousesWithInventory: number;
 };
+
+export type WarehousePageFilters = {
+  warehouseType?: string;
+  status?: string;
+};
+
+export type WarehousePageParams = ListPageParams<WarehousePageFilters>;
+
+export type WarehousePageResult = ListPageResult<WarehouseListRow, WarehouseStats>;
 
 export type CreateWarehouseInput = {
   warehouseCode: string;
@@ -172,6 +183,10 @@ function normalizeWarehouseInventoryRow(
   };
 }
 
+/**
+ * @deprecated 主列表请使用 getWarehousesPage；下拉请使用 searchWarehouseOptions。
+ * 保留原因：旧兼容入口，仍按批次读取避免 Supabase 1000 行截断，但不再作为主列表入口。
+ */
 export async function getWarehouses(): Promise<WarehouseListRow[]> {
   const supabase = getSupabaseClient();
   const [warehouseRows, inventoryRows] = await Promise.all([
@@ -205,35 +220,150 @@ export async function getWarehouses(): Promise<WarehouseListRow[]> {
   });
 }
 
+const initialWarehouseStats: WarehouseStats = {
+  totalWarehouses: 0,
+  materialWarehouses: 0,
+  finishedGoodWarehouses: 0,
+  fbaStagingWarehouses: 0,
+  warehousesWithInventory: 0
+};
+
+export async function getWarehousesPage(
+  params: WarehousePageParams = {}
+): Promise<WarehousePageResult> {
+  const page = params.page ?? 1;
+  const pageSize = params.pageSize ?? 20;
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase.rpc("get_warehouses_page", {
+      p_page: page,
+      p_page_size: pageSize,
+      p_keyword: params.keyword?.trim() || null,
+      p_filters: params.filters ?? {},
+      p_sort_by: params.sortBy ?? "warehouse_code",
+      p_sort_direction: params.sortDirection ?? "asc"
+    }),
+    "读取仓库分页列表"
+  );
+
+  if (error) {
+    throw formatSupabaseError("读取仓库分页列表", error);
+  }
+
+  return normalizeRpcPage<WarehouseListRow, WarehouseStats>(data, {
+    page,
+    pageSize,
+    summary: initialWarehouseStats
+  });
+}
+
+export async function searchWarehouseOptions(
+  keyword = "",
+  limit = 20,
+  onlyActive = true
+): Promise<WarehouseRow[]> {
+  const supabase = getSupabaseClient();
+  let query = supabase
+    .from("warehouses")
+    .select("id, warehouse_code, name, warehouse_type, address, status, created_at, updated_at")
+    .order("warehouse_code", { ascending: true })
+    .limit(limit);
+
+  const normalizedKeyword = keyword.trim();
+
+  if (normalizedKeyword) {
+    query = query.or(
+      [
+        `warehouse_code.ilike.%${normalizedKeyword}%`,
+        `name.ilike.%${normalizedKeyword}%`
+      ].join(",")
+    );
+  }
+
+  if (onlyActive) {
+    query = query.eq("status", "active");
+  }
+
+  const { data, error } = await withTimeout(query, "搜索仓库下拉列表");
+
+  if (error) {
+    throw formatSupabaseError("搜索仓库下拉列表", error);
+  }
+
+  return (data ?? []) as WarehouseRow[];
+}
+
 export async function getWarehouseStats(): Promise<WarehouseStats> {
   const supabase = getSupabaseClient();
-  const [warehouseRows, inventoryRows] = await Promise.all([
-    fetchAllSupabaseRows<{ id: string; warehouse_type: string }>(
-      () => supabase.from("warehouses").select("id, warehouse_type"),
+  const [
+    totalResult,
+    materialResult,
+    finishedGoodResult,
+    fbaResult,
+    inventoryWarehouseResult
+  ] = await Promise.all([
+    withTimeout(
+      supabase.from("warehouses").select("id", { count: "exact", head: true }),
       "统计仓库数量"
     ),
-    fetchAllSupabaseRows<InventoryItemSummary>(
-      () => supabase.from("inventory_items").select("id, warehouse_id, sku_id, quantity_on_hand"),
+    withTimeout(
+      supabase
+        .from("warehouses")
+        .select("id", { count: "exact", head: true })
+        .eq("warehouse_type", "material"),
+      "统计原材料仓数量"
+    ),
+    withTimeout(
+      supabase
+        .from("warehouses")
+        .select("id", { count: "exact", head: true })
+        .in("warehouse_type", ["finished_good", "finished_product"]),
+      "统计成品仓数量"
+    ),
+    withTimeout(
+      supabase
+        .from("warehouses")
+        .select("id", { count: "exact", head: true })
+        .in("warehouse_type", ["fba", "fba_staging"]),
+      "统计 FBA 仓数量"
+    ),
+    withTimeout(
+      supabase
+        .from("inventory_items")
+        .select("warehouse_id")
+        .gt("quantity_on_hand", 0),
       "统计有库存的仓库数量"
     )
   ]);
 
-  const inventoryByWarehouse = countInventoryByWarehouse(inventoryRows);
+  if (totalResult.error) {
+    throw formatSupabaseError("统计仓库数量", totalResult.error);
+  }
+  if (materialResult.error) {
+    throw formatSupabaseError("统计原材料仓数量", materialResult.error);
+  }
+  if (finishedGoodResult.error) {
+    throw formatSupabaseError("统计成品仓数量", finishedGoodResult.error);
+  }
+  if (fbaResult.error) {
+    throw formatSupabaseError("统计 FBA 仓数量", fbaResult.error);
+  }
+  if (inventoryWarehouseResult.error) {
+    throw formatSupabaseError("统计有库存的仓库数量", inventoryWarehouseResult.error);
+  }
+
+  const warehouseIdsWithInventory = new Set(
+    ((inventoryWarehouseResult.data ?? []) as Array<{ warehouse_id: string | null }>)
+      .map((row) => row.warehouse_id)
+      .filter((warehouseId): warehouseId is string => Boolean(warehouseId))
+  );
 
   return {
-    totalWarehouses: warehouseRows.length,
-    materialWarehouses: warehouseRows.filter(
-      (warehouse) => warehouse.warehouse_type === "material"
-    ).length,
-    finishedGoodWarehouses: warehouseRows.filter((warehouse) =>
-      ["finished_good", "finished_product"].includes(warehouse.warehouse_type)
-    ).length,
-    fbaStagingWarehouses: warehouseRows.filter((warehouse) =>
-      ["fba", "fba_staging"].includes(warehouse.warehouse_type)
-    ).length,
-    warehousesWithInventory: [...inventoryByWarehouse.values()].filter(
-      (summary) => summary.totalQuantity > 0
-    ).length
+    totalWarehouses: totalResult.count ?? 0,
+    materialWarehouses: materialResult.count ?? 0,
+    finishedGoodWarehouses: finishedGoodResult.count ?? 0,
+    fbaStagingWarehouses: fbaResult.count ?? 0,
+    warehousesWithInventory: warehouseIdsWithInventory.size
   };
 }
 

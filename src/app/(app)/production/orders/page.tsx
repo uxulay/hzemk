@@ -7,7 +7,7 @@ import { Pagination } from "@/components/Pagination";
 import {
   getProductionOrderDetail,
   getProductionOrderIssueMaterialsPreview,
-  getProductionOrders,
+  getProductionOrdersPage,
   issueMaterialsForProductionOrder,
   type ProductionMaterialIssueStatus,
   type ProductionMaterialStatus,
@@ -18,7 +18,7 @@ import {
   type ProductionOrderTrackingRow
 } from "@/lib/api/production";
 import { getBrandCodeName } from "@/lib/brand-utils";
-import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
+import { DEFAULT_PAGE_SIZE } from "@/lib/utils/pagination";
 
 const productionStatusOptions: Array<{
   value: ProductionOrderStatusFilter;
@@ -206,46 +206,13 @@ export default function ProductionOrdersPage() {
   const [issuePreview, setIssuePreview] =
     useState<ProductionOrderIssueMaterialsPreview | null>(null);
   const [page, setPage] = useState(1);
+  const [totalOrders, setTotalOrders] = useState(0);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [issuePreviewLoadingId, setIssuePreviewLoadingId] = useState("");
   const [issuingOrderId, setIssuingOrderId] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
-
-  const filteredOrders = useMemo(() => {
-    const keyword = skuKeyword.trim().toLowerCase();
-
-    return orders.filter((order) => {
-      const matchesStatus =
-        statusFilter === "all" || order.status === statusFilter;
-      const matchesMaterialStatus =
-        materialStatusFilter === "all" ||
-        order.material_status === materialStatusFilter;
-      const skuText = `${order.sku?.sku_code ?? ""} ${order.sku?.sku_name ?? ""}`
-        .trim()
-        .toLowerCase();
-      const brandText = order.items
-        .flatMap((item) => [
-          item.sku?.product?.brand?.brand_code,
-          item.sku?.product?.brand?.name
-        ])
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      const matchesSku =
-        !keyword || skuText.includes(keyword) || brandText.includes(keyword);
-      const matchesBrand =
-        brandFilter === "all" ||
-        order.items.some((item) => {
-          const brandId = item.sku?.product?.brand?.id ?? null;
-
-          return brandFilter === "none" ? !brandId : brandId === brandFilter;
-        });
-
-      return matchesStatus && matchesMaterialStatus && matchesSku && matchesBrand;
-    });
-  }, [brandFilter, materialStatusFilter, orders, skuKeyword, statusFilter]);
 
   const brandOptions = useMemo(() => {
     const brandById = new Map<
@@ -272,11 +239,6 @@ export default function ProductionOrdersPage() {
     );
   }, [orders]);
 
-  const paginatedOrders = useMemo(
-    () => paginateItems(filteredOrders, page),
-    [filteredOrders, page]
-  );
-
   useEffect(() => {
     setPage(1);
   }, [brandFilter, materialStatusFilter, skuKeyword, statusFilter]);
@@ -286,16 +248,27 @@ export default function ProductionOrdersPage() {
       setLoading(true);
       setErrorMessage("");
 
-      const data = await getProductionOrders();
-      setOrders(data);
+      const data = await getProductionOrdersPage({
+        page,
+        pageSize: DEFAULT_PAGE_SIZE,
+        keyword: skuKeyword,
+        filters: {
+          status: statusFilter,
+          materialStatus: materialStatusFilter,
+          brandId: brandFilter
+        }
+      });
+      setOrders(data.rows);
+      setTotalOrders(data.total);
 
       if (selectedDetail) {
-        const nextDetail = data.find((order) => order.id === selectedDetail.id);
+        const nextDetail = data.rows.find((order) => order.id === selectedDetail.id);
         setSelectedDetail(nextDetail ?? null);
       }
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setOrders([]);
+      setTotalOrders(0);
       setSelectedDetail(null);
     } finally {
       setLoading(false);
@@ -303,8 +276,12 @@ export default function ProductionOrdersPage() {
   };
 
   useEffect(() => {
-    loadOrders();
-  }, []);
+    const timer = setTimeout(() => {
+      loadOrders();
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [page, brandFilter, materialStatusFilter, skuKeyword, statusFilter]);
 
   const viewDetail = async (productionOrderId: string) => {
     try {
@@ -466,11 +443,11 @@ export default function ProductionOrdersPage() {
           <div className="debugNotice">正在读取生产任务...</div>
         ) : null}
 
-        {!loading && filteredOrders.length === 0 ? (
+        {!loading && orders.length === 0 ? (
           <div className="emptyState">暂无生产任务</div>
         ) : null}
 
-        {!loading && filteredOrders.length > 0 ? (
+        {!loading && orders.length > 0 ? (
           <div className="tableWrap">
             <table className="dataTable">
               <thead>
@@ -491,7 +468,7 @@ export default function ProductionOrdersPage() {
                 </tr>
               </thead>
               <tbody>
-                {paginatedOrders.map((order) => (
+                {orders.map((order) => (
                   <tr key={order.id}>
                     <td>{order.production_order_no}</td>
                     <td>{order.replenishment_request?.request_no ?? "-"}</td>
@@ -565,11 +542,11 @@ export default function ProductionOrdersPage() {
           </div>
         ) : null}
 
-        {!loading && filteredOrders.length > 0 ? (
+        {!loading && totalOrders > 0 ? (
           <Pagination
             page={page}
             pageSize={DEFAULT_PAGE_SIZE}
-            total={filteredOrders.length}
+            total={totalOrders}
             onPageChange={setPage}
           />
         ) : null}

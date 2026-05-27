@@ -1,4 +1,6 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
+import type { ListPageParams, ListPageResult } from "@/lib/api/page-types";
+import { normalizeRpcPage } from "@/lib/api/page-types";
 
 export type MaterialRequirementStatus =
   | "enough"
@@ -55,6 +57,32 @@ export type MaterialRequirementRow = {
     unit: string;
   } | null;
 };
+
+export type MaterialRequirementsSummary = {
+  totalRequirements: number;
+  shortageRequirements: number;
+  purchasedRequirements: number;
+  receivedRequirements: number;
+  enoughRequirements: number;
+  totalRequiredQuantity: number;
+  totalShortageQuantity: number;
+};
+
+export type MaterialRequirementsPageFilters = {
+  status?: string;
+  materialId?: string;
+  supplierId?: string;
+  productionOrderId?: string;
+  purchaseStatus?: string;
+};
+
+export type MaterialRequirementsPageParams =
+  ListPageParams<MaterialRequirementsPageFilters>;
+
+export type MaterialRequirementsPageResult = ListPageResult<
+  MaterialRequirementRow,
+  MaterialRequirementsSummary
+>;
 
 type MaybeRelation<T> = T | T[] | null;
 
@@ -244,4 +272,46 @@ export async function getMaterialRequirements(options: {
   const bomItemMap = await getBomItemMap(rows);
 
   return rows.map((row) => normalizeMaterialRequirement(row, bomItemMap));
+}
+
+const emptyMaterialRequirementsSummary: MaterialRequirementsSummary = {
+  totalRequirements: 0,
+  shortageRequirements: 0,
+  purchasedRequirements: 0,
+  receivedRequirements: 0,
+  enoughRequirements: 0,
+  totalRequiredQuantity: 0,
+  totalShortageQuantity: 0
+};
+
+export async function getMaterialRequirementsPage(
+  params: MaterialRequirementsPageParams = {}
+): Promise<MaterialRequirementsPageResult> {
+  const page = params.page ?? 1;
+  const pageSize = params.pageSize ?? 20;
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase.rpc("get_material_requirements_page", {
+      p_page: page,
+      p_page_size: pageSize,
+      p_keyword: params.keyword?.trim() || null,
+      p_filters: params.filters ?? {},
+      p_sort_by: params.sortBy ?? "created_at",
+      p_sort_direction: params.sortDirection ?? "desc"
+    }),
+    "读取物料需求分页列表"
+  );
+
+  if (error) {
+    throw formatSupabaseError("读取物料需求分页列表", error);
+  }
+
+  return normalizeRpcPage<MaterialRequirementRow, MaterialRequirementsSummary>(
+    data,
+    {
+      page,
+      pageSize,
+      summary: emptyMaterialRequirementsSummary
+    }
+  );
 }

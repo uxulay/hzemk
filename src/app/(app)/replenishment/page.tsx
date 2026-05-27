@@ -4,16 +4,13 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useMockRole } from "@/components/auth/mock-role-provider";
 import { Modal } from "@/components/Modal";
 import { Pagination } from "@/components/Pagination";
-import {
-  getProducts,
-  getWarehouses,
-  type Product,
-  type Warehouse
-} from "@/lib/api/master-data";
+import { type Product, type Warehouse } from "@/lib/api/master-data";
+import { searchWarehouseOptions } from "@/lib/api/warehouses";
 import {
   createFbaReplenishmentDocument,
   getFbaReplenishmentSkuOptions,
-  getFbaReplenishmentRequests,
+  getReplenishmentRequestsPage,
+  searchFbaReplenishmentSkuOptions,
   type CreateFbaReplenishmentDocumentInput,
   type FbaReplenishmentRequest,
   type FbaReplenishmentRequestItem,
@@ -27,7 +24,7 @@ import {
   type CsvTemplateField
 } from "@/lib/utils/csv";
 import { getBrandCodeName } from "@/lib/brand-utils";
-import { DEFAULT_PAGE_SIZE, paginateItems } from "@/lib/utils/pagination";
+import { DEFAULT_PAGE_SIZE } from "@/lib/utils/pagination";
 
 type StatusFilter = FbaRequestStatus | "all";
 
@@ -83,6 +80,40 @@ type PickerSkuState = {
   quantity: string;
   remark: string;
 };
+
+function toProductOption(
+  product: NonNullable<FbaReplenishmentSkuOption["product"]>
+): Product {
+  return {
+    id: product.id,
+    brand_id: product.brand_id,
+    product_code: product.product_code,
+    name: product.name,
+    category: null,
+    description: null,
+    product_image_url: product.product_image_url,
+    status: "active",
+    created_at: "",
+    updated_at: "",
+    brand: product.brand
+  };
+}
+
+function getProductsFromSkuOptions(skuData: FbaReplenishmentSkuOption[]) {
+  return Array.from(
+    new Map(
+      skuData
+        .map((sku) => sku.product)
+        .filter(
+          (
+            product
+          ): product is NonNullable<FbaReplenishmentSkuOption["product"]> =>
+            Boolean(product)
+        )
+        .map((product) => [product.id, toProductOption(product)])
+    ).values()
+  );
+}
 
 const initialCreateForm: CreateRequestFormState = {
   targetWarehouseId: "",
@@ -236,29 +267,6 @@ function parseNotes(notes: string | null) {
     amazonSite,
     displayNotes: noteLines.join("\n") || "-"
   };
-}
-
-function getSkuSearchText(request: FbaReplenishmentRequest) {
-  return [
-    request.request_no,
-    request.sku?.sku_code,
-    request.sku?.sku_name,
-    request.sku?.amazon_sku,
-    request.sku?.fnsku,
-    request.sku?.product?.brand?.name,
-    request.sku?.product?.brand?.brand_code,
-    ...request.items.flatMap((item) => [
-      item.product?.name,
-      item.product?.brand?.name,
-      item.product?.brand?.brand_code,
-      item.sku?.sku_code,
-      item.sku?.sku_name,
-      item.sku?.specs
-    ])
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
 }
 
 function getRequestBrandSummary(request: FbaReplenishmentRequest) {
@@ -506,6 +514,7 @@ export default function ReplenishmentPage() {
     Record<string, PickerSkuState>
   >({});
   const [page, setPage] = useState(1);
+  const [totalRequests, setTotalRequests] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadingOptions, setLoadingOptions] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -521,16 +530,15 @@ export default function ReplenishmentPage() {
     async function loadOptions() {
       try {
         setLoadingOptions(true);
-        const [productData, skuData, warehouseData] = await Promise.all([
-          getProducts(),
+        const [skuData, warehouseData] = await Promise.all([
           getFbaReplenishmentSkuOptions(),
-          getWarehouses()
+          searchWarehouseOptions("", 20)
         ]);
 
         if (isMounted) {
-          setProducts(productData);
+          setProducts(getProductsFromSkuOptions(skuData));
           setSkuOptions(skuData);
-          setWarehouses(sortWarehouses(warehouseData));
+          setWarehouses(sortWarehouses(warehouseData as Warehouse[]));
         }
       } catch (error) {
         if (isMounted) {
@@ -549,17 +557,25 @@ export default function ReplenishmentPage() {
         setErrorMessage("");
         setSelectedRequest(null);
 
-        const data = await getFbaReplenishmentRequests({
-          status: statusFilter
+        const data = await getReplenishmentRequestsPage({
+          page,
+          pageSize: DEFAULT_PAGE_SIZE,
+          keyword: skuKeyword,
+          filters: {
+            status: statusFilter,
+            brandId: brandFilter
+          }
         });
 
         if (isMounted) {
-          setRequests(data);
+          setRequests(data.rows);
+          setTotalRequests(data.total);
         }
       } catch (error) {
         if (isMounted) {
           setErrorMessage(getErrorMessage(error));
           setRequests([]);
+          setTotalRequests(0);
         }
       } finally {
         if (isMounted) {
@@ -574,28 +590,35 @@ export default function ReplenishmentPage() {
     return () => {
       isMounted = false;
     };
-  }, [statusFilter]);
+  }, [page, statusFilter, skuKeyword, brandFilter]);
 
-  const filteredRequests = useMemo(() => {
-    const keyword = skuKeyword.trim().toLowerCase();
+  useEffect(() => {
+    if (!pickerOpen) {
+      return;
+    }
 
-    return requests.filter((request) =>
-      (!keyword || getSkuSearchText(request).includes(keyword)) &&
-      (brandFilter === "all" ||
-        request.items.some((item) => {
-          const product = item.product ?? item.sku?.product ?? null;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const skuData = await searchFbaReplenishmentSkuOptions(pickerSearch, 20);
 
-          return brandFilter === "none"
-            ? !product?.brand?.id
-            : product?.brand?.id === brandFilter;
-        }))
-    );
-  }, [brandFilter, requests, skuKeyword]);
+        if (!cancelled) {
+          setSkuOptions(skuData);
+          setProducts(getProductsFromSkuOptions(skuData));
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setCreateErrorMessage(getErrorMessage(error));
+        }
+      }
+    }, 300);
 
-  const paginatedRequests = useMemo(
-    () => paginateItems(filteredRequests, page),
-    [filteredRequests, page]
-  );
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [pickerOpen, pickerSearch]);
+
   const skuByCode = useMemo(() => {
     return new Map(
       skuOptions.map((sku) => [normalizeCsvValue(sku.sku_code).toLowerCase(), sku])
@@ -692,13 +715,21 @@ export default function ReplenishmentPage() {
       setErrorMessage("");
       setSelectedRequest(null);
 
-      const data = await getFbaReplenishmentRequests({
-        status: statusFilter
+      const data = await getReplenishmentRequestsPage({
+        page,
+        pageSize: DEFAULT_PAGE_SIZE,
+        keyword: skuKeyword,
+        filters: {
+          status: statusFilter,
+          brandId: brandFilter
+        }
       });
-      setRequests(data);
+      setRequests(data.rows);
+      setTotalRequests(data.total);
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setRequests([]);
+      setTotalRequests(0);
     } finally {
       setLoading(false);
     }
@@ -1218,11 +1249,11 @@ export default function ReplenishmentPage() {
           </div>
         ) : null}
 
-        {!loading && !errorMessage && filteredRequests.length === 0 ? (
+        {!loading && !errorMessage && requests.length === 0 ? (
           <div className="emptyState">暂无备货需求</div>
         ) : null}
 
-        {!loading && !errorMessage && filteredRequests.length > 0 ? (
+        {!loading && !errorMessage && requests.length > 0 ? (
           <div className="tableWrap">
             <table className="dataTable">
               <thead>
@@ -1242,7 +1273,7 @@ export default function ReplenishmentPage() {
                 </tr>
               </thead>
               <tbody>
-                {paginatedRequests.map((request) => {
+                {requests.map((request) => {
                   const notes = parseNotes(request.notes);
 
                   return (
@@ -1289,11 +1320,11 @@ export default function ReplenishmentPage() {
           </div>
         ) : null}
 
-        {!loading && !errorMessage && filteredRequests.length > 0 ? (
+        {!loading && !errorMessage && totalRequests > 0 ? (
           <Pagination
             page={page}
             pageSize={DEFAULT_PAGE_SIZE}
-            total={filteredRequests.length}
+            total={totalRequests}
             onPageChange={setPage}
           />
         ) : null}

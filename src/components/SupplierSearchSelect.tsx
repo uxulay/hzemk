@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 export type SupplierSearchOption = {
   id: string;
@@ -24,6 +24,8 @@ type SupplierSearchSelectProps = {
   disabled?: boolean;
   placeholder?: string;
   allowInactiveSelected?: boolean;
+  onSearch?: (keyword: string) => Promise<SupplierSearchOption[]>;
+  onOptionsChange?: (suppliers: SupplierSearchOption[]) => void;
   onChange: (supplierId: string) => void;
 };
 
@@ -34,9 +36,12 @@ export function SupplierSearchSelect({
   disabled = false,
   placeholder = "搜索供应商编码或名称",
   allowInactiveSelected = true,
+  onSearch,
+  onOptionsChange,
   onChange
 }: SupplierSearchSelectProps) {
   const [keyword, setKeyword] = useState("");
+  const [searching, setSearching] = useState(false);
   const selectedSupplier = suppliers.find((supplier) => supplier.id === value);
   const normalizedKeyword = keyword.trim().toLowerCase();
   const selectableSuppliers = useMemo(() => {
@@ -60,6 +65,33 @@ export function SupplierSearchSelect({
       )
     : selectableSuppliers.slice(0, 8);
 
+  useEffect(() => {
+    if (!onSearch) {
+      return;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        setSearching(true);
+        const nextSuppliers = await onSearch(keyword);
+
+        if (!cancelled) {
+          onOptionsChange?.(nextSuppliers);
+        }
+      } finally {
+        if (!cancelled) {
+          setSearching(false);
+        }
+      }
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [keyword, onOptionsChange, onSearch]);
+
   return (
     <div className="fieldBlock">
       <span>{label}</span>
@@ -80,7 +112,9 @@ export function SupplierSearchSelect({
         </div>
       ) : null}
       <div className="searchPickerList">
-        {filteredSuppliers.length === 0 ? (
+        {searching ? (
+          <p className="tableHint">正在搜索供应商...</p>
+        ) : filteredSuppliers.length === 0 ? (
           <p className="tableHint">没有匹配的供应商。</p>
         ) : (
           filteredSuppliers.map((supplier) => (
