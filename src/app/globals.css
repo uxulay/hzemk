@@ -4468,6 +4468,42 @@ button:disabled {
   color: #475569;
 }
 
+.quantityPositive {
+  color: #16a34a;
+  font-weight: 700;
+}
+
+.quantityNegative {
+  color: #dc2626;
+  font-weight: 700;
+}
+
+.quantityAdjust {
+  color: #2563eb;
+  font-weight: 700;
+}
+
+.stockStatusCell {
+  display: grid;
+  gap: 6px;
+}
+
+.stockSafetyBar {
+  display: block;
+  width: 100%;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e2e8f0;
+}
+
+.stockSafetyBar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #2563eb;
+}
+
 .rowActionsCompact {
   flex-wrap: nowrap;
   justify-content: flex-start;

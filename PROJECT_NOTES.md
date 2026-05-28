@@ -2397,6 +2397,29 @@ FBA 出库是单独动作，不能把成品入库自动等同于发往 FBA。
 - 已运行 `npm run typecheck`，通过。
 - `npm run build` 等本轮最终验证结果见本次收尾输出。
 
+### 3.12 渐进式 UI/UX 重构第四阶段：采购管理 / 库存管理（2026-05-28）
+
+本轮只处理采购和库存相关页面，没有修改 Supabase schema、RLS 或 seed，没有重写现有采购、入库、库存调整、库存流水的写入逻辑。
+
+已完成：
+
+- `/purchase/orders` 采购单页改为第一阶段公共组件风格：`PageHeader`、`SearchFilterBar`、`DataTable`、`DetailDrawer`、`StatusBadge`、`RowActions`、`InfoCell`。
+- 采购单主列表压缩为：采购单号、供应商信息、物料数量、采购金额、交期、状态、创建时间、操作；采购负责人、来源、备注、明细等信息移入详情抽屉或更多操作。
+- 采购单详情改为右侧 `DetailDrawer`，展示供应商信息、基本信息、采购明细、已到货数量、金额汇总，并保留导出采购单、导出图片、状态更新和跳转采购入库入口。
+- 新增采购单、缺料生成采购单、批量导入、CSV 导出和 PNG 图片导出继续沿用原页面逻辑；没有改采购单写入 API。
+- `/inventory/inbound?tab=purchase` 采购入库页增加统一 `PageHeader`、`SearchFilterBar` 和 `DataTable`，保留原 `receivePurchaseOrderItems` 入库写入逻辑。
+- `/inventory/materials` 和 `/inventory/products` 当前库存页改为统一 `PageHeader`、`SearchFilterBar`、统计卡片、`DataTable` 和 `DetailDrawer`；列表字段压缩为物料/产品信息、仓库、当前库存、可用库存、安全库存、安全状态、最近变动、操作。
+- 原材料库存安全状态显示“充足 / 偏低 / 预警”，并加轻量安全库存进度条；库存调整入口继续跳转到现有 `/inventory/adjustments`。
+- 成品库存产品信息复用 `InfoCell`，可读取产品图片字段 `products.product_image_url`；图片字段只做读取展示，没有新增字段。
+- `/inventory/transactions` 库存流水页改为统一 `PageHeader`、`SearchFilterBar`、`DataTable` 和 `DetailDrawer`；备注、单位、操作人等细节放入抽屉，数量变化按入库绿色、出库红色、调整蓝色展示。
+- 新增 `/inventory/warnings` 库存预警页，并把导航里的“库存预警”指向该页面；页面读取现有当前库存分页 RPC，按当前库存、安全库存和仓库筛选展示预警列表。
+
+验证：
+
+- 已运行 `npm run typecheck`，通过。首次运行时 `.next/types` 本地缓存存在重复 `* 2.ts` 文件导致报错；运行 `npm run build` 后 Next 重新整理缓存，再次 `npm run typecheck` 通过。
+- 已运行 `npm run build`，通过。
+- 已运行 `git diff --check`，通过结果见本次收尾输出。
+
 ## 10. 给后续 Codex 的开发提醒
 
 后续开发前请先阅读 `PROJECT_NOTES.md`。

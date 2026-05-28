@@ -167,6 +167,7 @@ export type CurrentInventoryProduct = {
   brand_id: string | null;
   product_code: string;
   name: string;
+  product_image_url?: string | null;
   brand: BrandSummary | null;
 } | null;
 
@@ -1020,6 +1021,7 @@ function getCurrentInventorySelect() {
         brand_id,
         product_code,
         name,
+        product_image_url,
         brand:brands!products_brand_id_fkey (
           id,
           brand_code,
@@ -1042,6 +1044,7 @@ function getCurrentInventorySelect() {
         brand_id,
         product_code,
         name,
+        product_image_url,
         brand:brands!products_brand_id_fkey (
           id,
           brand_code,

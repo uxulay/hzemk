@@ -1,8 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Modal } from "@/components/Modal";
-import { Pagination } from "@/components/Pagination";
+import { DataTable, type DataTableColumn } from "@/components/ui/DataTable";
+import { DetailDrawer } from "@/components/ui/detail-drawer";
+import { InfoCell } from "@/components/ui/info-cell";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { SearchFilterBar } from "@/components/ui/SearchFilterBar";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { getBrandOptions, type BrandRow } from "@/lib/api/brands";
 import { getBrandCodeName } from "@/lib/brand-utils";
 import {
@@ -185,6 +189,31 @@ function isEndDateBeforeStartDate(startDate: string, endDate: string) {
   return Boolean(startDate && endDate && endDate < startDate);
 }
 
+function getSignedQuantityClass(transaction: InventoryTransactionRow) {
+  if (
+    transaction.transaction_type === "material_out" ||
+    transaction.transaction_type === "product_out"
+  ) {
+    return "quantityNegative";
+  }
+
+  if (transaction.transaction_type === "adjustment") {
+    return "quantityAdjust";
+  }
+
+  return "quantityPositive";
+}
+
+function escapeCsvCell(value: string | number | null | undefined) {
+  const text = String(value ?? "");
+
+  if (/[",\n\r]/.test(text)) {
+    return `"${text.replace(/"/g, "\"\"")}"`;
+  }
+
+  return text;
+}
+
 export default function InventoryTransactionsPage() {
   const [transactions, setTransactions] = useState<InventoryTransactionRow[]>([]);
   const [warehouses, setWarehouses] = useState<InventoryTransactionWarehouse[]>([]);
@@ -303,18 +332,142 @@ export default function InventoryTransactionsPage() {
     loadTransactions(nextFilters, 1);
   };
 
+  const exportTransactions = () => {
+    const headers = [
+      "流水编号",
+      "类型",
+      "物料/产品",
+      "数量变化",
+      "仓库",
+      "关联单据",
+      "操作时间",
+      "操作人"
+    ];
+    const rows = transactions.map((transaction) => [
+      transaction.transaction_no,
+      transactionTypeLabels[transaction.transaction_type],
+      `${getTransactionItemCode(transaction)} / ${getTransactionItemName(transaction)}`,
+      formatSignedQuantity(transaction),
+      transaction.warehouse?.name ?? "",
+      getRelatedOrderLabel(transaction),
+      formatDateTime(transaction.occurred_at),
+      transaction.operator?.full_name ?? ""
+    ]);
+    const csv = [headers, ...rows]
+      .map((row) => row.map(escapeCsvCell).join(","))
+      .join("\n");
+    const blob = new Blob([`\uFEFF${csv}`], {
+      type: "text/csv;charset=utf-8"
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = `库存流水_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const transactionColumns: DataTableColumn<InventoryTransactionRow>[] = [
+    {
+      key: "transaction_no",
+      title: "流水编号",
+      width: 150,
+      render: (transaction) => transaction.transaction_no
+    },
+    {
+      key: "type",
+      title: "类型",
+      width: 110,
+      render: (transaction) => (
+        <StatusBadge
+          status={transaction.transaction_type}
+          label={transactionTypeLabels[transaction.transaction_type]}
+        />
+      )
+    },
+    {
+      key: "item",
+      title: "物料/产品信息",
+      width: 250,
+      render: (transaction) => (
+        <InfoCell
+          title={getTransactionItemName(transaction)}
+          subtitle={`${getTransactionItemCode(transaction)} / ${
+            transaction.material?.specs ??
+            transaction.product_sku?.product?.name ??
+            transaction.sku?.product?.name ??
+            "-"
+          }`}
+        />
+      )
+    },
+    {
+      key: "quantity",
+      title: "数量变化",
+      width: 110,
+      align: "right",
+      render: (transaction) => (
+        <span className={getSignedQuantityClass(transaction)}>
+          {formatSignedQuantity(transaction)}
+        </span>
+      )
+    },
+    {
+      key: "warehouse",
+      title: "仓库",
+      width: 160,
+      render: (transaction) => (
+        <InfoCell
+          title={transaction.warehouse?.name ?? "-"}
+          subtitle={transaction.warehouse?.warehouse_code ?? "-"}
+        />
+      )
+    },
+    {
+      key: "related",
+      title: "关联单据",
+      width: 170,
+      render: (transaction) => (
+        <button
+          className="linkButton"
+          type="button"
+          onClick={() => setSelectedTransaction(transaction)}
+        >
+          {getRelatedOrderLabel(transaction)}
+        </button>
+      )
+    },
+    {
+      key: "time",
+      title: "操作时间",
+      width: 150,
+      render: (transaction) => formatDateTime(transaction.occurred_at)
+    },
+    {
+      key: "operator",
+      title: "操作人",
+      width: 110,
+      render: (transaction) => transaction.operator?.full_name ?? "-"
+    }
+  ];
+
   return (
     <main className="pageShell">
-      <section className="pageHero">
-        <div>
-          <p className="eyebrow">仓库管理</p>
-          <h2>库存流水</h2>
-          <p>
-            查看每一笔库存变化，后续如果库存数量对不上，可以从这里追溯来源单据和操作时间。
-          </p>
-        </div>
-        <span className="statusPill">Supabase 数据</span>
-      </section>
+      <PageHeader
+        title="库存流水"
+        secondaryActions={
+          <button
+            type="button"
+            onClick={exportTransactions}
+            disabled={loading || transactions.length === 0}
+          >
+            导出
+          </button>
+        }
+      />
 
       {errorMessage ? (
         <div className="debugError">
@@ -342,214 +495,127 @@ export default function InventoryTransactionsPage() {
           </div>
         </div>
 
-        <form className="listToolbar transactionsToolbar" onSubmit={submitFilters}>
-          <label>
-            流水类型
-            <select
-              value={transactionType}
-              onChange={(event) =>
-                setTransactionType(
-                  event.target.value as InventoryTransactionTypeFilter
-                )
-              }
-              disabled={loading}
-            >
-              {transactionTypeOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label>
-            仓库
-            <select
-              value={warehouseId}
-              onChange={(event) => setWarehouseId(event.target.value)}
-              disabled={loading}
-            >
-              <option value="">全部仓库</option>
-              {warehouses.map((warehouse) => (
-                <option key={warehouse.id} value={warehouse.id}>
-                  {warehouse.warehouse_code} / {warehouse.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label>
-            SKU 搜索
-            <input
-              value={skuKeyword}
-              onChange={(event) => setSkuKeyword(event.target.value)}
-              placeholder="输入 SKU 编码或名称"
-              disabled={loading}
-            />
-          </label>
-
-          <label>
-            品牌
-            <select
-              value={brandId}
-              onChange={(event) => setBrandId(event.target.value)}
-              disabled={loading}
-            >
-              <option value="all">全部品牌</option>
-              <option value="none">无品牌 / 辅料</option>
-              {brands.map((brand) => (
-                <option key={brand.id} value={brand.id}>
-                  {getBrandCodeName(brand)}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label>
-            开始日期
-            <input
-              type="date"
-              value={startDate}
-              onChange={(event) => setStartDate(event.target.value)}
-              disabled={loading}
-            />
-          </label>
-
-          <label>
-            结束日期
-            <input
-              type="date"
-              value={endDate}
-              onChange={(event) => setEndDate(event.target.value)}
-              disabled={loading}
-            />
-          </label>
-
-          <div className="rowActions">
-            <button type="submit" disabled={loading}>
-              {loading ? "查询中..." : "查询"}
-            </button>
-            <button
-              type="button"
-              onClick={() => loadTransactions(undefined, page)}
-              disabled={loading}
-            >
-              {loading ? "刷新中..." : "刷新"}
-            </button>
-            <button type="button" onClick={resetFilters} disabled={loading}>
-              重置
-            </button>
-          </div>
-        </form>
-
-        {loading ? (
-          <div className="debugNotice">正在读取库存流水，请稍候...</div>
-        ) : null}
-
-        {!loading && transactions.length === 0 ? (
-          <div className="emptyState">暂无库存流水</div>
-        ) : null}
-
-        {!loading && transactions.length > 0 ? (
-          <div className="tableWrap">
-            <table className="dataTable transactionTable">
-              <thead>
-                <tr>
-                  <th>操作时间</th>
-                  <th>流水类型</th>
-                  <th>物品</th>
-                  <th>产品/辅料信息</th>
-                  <th>仓库</th>
-                  <th>数量变化</th>
-                  <th>关联单据</th>
-                  <th>备注</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {transactions.map((transaction) => (
-                  <tr key={transaction.id}>
-                    <td>{formatDateTime(transaction.occurred_at)}</td>
-                    <td>
-                      <span
-                        className={`tablePill transaction-type-${transaction.transaction_type}`}
-                      >
-                        {transactionTypeLabels[transaction.transaction_type]}
-                      </span>
-                    </td>
-                    <td>
-                      <strong>{getTransactionItemCode(transaction)}</strong>
-                      <span>{getTransactionItemName(transaction)}</span>
-                    </td>
-                    <td>
-                      <strong>
-                        {transaction.material?.specs ??
-                          transaction.product_sku?.product?.name ??
-                          transaction.sku?.product?.name ??
-                          "-"}
-                      </strong>
-                      <span>
-                        {transaction.material
-                          ? "辅料"
-                          : getBrandCodeName(
-                              transaction.product_sku?.product?.brand ??
-                                transaction.sku?.product?.brand
-                            )}
-                      </span>
-                    </td>
-                    <td>
-                      <strong>{transaction.warehouse?.name ?? "-"}</strong>
-                      <span>{transaction.warehouse?.warehouse_code ?? "-"}</span>
-                    </td>
-                    <td className="quantityCell">
-                      {formatSignedQuantity(transaction)}
-                    </td>
-                    <td>{getRelatedOrderLabel(transaction)}</td>
-                    <td className="notesCell">{transaction.notes ?? "-"}</td>
-                    <td>
-                      <button
-                        className="secondaryButton"
-                        type="button"
-                        onClick={() => setSelectedTransaction(transaction)}
-                      >
-                        查看详情
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-
-        {!loading && transactions.length > 0 ? (
-          <Pagination
-            page={page}
-            pageSize={DEFAULT_PAGE_SIZE}
-            total={total}
-            onPageChange={(nextPage) =>
-              loadTransactions(
-                {
-                  transactionType,
-                  warehouseId,
-                  brandId,
-                  skuKeyword,
-                  startDate,
-                  endDate
-                },
-                nextPage
-              )
+        <form onSubmit={submitFilters}>
+          <SearchFilterBar
+            searchLabel="搜索"
+            searchValue={skuKeyword}
+            searchPlaceholder="流水号 / 物料 / 产品 / 关联单据"
+            onSearchChange={setSkuKeyword}
+            onReset={resetFilters}
+            filters={
+              <>
+                <label>
+                  类型
+                  <select
+                    value={transactionType}
+                    onChange={(event) =>
+                      setTransactionType(
+                        event.target.value as InventoryTransactionTypeFilter
+                      )
+                    }
+                    disabled={loading}
+                  >
+                    {transactionTypeOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  仓库
+                  <select
+                    value={warehouseId}
+                    onChange={(event) => setWarehouseId(event.target.value)}
+                    disabled={loading}
+                  >
+                    <option value="">全部仓库</option>
+                    {warehouses.map((warehouse) => (
+                      <option key={warehouse.id} value={warehouse.id}>
+                        {warehouse.warehouse_code} / {warehouse.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            }
+            dateFilters={
+              <>
+                <label>
+                  开始日期
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(event) => setStartDate(event.target.value)}
+                    disabled={loading}
+                  />
+                </label>
+                <label>
+                  结束日期
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(event) => setEndDate(event.target.value)}
+                    disabled={loading}
+                  />
+                </label>
+              </>
+            }
+            rightActions={
+              <>
+                <button type="submit" disabled={loading}>
+                  {loading ? "查询中..." : "查询"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => loadTransactions(undefined, page)}
+                  disabled={loading}
+                >
+                  {loading ? "刷新中..." : "刷新"}
+                </button>
+              </>
             }
           />
-        ) : null}
+        </form>
+
+        <DataTable
+          columns={transactionColumns}
+          rows={transactions}
+          getRowKey={(transaction) => transaction.id}
+          loading={loading}
+          loadingText="正在读取库存流水，请稍候..."
+          emptyText="暂无库存流水"
+          minWidth={1080}
+          page={page}
+          pageSize={DEFAULT_PAGE_SIZE}
+          total={total}
+          onPageChange={(nextPage) =>
+            loadTransactions(
+              {
+                transactionType,
+                warehouseId,
+                brandId,
+                skuKeyword,
+                startDate,
+                endDate
+              },
+              nextPage
+            )
+          }
+        />
       </section>
 
       {selectedTransaction ? (
-        <Modal
+        <DetailDrawer
           open={Boolean(selectedTransaction)}
-          eyebrow="库存流水详情"
           title={selectedTransaction.transaction_no}
+          width="lg"
           onClose={() => setSelectedTransaction(null)}
+          footer={
+            <button type="button" onClick={() => setSelectedTransaction(null)}>
+              关闭
+            </button>
+          }
         >
           <div className="detailGrid">
             <div className="detailItem">
@@ -646,7 +712,7 @@ export default function InventoryTransactionsPage() {
               <strong>{selectedTransaction.notes ?? "-"}</strong>
             </div>
           </div>
-        </Modal>
+        </DetailDrawer>
       ) : null}
     </main>
   );

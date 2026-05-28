@@ -9,6 +9,13 @@ import {
   SupplierSearchSelect,
   type SupplierSearchOption
 } from "@/components/SupplierSearchSelect";
+import { DataTable, type DataTableColumn } from "@/components/ui/DataTable";
+import { DetailDrawer } from "@/components/ui/detail-drawer";
+import { InfoCell } from "@/components/ui/info-cell";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { RowActions } from "@/components/ui/row-actions";
+import { SearchFilterBar } from "@/components/ui/SearchFilterBar";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { type Supplier } from "@/lib/api/master-data";
 import { searchMaterialSupplierOptions } from "@/lib/api/materials";
 import {
@@ -202,6 +209,20 @@ function getOrderTotalQuantity(order: PurchaseOrder) {
     (sum, item) => sum + Number(item.ordered_quantity || 0),
     0
   );
+}
+
+function getOrderItemSummary(order: PurchaseOrder) {
+  const totalQuantity = getOrderTotalQuantity(order);
+
+  return `${order.item_count} 种 / ${formatQuantity(totalQuantity)}`;
+}
+
+function getSupplierSubtitle(order: PurchaseOrder) {
+  const contact = order.supplier?.contact_name ?? "";
+  const phone = order.supplier?.phone ?? "";
+  const contactText = [contact, phone].filter(Boolean).join(" / ");
+
+  return contactText || order.supplier?.supplier_code || "未维护联系人";
 }
 
 function getOrderMaker(order: PurchaseOrder) {
@@ -516,6 +537,44 @@ function downloadPurchaseOrderCsv(order: PurchaseOrder) {
   URL.revokeObjectURL(url);
 }
 
+function downloadPurchaseOrderListCsv(orders: PurchaseOrder[]) {
+  const headers = [
+    "采购单号",
+    "供应商",
+    "物料种类",
+    "采购总数量",
+    "采购金额",
+    "预计到货日期",
+    "状态",
+    "创建时间"
+  ];
+  const rows = orders.map((order) => [
+    order.purchase_order_no,
+    order.supplier?.name ?? "",
+    order.item_count,
+    getOrderTotalQuantity(order),
+    order.total_amount.toFixed(2),
+    formatDate(order.expected_arrival_date),
+    purchaseStatusLabels[order.status] ?? order.status,
+    formatDateTime(order.created_at)
+  ]);
+  const csv = [headers, ...rows]
+    .map((row) => row.map(escapeCsvCell).join(","))
+    .join("\n");
+  const blob = new Blob([`\uFEFF${csv}`], {
+    type: "text/csv;charset=utf-8"
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = `采购单列表_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function getDraftItem(requirement: ShortageMaterialRequirement): DraftItem {
   const defaultSupplierId = requirement.material?.default_supplier_id ?? null;
   const defaultSupplierLabel = requirement.material
@@ -558,6 +617,8 @@ export default function PurchaseOrdersPage() {
   const [orderStatusFilter, setOrderStatusFilter] =
     useState<PurchaseOrderStatus | "all">("all");
   const [orderKeyword, setOrderKeyword] = useState("");
+  const [orderStartDate, setOrderStartDate] = useState("");
+  const [orderEndDate, setOrderEndDate] = useState("");
   const [orderDate, setOrderDate] = useState(getTodayInputValue());
   const [expectedArrivalDate, setExpectedArrivalDate] = useState("");
   const [notes, setNotes] = useState("");
@@ -663,7 +724,9 @@ export default function PurchaseOrdersPage() {
           keyword: orderKeyword,
           filters: {
             status: orderStatusFilter,
-            supplierId: supplierFilter
+            supplierId: supplierFilter,
+            startDate: orderStartDate,
+            endDate: orderEndDate
           }
         }),
         searchMaterialSupplierOptions("", 20),
@@ -695,11 +758,18 @@ export default function PurchaseOrdersPage() {
 
   useEffect(() => {
     loadPageData();
-  }, [orderPage, orderKeyword, orderStatusFilter, supplierFilter]);
+  }, [
+    orderPage,
+    orderKeyword,
+    orderStatusFilter,
+    supplierFilter,
+    orderStartDate,
+    orderEndDate
+  ]);
 
   useEffect(() => {
     setOrderPage(1);
-  }, [orderKeyword, orderStatusFilter, supplierFilter]);
+  }, [orderKeyword, orderStatusFilter, supplierFilter, orderStartDate, orderEndDate]);
 
   const toggleRequirement = (requirementId: string) => {
     setSelectedRequirementIds((current) =>
@@ -1423,37 +1493,159 @@ export default function PurchaseOrdersPage() {
     };
   };
 
+  const resetOrderFilters = () => {
+    setOrderKeyword("");
+    setOrderStatusFilter("all");
+    setSupplierFilter("all");
+    setOrderStartDate("");
+    setOrderEndDate("");
+    setOrderPage(1);
+  };
+
+  const purchaseOrderColumns: DataTableColumn<PurchaseOrder>[] = [
+    {
+      key: "purchase_order_no",
+      title: "采购单号",
+      width: 150,
+      render: (order) => (
+        <button
+          className="linkButton"
+          type="button"
+          onClick={() => viewDetail(order.id)}
+          disabled={detailLoading}
+        >
+          {order.purchase_order_no}
+        </button>
+      )
+    },
+    {
+      key: "supplier",
+      title: "供应商信息",
+      width: 210,
+      render: (order) => (
+        <InfoCell
+          title={order.supplier?.name ?? "未设置供应商"}
+          subtitle={getSupplierSubtitle(order)}
+        />
+      )
+    },
+    {
+      key: "items",
+      title: "物料数量",
+      width: 120,
+      render: (order) => getOrderItemSummary(order)
+    },
+    {
+      key: "amount",
+      title: "采购金额",
+      width: 110,
+      align: "right",
+      render: (order) => formatMoney(order.total_amount)
+    },
+    {
+      key: "expected_arrival_date",
+      title: "交期",
+      width: 110,
+      render: (order) => formatDate(order.expected_arrival_date)
+    },
+    {
+      key: "status",
+      title: "状态",
+      width: 110,
+      render: (order) => (
+        <StatusBadge status={order.status} label={purchaseStatusLabels[order.status]} />
+      )
+    },
+    {
+      key: "created_at",
+      title: "创建时间",
+      width: 150,
+      render: (order) => formatDateTime(order.created_at)
+    },
+    {
+      key: "actions",
+      title: "操作",
+      width: 190,
+      render: (order) => {
+        const updating = statusUpdatingId === order.id;
+
+        return (
+          <RowActions
+            onView={() => viewDetail(order.id)}
+            onEdit={() => openManualEditForm(order.id)}
+            moreActions={[
+              {
+                label: "导出 CSV",
+                onClick: () => exportOrder(order)
+              },
+              {
+                label: "导出图片",
+                onClick: () => openOrderImagePreview(order),
+                disabled: detailLoading
+              },
+              {
+                label: "标记已下单",
+                onClick: () => updateStatus(order.id, "ordered"),
+                disabled:
+                  updating ||
+                  order.status === "ordered" ||
+                  order.status === "received" ||
+                  order.status === "cancelled"
+              },
+              {
+                label: "标记已到货",
+                onClick: () => updateStatus(order.id, "received"),
+                disabled:
+                  updating ||
+                  order.status === "received" ||
+                  order.status === "cancelled"
+              },
+              {
+                label: "取消采购单",
+                onClick: () => updateStatus(order.id, "cancelled"),
+                danger: true,
+                disabled: updating || order.status === "cancelled" || order.status === "received"
+              }
+            ]}
+          />
+        );
+      }
+    }
+  ];
+
   return (
     <main className="pageShell">
-      <section className="pageHero">
-        <div>
-          <p className="eyebrow">采购管理</p>
-          <h2>采购单</h2>
-          <p>
-            采购人员可以从缺料物料生成采购单，也可以主动创建常用包材和辅料采购单。
-          </p>
-        </div>
-        <div className="pageHeroActions">
-          <span className="statusPill">Supabase 数据</span>
-          <div className="rowActions">
-            <button
-              className="primaryButton successButton"
-              type="button"
-              onClick={openManualCreateForm}
-              disabled={loading}
-            >
-              + 新建采购单
-            </button>
+      <PageHeader
+        title="采购单"
+        secondaryActions={
+          <>
             <button
               type="button"
               onClick={() => setImportDialogOpen(true)}
               disabled={loading}
             >
-              批量导入采购单
+              导入
             </button>
-          </div>
-        </div>
-      </section>
+            <button
+              type="button"
+              onClick={() => downloadPurchaseOrderListCsv(purchaseOrders)}
+              disabled={loading || purchaseOrders.length === 0}
+            >
+              导出
+            </button>
+          </>
+        }
+        primaryAction={
+          <button
+            className="primaryButton"
+            type="button"
+            onClick={openManualCreateForm}
+            disabled={loading}
+          >
+            新增采购单
+          </button>
+        }
+      />
 
       {successMessage ? (
         <div className="successNotice">
@@ -1624,159 +1816,89 @@ export default function PurchaseOrdersPage() {
           </div>
         </div>
 
-        <div className="listToolbar purchaseOrderToolbar">
-          <label>
-            搜索采购单 / 供应商 / 备注
-            <input
-              value={orderKeyword}
-              onChange={(event) => setOrderKeyword(event.target.value)}
-              disabled={loading}
-              placeholder="输入采购单号、供应商或备注"
-            />
-          </label>
+        <SearchFilterBar
+          searchLabel="搜索"
+          searchValue={orderKeyword}
+          searchPlaceholder="采购单号 / 供应商 / 物料 / 备注"
+          onSearchChange={setOrderKeyword}
+          onReset={resetOrderFilters}
+          filters={
+            <>
+              <label>
+                状态
+                <select
+                  value={orderStatusFilter}
+                  onChange={(event) =>
+                    setOrderStatusFilter(
+                      event.target.value as PurchaseOrderStatus | "all"
+                    )
+                  }
+                  disabled={loading}
+                >
+                  <option value="all">全部状态</option>
+                  <option value="draft">草稿</option>
+                  <option value="ordered">已下单</option>
+                  <option value="partially_received">部分到货</option>
+                  <option value="received">已到货</option>
+                  <option value="cancelled">已取消</option>
+                </select>
+              </label>
 
-          <label>
-            状态
-            <select
-              value={orderStatusFilter}
-              onChange={(event) =>
-                setOrderStatusFilter(event.target.value as PurchaseOrderStatus | "all")
-              }
-              disabled={loading}
-            >
-              <option value="all">全部状态</option>
-              <option value="draft">草稿</option>
-              <option value="ordered">已下单</option>
-              <option value="partially_received">部分到货</option>
-              <option value="received">已到货</option>
-              <option value="cancelled">已取消</option>
-            </select>
-          </label>
+              <label>
+                供应商
+                <select
+                  value={supplierFilter}
+                  onChange={(event) => setSupplierFilter(event.target.value)}
+                  disabled={loading}
+                >
+                  <option value="all">全部供应商</option>
+                  <option value="none">未设置供应商</option>
+                  {suppliers.map((supplier) => (
+                    <option key={supplier.id} value={supplier.id}>
+                      {getSupplierOptionLabel(supplier)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          }
+          dateFilters={
+            <>
+              <label>
+                创建/交期开始
+                <input
+                  type="date"
+                  value={orderStartDate}
+                  onChange={(event) => setOrderStartDate(event.target.value)}
+                  disabled={loading}
+                />
+              </label>
+              <label>
+                创建/交期结束
+                <input
+                  type="date"
+                  value={orderEndDate}
+                  onChange={(event) => setOrderEndDate(event.target.value)}
+                  disabled={loading}
+                />
+              </label>
+            </>
+          }
+          rightActions={
+            <button className="secondaryButton" type="button" onClick={loadPageData}>
+              {loading ? "正在刷新..." : "刷新"}
+            </button>
+          }
+        />
 
-          <label>
-            供应商
-            <select
-              value={supplierFilter}
-              onChange={(event) => setSupplierFilter(event.target.value)}
-            >
-              <option value="all">全部供应商</option>
-              <option value="none">未设置供应商</option>
-              {suppliers.map((supplier) => (
-                <option key={supplier.id} value={supplier.id}>
-                  {getSupplierOptionLabel(supplier)}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <button className="secondaryButton" type="button" onClick={loadPageData}>
-            {loading ? "正在刷新..." : "刷新"}
-          </button>
-        </div>
-
-        {!loading && purchaseOrders.length === 0 ? (
-          <div className="emptyState">暂无采购单</div>
-        ) : null}
-
-        {!loading && purchaseOrders.length > 0 ? (
-          <div className="tableWrap">
-            <table className="dataTable">
-              <thead>
-                <tr>
-                  <th>采购单号</th>
-                  <th>供应商</th>
-                  <th>采购负责人</th>
-                  <th>状态</th>
-                  <th>下单日期</th>
-                  <th>预计到货日期</th>
-                  <th>总金额</th>
-                  <th>明细数量</th>
-                  <th>创建来源</th>
-                  <th>创建时间</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {purchaseOrders.map((order) => {
-                  const updating = statusUpdatingId === order.id;
-
-                  return (
-                    <tr key={order.id}>
-                      <td>{order.purchase_order_no}</td>
-                      <td>
-                        <strong>{order.supplier?.name ?? "-"}</strong>
-                        <span>{order.supplier?.supplier_code ?? "-"}</span>
-                      </td>
-                      <td>{order.created_by_profile?.full_name ?? "-"}</td>
-                      <td>
-                        <span className={`tablePill purchase-status-${order.status}`}>
-                          {purchaseStatusLabels[order.status] ?? order.status}
-                        </span>
-                      </td>
-                      <td>{formatDate(order.ordered_at)}</td>
-                      <td>{formatDate(order.expected_arrival_date)}</td>
-                      <td>{formatMoney(order.total_amount)}</td>
-                      <td>{order.item_count}</td>
-                      <td>{purchaseSourceLabels[order.source] ?? "-"}</td>
-                      <td>{formatDateTime(order.created_at)}</td>
-                      <td>
-                        <div className="rowActions">
-                          <button
-                            type="button"
-                            onClick={() => viewDetail(order.id)}
-                            disabled={detailLoading}
-                          >
-                            查看详情
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openManualEditForm(order.id)}
-                            disabled={detailLoading || order.status !== "draft"}
-                          >
-                            编辑
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => updateStatus(order.id, "ordered")}
-                            disabled={
-                              updating ||
-                              order.status === "ordered" ||
-                              order.status === "received" ||
-                              order.status === "cancelled"
-                            }
-                          >
-                            标记为已下单
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => updateStatus(order.id, "received")}
-                            disabled={
-                              updating ||
-                              order.status === "received" ||
-                              order.status === "cancelled"
-                            }
-                          >
-                            标记为已到货
-                          </button>
-                          <button type="button" onClick={() => exportOrder(order)}>
-                            导出
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openOrderImagePreview(order)}
-                            disabled={detailLoading}
-                          >
-                            导出图片
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
+        <DataTable
+          columns={purchaseOrderColumns}
+          rows={purchaseOrders}
+          getRowKey={(order) => order.id}
+          loading={loading}
+          emptyText="暂无采购单"
+          minWidth={1040}
+        />
 
         {!loading && totalPurchaseOrders > 0 ? (
           <Pagination
@@ -1789,12 +1911,40 @@ export default function PurchaseOrdersPage() {
       </section>
 
       {detail ? (
-        <Modal
+        <DetailDrawer
           open={Boolean(detail)}
-          eyebrow="采购单详情"
           title={detail.purchase_order_no}
-          maxWidth="xl"
+          width="lg"
           onClose={() => setDetail(null)}
+          footer={
+            <>
+              <button type="button" onClick={() => setDetail(null)}>
+                关闭
+              </button>
+              <button
+                type="button"
+                onClick={() => openManualEditForm(detail.id)}
+                disabled={detail.status !== "draft"}
+              >
+                编辑
+              </button>
+              <button type="button" onClick={() => exportOrder(detail)}>
+                导出采购单
+              </button>
+              <button
+                className="primaryButton"
+                type="button"
+                onClick={() => {
+                  window.location.href = `/inventory/inbound?tab=purchase&purchaseOrderNo=${encodeURIComponent(
+                    detail.purchase_order_no
+                  )}`;
+                }}
+                disabled={detail.status === "received" || detail.status === "cancelled"}
+              >
+                创建入库单
+              </button>
+            </>
+          }
         >
 
           <div className="detailGrid">
@@ -1900,7 +2050,7 @@ export default function PurchaseOrdersPage() {
             </table>
           </div>
 
-          <div className="modalFooter">
+          <div className="modalFooter drawerInnerFooter">
             <strong>
               合计数量：{formatQuantity(getOrderTotalQuantity(detail))}，合计金额：
               {formatMoney(detail.total_amount)}
@@ -1940,7 +2090,7 @@ export default function PurchaseOrdersPage() {
               </button>
             </div>
           </div>
-        </Modal>
+        </DetailDrawer>
       ) : null}
 
       {imagePreviewOrder ? (

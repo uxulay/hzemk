@@ -125,7 +125,7 @@ export const navigationGroups: NavigationGroup[] = [
       },
       {
         label: "库存预警",
-        href: "/inventory/overview",
+        href: "/inventory/warnings",
         roles: ["warehouse", "procurement", "operations", "plant_manager", "admin"]
       },
       {
