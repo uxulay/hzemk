@@ -4,10 +4,12 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { BulkActionBar } from "@/components/BulkActionBar";
 import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { Modal } from "@/components/Modal";
 import { DataTable, type DataTableColumn } from "@/components/ui/DataTable";
+import { DetailDrawer } from "@/components/ui/detail-drawer";
+import { DrawerForm } from "@/components/ui/DrawerForm";
+import { InfoCell } from "@/components/ui/info-cell";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { ProductImage } from "@/components/ui/ProductImage";
+import { RowActions } from "@/components/ui/row-actions";
 import { SearchFilterBar } from "@/components/ui/SearchFilterBar";
 import { StatCard } from "@/components/ui/StatCard";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -172,6 +174,7 @@ export default function AdminProductsPage() {
   const [selectedSkus, setSelectedSkus] = useState<ProductSkuRow[]>([]);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [brandFilter, setBrandFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
   const [page, setPage] = useState(1);
@@ -209,7 +212,8 @@ export default function AdminProductsPage() {
           keyword: searchKeyword,
           filters: {
             status: statusFilter,
-            brandId: brandFilter
+            brandId: brandFilter,
+            category: categoryFilter
           }
         }),
         getBrandOptions(),
@@ -257,7 +261,7 @@ export default function AdminProductsPage() {
     }, 300);
 
     return () => window.clearTimeout(timer);
-  }, [brandFilter, searchKeyword, statusFilter]);
+  }, [brandFilter, categoryFilter, searchKeyword, statusFilter]);
 
   const refreshAll = async () => {
     const productToRefresh = selectedProduct;
@@ -478,28 +482,17 @@ export default function AdminProductsPage() {
       )
     },
     {
-      key: "image",
-      title: "产品图片",
+      key: "product",
+      title: "产品信息",
+      width: "34%",
       render: (product) => (
-        <ProductImage
-          src={product.product_image_url}
-          alt={`${product.product_code} ${product.name}`}
+        <InfoCell
+          imageUrl={product.product_image_url}
+          imageAlt={`${product.product_code} ${product.name}`}
+          title={product.product_code}
+          subtitle={product.name}
+          tag={<span className="tableSubText">{getBrandCodeName(product.brand)}</span>}
         />
-      )
-    },
-    {
-      key: "code",
-      title: "SPU",
-      render: (product) => <strong>{product.product_code}</strong>
-    },
-    {
-      key: "name",
-      title: "产品名称",
-      render: (product) => (
-        <div>
-          <strong>{product.name}</strong>
-          <span className="tableSubText">{getBrandCodeName(product.brand)}</span>
-        </div>
       )
     },
     {
@@ -517,6 +510,7 @@ export default function AdminProductsPage() {
     {
       key: "skuCount",
       title: "SKU 数量",
+      align: "right",
       render: (product) => product.sku_count
     },
     {
@@ -531,41 +525,27 @@ export default function AdminProductsPage() {
         const statusUpdating = statusUpdatingId === product.id;
 
         return (
-          <div className="rowActions productRowActions">
-            <button
-              type="button"
-              onClick={() => openProductSkus(product)}
-              disabled={skuLoading}
-            >
-              查看
-            </button>
-            <button
-              type="button"
-              onClick={() => startEditProduct(product)}
-              disabled={updating}
-            >
-              编辑
-            </button>
-            <button
-              type="button"
-              onClick={() => changeProductStatus(product)}
-              disabled={statusUpdating}
-            >
-              {statusUpdating
-                ? "处理中"
-                : product.status === "active"
-                  ? "停用"
-                  : "启用"}
-            </button>
-            <button
-              className="dangerButton"
-              type="button"
-              onClick={() => setProductToDelete(product)}
-              disabled={deletingProductId === product.id}
-            >
-              删除
-            </button>
-          </div>
+          <RowActions
+            onView={() => openProductSkus(product)}
+            onEdit={() => startEditProduct(product)}
+            moreActions={[
+              {
+                label: statusUpdating
+                  ? "处理中"
+                  : product.status === "active"
+                    ? "停用"
+                    : "启用",
+                disabled: statusUpdating,
+                onClick: () => changeProductStatus(product)
+              },
+              {
+                label: "删除",
+                danger: true,
+                disabled: deletingProductId === product.id,
+                onClick: () => setProductToDelete(product)
+              }
+            ]}
+          />
         );
       }
     }
@@ -576,7 +556,6 @@ export default function AdminProductsPage() {
       <PageHeader
         eyebrow="基础资料"
         title="产品管理"
-        description="管理产品 SPU、图片、类目、状态和关联 SKU。"
         actions={
           <div className="rowActions">
             <button
@@ -589,11 +568,11 @@ export default function AdminProductsPage() {
               }
             >
               <DownloadIcon size={16} />
-              下载模板
+              导出模板
             </button>
             <button type="button" onClick={() => setImportOpen(true)}>
               <UploadIcon size={16} />
-              批量导入
+              导入
             </button>
             <button className="primaryButton" type="button" onClick={() => setCreateOpen(true)}>
               <PlusIcon size={16} />
@@ -648,14 +627,23 @@ export default function AdminProductsPage() {
         </div>
       ) : null}
 
-      <Modal
+      <DrawerForm
         open={createOpen}
-        eyebrow="新增产品"
-        title="创建产品基础资料"
-        maxWidth="lg"
+        title="新增产品"
+        width="lg"
         onClose={() => setCreateOpen(false)}
+        footer={
+          <>
+            <button className="secondaryButton" type="button" onClick={() => setCreateOpen(false)}>
+              取消
+            </button>
+            <button className="primaryButton" form="create-product-form" type="submit" disabled={creating}>
+              {creating ? "正在新增..." : "新增产品"}
+            </button>
+          </>
+        }
       >
-        <form className="dataForm productForm" onSubmit={submitCreateProduct}>
+        <form id="create-product-form" className="dataForm productForm" onSubmit={submitCreateProduct}>
           <label>
             SPU
             <input
@@ -771,23 +759,26 @@ export default function AdminProductsPage() {
             />
           </label>
 
-          <div className="formActions">
-            <button className="primaryButton" type="submit" disabled={creating}>
-              {creating ? "正在新增..." : "新增产品"}
-            </button>
-          </div>
         </form>
-      </Modal>
+      </DrawerForm>
 
       {editForm ? (
-        <Modal
+        <DrawerForm
           open={Boolean(editForm)}
-          eyebrow="编辑产品"
-          title={editForm.productCode}
-          maxWidth="md"
+          title={`编辑产品：${editForm.productCode}`}
           onClose={() => setEditForm(null)}
+          footer={
+            <>
+              <button className="secondaryButton" type="button" onClick={() => setEditForm(null)}>
+                取消
+              </button>
+              <button className="primaryButton" form="edit-product-form" type="submit" disabled={updating}>
+                {updating ? "正在保存..." : "保存编辑"}
+              </button>
+            </>
+          }
         >
-          <form className="dataForm productForm" onSubmit={submitEditProduct}>
+          <form id="edit-product-form" className="dataForm productForm" onSubmit={submitEditProduct}>
             <label>
               产品名称
               <input
@@ -910,17 +901,8 @@ export default function AdminProductsPage() {
               />
             </label>
 
-            <div className="formActions">
-              <button
-                className="primaryButton"
-                type="submit"
-                disabled={updating}
-              >
-                {updating ? "正在保存..." : "保存编辑"}
-              </button>
-            </div>
           </form>
-        </Modal>
+        </DrawerForm>
       ) : null}
 
       <section className="modernCard">
@@ -945,9 +927,32 @@ export default function AdminProductsPage() {
             setSearchKeyword("");
             setStatusFilter("all");
             setBrandFilter("all");
+            setCategoryFilter("all");
             setPage(1);
           }}
         >
+
+          <label>
+            类目
+            <select
+              value={categoryFilter}
+              onChange={(event) => setCategoryFilter(event.target.value)}
+            >
+              <option value="all">全部类目</option>
+              <option value="none">未填写类目</option>
+              {Array.from(
+                new Set(
+                  products
+                    .map((product) => product.category)
+                    .filter((category): category is string => Boolean(category))
+                )
+              ).map((category) => (
+                <option key={category} value={category}>
+                  {category}
+                </option>
+              ))}
+            </select>
+          </label>
 
           <label>
             产品状态
@@ -994,7 +999,7 @@ export default function AdminProductsPage() {
           loading={loading}
           loadingText="正在读取产品数据..."
           emptyText="暂无产品"
-          minWidth={1120}
+          minWidth={920}
           page={page}
           pageSize={DEFAULT_PAGE_SIZE}
           total={productTotal}
@@ -1007,11 +1012,10 @@ export default function AdminProductsPage() {
       ) : null}
 
       {selectedProduct ? (
-        <Modal
+        <DetailDrawer
           open={Boolean(selectedProduct)}
-          eyebrow="关联 SKU"
           title={`${selectedProduct.product_code} / ${selectedProduct.name}`}
-          maxWidth="xl"
+          width="lg"
           onClose={() => {
             setSelectedProduct(null);
             setSelectedSkus([]);
@@ -1050,7 +1054,7 @@ export default function AdminProductsPage() {
               </table>
             </div>
           )}
-        </Modal>
+        </DetailDrawer>
       ) : null}
 
       <BulkImportDialog<ProductImportInput>

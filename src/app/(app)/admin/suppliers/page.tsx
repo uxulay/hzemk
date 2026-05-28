@@ -4,8 +4,14 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { BulkActionBar } from "@/components/BulkActionBar";
 import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { Modal } from "@/components/Modal";
-import { Pagination } from "@/components/Pagination";
+import { DataTable, type DataTableColumn } from "@/components/ui/DataTable";
+import { DetailDrawer } from "@/components/ui/detail-drawer";
+import { DrawerForm } from "@/components/ui/DrawerForm";
+import { InfoCell } from "@/components/ui/info-cell";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { RowActions } from "@/components/ui/row-actions";
+import { SearchFilterBar } from "@/components/ui/SearchFilterBar";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
   bulkImportSuppliers,
   deactivateSuppliersByIds,
@@ -481,19 +487,128 @@ export default function AdminSuppliersPage() {
     }
   };
 
+  const supplierColumns: DataTableColumn<SupplierListRow>[] = [
+    {
+      key: "select",
+      title: (
+        <input
+          aria-label="全选当前页供应商"
+          className="tableCheckbox"
+          type="checkbox"
+          checked={allFilteredSelected}
+          onChange={toggleAllFilteredSuppliers}
+        />
+      ),
+      className: "selectColumn",
+      render: (supplier) => (
+        <input
+          aria-label={`选择供应商 ${supplier.supplier_code}`}
+          className="tableCheckbox"
+          type="checkbox"
+          checked={selectedSupplierIds.includes(supplier.id)}
+          onChange={() => toggleSupplierSelection(supplier.id)}
+        />
+      )
+    },
+    {
+      key: "supplier",
+      title: "供应商信息",
+      width: "34%",
+      render: (supplier) => (
+        <InfoCell
+          title={supplier.name}
+          subtitle={`${supplier.supplier_code}${supplier.notes ? ` / ${supplier.notes}` : ""}`}
+        />
+      )
+    },
+    {
+      key: "contact",
+      title: "联系方式",
+      render: (supplier) => (
+        <InfoCell
+          title={getOptionalText(supplier.contact_name)}
+          subtitle={getOptionalText(supplier.phone)}
+        />
+      )
+    },
+    {
+      key: "materials",
+      title: "供应物料",
+      align: "right",
+      render: (supplier) => supplier.default_material_count
+    },
+    {
+      key: "status",
+      title: "状态",
+      render: (supplier) => (
+        <StatusBadge status={supplier.status} label={getSupplierStatusLabel(supplier.status)} />
+      )
+    },
+    {
+      key: "createdAt",
+      title: "创建时间",
+      render: (supplier) => formatDateTime(supplier.created_at)
+    },
+    {
+      key: "actions",
+      title: "操作",
+      render: (supplier) => {
+        const statusUpdating = statusUpdatingId === supplier.id;
+
+        return (
+          <RowActions
+            onView={() => openSupplierDetail(supplier)}
+            onEdit={() => startEditSupplier(supplier)}
+            moreActions={[
+              {
+                label: statusUpdating
+                  ? "正在处理"
+                  : supplier.status === "active"
+                    ? "停用"
+                    : "启用",
+                disabled: statusUpdating,
+                onClick: () => changeSupplierStatus(supplier)
+              },
+              {
+                label: "删除",
+                danger: true,
+                disabled: deletingSupplierId === supplier.id,
+                onClick: () => setSupplierToDelete(supplier)
+              }
+            ]}
+          />
+        );
+      }
+    }
+  ];
+
   return (
-    <main className="pageShell">
-      <section className="pageHero">
-        <div>
-          <p className="eyebrow">基础资料</p>
-          <h2>供应商管理</h2>
-          <p>
-            管理采购用的供应商基础资料。采购单通过供应商 ID 关联供应商，
-            后续采购下单时会从这里选择供应商。
-          </p>
-        </div>
-        <span className="statusPill">Supabase 数据</span>
-      </section>
+    <main className="pageShell modernPageShell">
+      <PageHeader
+        eyebrow="基础资料"
+        title="供应商管理"
+        actions={
+          <div className="rowActions">
+            <button
+              type="button"
+              onClick={() =>
+                downloadCsvTemplate(
+                  "suppliers-import-template.csv",
+                  supplierImportFields
+                )
+              }
+            >
+              导出模板
+            </button>
+            <button type="button" onClick={() => setImportOpen(true)}>
+              导入
+            </button>
+            <button className="primaryButton" type="button" onClick={() => setCreateOpen(true)}>
+              新增供应商
+            </button>
+          </div>
+        }
+      />
 
       <section className="metricGrid">
         <div className="metric">
@@ -532,14 +647,24 @@ export default function AdminSuppliersPage() {
         </div>
       ) : null}
 
-      <Modal
+      <DrawerForm
         open={createOpen}
-        eyebrow="新增供应商"
-        title="创建供应商基础资料"
-        maxWidth="lg"
+        title="新增供应商"
+        width="lg"
         onClose={() => setCreateOpen(false)}
+        footer={
+          <>
+            <button className="secondaryButton" type="button" onClick={() => setCreateOpen(false)}>
+              取消
+            </button>
+            <button className="primaryButton" form="create-supplier-form" type="submit" disabled={creating}>
+              {creating ? "正在新增..." : "新增供应商"}
+            </button>
+          </>
+        }
       >
         <form
+          id="create-supplier-form"
           className="dataForm supplierForm"
           onSubmit={submitCreateSupplier}
         >
@@ -667,24 +792,27 @@ export default function AdminSuppliersPage() {
               placeholder="可填写合作说明、付款方式或其他备注"
             />
           </label>
-
-          <div className="formActions">
-            <button className="primaryButton" type="submit" disabled={creating}>
-              {creating ? "正在新增..." : "新增供应商"}
-            </button>
-          </div>
         </form>
-      </Modal>
+      </DrawerForm>
 
       {editForm ? (
-        <Modal
+        <DrawerForm
           open={Boolean(editForm)}
-          eyebrow="编辑供应商"
-          title={editForm.supplierCode}
-          maxWidth="lg"
+          title={`编辑供应商：${editForm.supplierCode}`}
+          width="lg"
           onClose={() => setEditForm(null)}
+          footer={
+            <>
+              <button className="secondaryButton" type="button" onClick={() => setEditForm(null)}>
+                取消
+              </button>
+              <button className="primaryButton" form="edit-supplier-form" type="submit" disabled={updating}>
+                {updating ? "正在保存..." : "保存编辑"}
+              </button>
+            </>
+          }
         >
-          <form className="dataForm supplierForm" onSubmit={submitEditSupplier}>
+          <form id="edit-supplier-form" className="dataForm supplierForm" onSubmit={submitEditSupplier}>
             <label>
               供应商编码
               <input value={editForm.supplierCode} disabled />
@@ -824,64 +952,34 @@ export default function AdminSuppliersPage() {
                 placeholder="可填写合作说明、付款方式或其他备注"
               />
             </label>
-
-            <div className="formActions">
-              <button
-                className="primaryButton"
-                type="submit"
-                disabled={updating}
-              >
-                {updating ? "正在保存..." : "保存编辑"}
-              </button>
-            </div>
           </form>
-        </Modal>
+        </DrawerForm>
       ) : null}
 
-      <section className="listPanel">
-        <div className="sectionHeader">
+      <section className="modernCard">
+        <div className="modernCardHeader">
           <div>
             <p className="eyebrow">供应商列表</p>
             <h3>所有供应商</h3>
           </div>
           <div className="rowActions">
-            <button
-              type="button"
-              onClick={() =>
-                downloadCsvTemplate(
-                  "suppliers-import-template.csv",
-                  supplierImportFields
-                )
-              }
-            >
-              下载模板
-            </button>
-            <button type="button" onClick={() => setImportOpen(true)}>
-              批量导入
-            </button>
             <button type="button" onClick={refreshAll}>
               {loading ? "正在刷新..." : "刷新列表"}
-            </button>
-            <button
-              className="primaryButton"
-              type="button"
-              onClick={() => setCreateOpen(true)}
-            >
-              新增供应商
             </button>
           </div>
         </div>
 
-        <div className="listToolbar supplierToolbar">
-          <label>
-            搜索供应商名称 / 编码 / 联系人
-            <input
-              value={searchKeyword}
-              onChange={(event) => setSearchKeyword(event.target.value)}
-              placeholder="输入名称、编码或联系人"
-            />
-          </label>
-
+        <SearchFilterBar
+          searchLabel="搜索供应商名称 / 联系人 / 电话"
+          searchValue={searchKeyword}
+          searchPlaceholder="输入名称、联系人或电话"
+          onSearchChange={setSearchKeyword}
+          onReset={() => {
+            setSearchKeyword("");
+            setStatusFilter("all");
+            setPage(1);
+          }}
+        >
           <label>
             供应商状态
             <select
@@ -893,11 +991,7 @@ export default function AdminSuppliersPage() {
               <option value="inactive">停用</option>
             </select>
           </label>
-
-          <button className="secondaryButton" type="button" onClick={refreshAll}>
-            刷新
-          </button>
-        </div>
+        </SearchFilterBar>
 
         <BulkActionBar
           selectedItems={selectedSuppliers}
@@ -910,135 +1004,19 @@ export default function AdminSuppliersPage() {
           onDeleteSelected={batchDeleteSuppliers}
         />
 
-        {loading ? (
-          <div className="debugNotice">正在读取供应商数据...</div>
-        ) : null}
-
-        {!loading && suppliers.length === 0 ? (
-          <div className="emptyState">暂无供应商</div>
-        ) : null}
-
-        {!loading && suppliers.length > 0 ? (
-          <div className="tableWrap">
-            <table className="dataTable supplierTable">
-              <thead>
-                <tr>
-                  <th className="selectColumn">
-                    <input
-                      aria-label="全选当前页供应商"
-                      className="tableCheckbox"
-                      type="checkbox"
-                      checked={allFilteredSelected}
-                      onChange={toggleAllFilteredSuppliers}
-                    />
-                  </th>
-                  <th>供应商编码</th>
-                  <th>供应商名称</th>
-                  <th>联系人</th>
-                  <th>联系电话</th>
-                  <th>邮箱</th>
-                  <th>地址</th>
-                  <th>状态</th>
-                  <th>关联辅料数量</th>
-                  <th>关联采购单数量</th>
-                  <th>创建时间</th>
-                  <th>更新时间</th>
-                  <th>备注</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {suppliers.map((supplier) => {
-                  const statusUpdating = statusUpdatingId === supplier.id;
-
-                  return (
-                    <tr key={supplier.id}>
-                      <td>
-                        <input
-                          aria-label={`选择供应商 ${supplier.supplier_code}`}
-                          className="tableCheckbox"
-                          type="checkbox"
-                          checked={selectedSupplierIds.includes(supplier.id)}
-                          onChange={() => toggleSupplierSelection(supplier.id)}
-                        />
-                      </td>
-                      <td>
-                        <strong>{supplier.supplier_code}</strong>
-                      </td>
-                      <td>{supplier.name}</td>
-                      <td>{getOptionalText(supplier.contact_name)}</td>
-                      <td>{getOptionalText(supplier.phone)}</td>
-                      <td>{getOptionalText(supplier.email)}</td>
-                      <td className="notesCell">
-                        {getOptionalText(supplier.address)}
-                      </td>
-                      <td>
-                        <span
-                          className={`tablePill supplier-status-${supplier.status}`}
-                        >
-                          {getSupplierStatusLabel(supplier.status)}
-                        </span>
-                      </td>
-                      <td>{supplier.default_material_count}</td>
-                      <td>{supplier.purchase_order_count}</td>
-                      <td>{formatDateTime(supplier.created_at)}</td>
-                      <td>{formatDateTime(supplier.updated_at)}</td>
-                      <td className="notesCell">
-                        {getOptionalText(supplier.notes)}
-                      </td>
-                      <td>
-                        <div className="rowActions supplierRowActions">
-                          <button
-                            type="button"
-                            onClick={() => startEditSupplier(supplier)}
-                            disabled={updating}
-                          >
-                            编辑
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => changeSupplierStatus(supplier)}
-                            disabled={statusUpdating}
-                          >
-                            {statusUpdating
-                              ? "正在处理..."
-                              : supplier.status === "active"
-                                ? "停用"
-                                : "启用"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openSupplierDetail(supplier)}
-                            disabled={supplierDetailLoading}
-                          >
-                            查看关联
-                          </button>
-                          <button
-                            className="dangerButton"
-                            type="button"
-                            onClick={() => setSupplierToDelete(supplier)}
-                            disabled={deletingSupplierId === supplier.id}
-                          >
-                            删除
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-
-        {!loading && suppliers.length > 0 ? (
-          <Pagination
-            page={page}
-            pageSize={DEFAULT_PAGE_SIZE}
-            total={supplierTotal}
-            onPageChange={(nextPage) => loadPageData(nextPage)}
-          />
-        ) : null}
+        <DataTable
+          columns={supplierColumns}
+          rows={suppliers}
+          getRowKey={(supplier) => supplier.id}
+          loading={loading}
+          loadingText="正在读取供应商数据..."
+          emptyText="暂无供应商"
+          minWidth={900}
+          page={page}
+          pageSize={DEFAULT_PAGE_SIZE}
+          total={supplierTotal}
+          onPageChange={(nextPage) => loadPageData(nextPage)}
+        />
       </section>
 
       {supplierDetailLoading ? (
@@ -1046,11 +1024,10 @@ export default function AdminSuppliersPage() {
       ) : null}
 
       {selectedSupplier ? (
-        <Modal
+        <DetailDrawer
           open={Boolean(selectedSupplier)}
-          eyebrow="供应商详情"
           title={`${selectedSupplier.supplier_code} / ${selectedSupplier.name}`}
-          maxWidth="xl"
+          width="lg"
           onClose={() => {
             setSelectedSupplier(null);
             setPurchaseOrders([]);
@@ -1171,7 +1148,7 @@ export default function AdminSuppliersPage() {
               </div>
             )}
           </section>
-        </Modal>
+        </DetailDrawer>
       ) : null}
 
       <BulkImportDialog<SupplierImportInput>

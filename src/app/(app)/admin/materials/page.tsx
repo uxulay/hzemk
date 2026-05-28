@@ -6,8 +6,14 @@ import { useMockRole } from "@/components/auth/mock-role-provider";
 import { BulkActionBar } from "@/components/BulkActionBar";
 import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { Modal } from "@/components/Modal";
-import { Pagination } from "@/components/Pagination";
+import { DataTable, type DataTableColumn } from "@/components/ui/DataTable";
+import { DetailDrawer } from "@/components/ui/detail-drawer";
+import { DrawerForm } from "@/components/ui/DrawerForm";
+import { InfoCell } from "@/components/ui/info-cell";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { RowActions } from "@/components/ui/row-actions";
+import { SearchFilterBar } from "@/components/ui/SearchFilterBar";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { SupplierSearchSelect } from "@/components/SupplierSearchSelect";
 import type { SupplierSearchOption } from "@/components/SupplierSearchSelect";
 import {
@@ -251,13 +257,6 @@ function getMaterialSupplierLabel(material: Pick<MaterialListRow, "default_suppl
     material.default_supplier.status === "inactive" ? " / 停用" : "";
 
   return `${material.default_supplier.supplier_code} / ${material.default_supplier.name}${statusText}`;
-}
-
-function isLowStock(material: MaterialListRow) {
-  return (
-    material.safety_stock_quantity > 0 &&
-    material.inventory_quantity < material.safety_stock_quantity
-  );
 }
 
 function getTransactionsHref(material: MaterialListRow) {
@@ -646,19 +645,145 @@ export default function AdminMaterialsPage() {
     }
   };
 
+  const materialColumns: DataTableColumn<MaterialListRow>[] = [
+    ...(canManageMaterials
+      ? [
+          {
+            key: "select",
+            title: (
+              <input
+                aria-label="全选当前原材料"
+                className="tableCheckbox"
+                type="checkbox"
+                checked={allFilteredSelected}
+                onChange={toggleAllFilteredMaterials}
+              />
+            ),
+            className: "selectColumn",
+            render: (material: MaterialListRow) => (
+              <input
+                aria-label={`选择原材料 ${material.sku_code}`}
+                className="tableCheckbox"
+                type="checkbox"
+                checked={selectedMaterialIds.includes(material.id)}
+                onChange={() => toggleMaterialSelection(material.id)}
+              />
+            )
+          } satisfies DataTableColumn<MaterialListRow>
+        ]
+      : []),
+    {
+      key: "material",
+      title: "物料信息",
+      width: "34%",
+      render: (material) => (
+        <InfoCell
+          title={material.sku_name}
+          subtitle={`${material.sku_code}${material.specs ? ` / ${material.specs}` : ""}`}
+        />
+      )
+    },
+    {
+      key: "category",
+      title: "类别",
+      render: (material) => getMaterialCategory(material)
+    },
+    {
+      key: "unit",
+      title: "单位",
+      render: (material) => material.unit
+    },
+    {
+      key: "safetyStock",
+      title: "安全库存",
+      align: "right",
+      render: (material) => formatQuantity(material.safety_stock_quantity)
+    },
+    {
+      key: "status",
+      title: "状态",
+      render: (material) => (
+        <StatusBadge status={material.status} label={getMaterialStatusLabel(material.status)} />
+      )
+    },
+    {
+      key: "actions",
+      title: "操作",
+      render: (material) => {
+        const statusUpdating = statusUpdatingId === material.id;
+
+        return (
+          <RowActions
+            onView={() => openMaterialDetail(material)}
+            onEdit={canManageMaterials ? () => startEditMaterial(material) : undefined}
+            moreActions={
+              canManageMaterials
+                ? [
+                    {
+                      label: statusUpdating
+                        ? "正在处理"
+                        : material.status === "active"
+                          ? "停用"
+                          : "启用",
+                      disabled: statusUpdating,
+                      onClick: () => changeMaterialStatus(material)
+                    },
+                    {
+                      label: "删除",
+                      danger: true,
+                      disabled: deletingMaterialId === material.id,
+                      onClick: () => setMaterialToDelete(material)
+                    }
+                  ]
+                : []
+            }
+          />
+        );
+      }
+    }
+  ];
+
   return (
-    <main className="pageShell">
-      <section className="pageHero">
-        <div>
-          <p className="eyebrow">基础资料</p>
-          <h2>辅料管理</h2>
-          <p>
-            专门维护辅料基础资料。阶段一开始读取独立 materials 表，
-            旧 skus 里的原辅料数据仍保留不动。
-          </p>
-        </div>
-        <span className="statusPill">Supabase 数据</span>
-      </section>
+    <main className="pageShell modernPageShell">
+      <PageHeader
+        eyebrow="基础资料"
+        title="原材料管理"
+        actions={
+          <div className="rowActions">
+            {canManageMaterials ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() =>
+                    downloadCsvTemplate(
+                      "materials-import-template.csv",
+                      materialImportFields,
+                      materialImportSampleRows
+                    )
+                  }
+                >
+                  导出模板
+                </button>
+                <button type="button" onClick={() => setImportOpen(true)}>
+                  导入
+                </button>
+              </>
+            ) : null}
+            <button type="button" onClick={refreshAll}>
+              {loading ? "正在刷新..." : "刷新列表"}
+            </button>
+            {canManageMaterials ? (
+              <button
+                className="primaryButton"
+                type="button"
+                onClick={() => setCreateOpen(true)}
+              >
+                新增原材料
+              </button>
+            ) : null}
+          </div>
+        }
+      />
 
       <section className="transactionSummaryGrid">
         <div className="metric">
@@ -709,14 +834,23 @@ export default function AdminMaterialsPage() {
         ))}
       </datalist>
 
-      <Modal
+      <DrawerForm
         open={createOpen}
-        eyebrow="新增辅料"
-        title="创建辅料基础资料"
-        maxWidth="lg"
+        title="新增原材料"
+        width="lg"
         onClose={() => setCreateOpen(false)}
+        footer={
+          <>
+            <button className="secondaryButton" type="button" onClick={() => setCreateOpen(false)}>
+              取消
+            </button>
+            <button className="primaryButton" form="create-material-form" type="submit" disabled={creating}>
+              {creating ? "正在新增..." : "新增原材料"}
+            </button>
+          </>
+        }
       >
-        <form className="dataForm skuForm" onSubmit={submitCreateMaterial}>
+        <form id="create-material-form" className="dataForm skuForm" onSubmit={submitCreateMaterial}>
           <label>
             辅料编码
             <input
@@ -842,24 +976,27 @@ export default function AdminMaterialsPage() {
               placeholder="可填写采购、替代料或使用注意事项"
             />
           </label>
-
-          <div className="formActions">
-            <button className="primaryButton" type="submit" disabled={creating}>
-              {creating ? "正在新增..." : "新增辅料"}
-            </button>
-          </div>
         </form>
-      </Modal>
+      </DrawerForm>
 
       {editForm ? (
-        <Modal
+        <DrawerForm
           open={Boolean(editForm)}
-          eyebrow="编辑辅料"
-          title={editForm.skuCode}
-          maxWidth="lg"
+          title={`编辑原材料：${editForm.skuCode}`}
+          width="lg"
           onClose={() => setEditForm(null)}
+          footer={
+            <>
+              <button className="secondaryButton" type="button" onClick={() => setEditForm(null)}>
+                取消
+              </button>
+              <button className="primaryButton" form="edit-material-form" type="submit" disabled={updating}>
+                {updating ? "正在保存..." : "保存编辑"}
+              </button>
+            </>
+          }
         >
-          <form className="dataForm skuForm" onSubmit={submitEditMaterial}>
+          <form id="edit-material-form" className="dataForm skuForm" onSubmit={submitEditMaterial}>
             <label>
               辅料编码
               <input value={editForm.skuCode} disabled />
@@ -1003,71 +1140,31 @@ export default function AdminMaterialsPage() {
                 placeholder="可填写采购、替代料或使用注意事项"
               />
             </label>
-
-            <div className="formActions">
-              <button
-                className="primaryButton"
-                type="submit"
-                disabled={updating}
-              >
-                {updating ? "正在保存..." : "保存编辑"}
-              </button>
-            </div>
           </form>
-        </Modal>
+        </DrawerForm>
       ) : null}
 
-      <section className="listPanel">
-        <div className="sectionHeader">
+      <section className="modernCard">
+        <div className="modernCardHeader">
           <div>
-            <p className="eyebrow">辅料列表</p>
-            <h3>辅料基础资料</h3>
-          </div>
-          <div className="rowActions">
-            {canManageMaterials ? (
-              <>
-                <button
-                  type="button"
-                  onClick={() =>
-                    downloadCsvTemplate(
-                      "materials-import-template.csv",
-                      materialImportFields,
-                      materialImportSampleRows
-                    )
-                  }
-                >
-                  下载模板
-                </button>
-                <button type="button" onClick={() => setImportOpen(true)}>
-                  批量导入
-                </button>
-              </>
-            ) : null}
-            <button type="button" onClick={refreshAll}>
-              {loading ? "正在刷新..." : "刷新列表"}
-            </button>
-            {canManageMaterials ? (
-              <button
-                className="primaryButton"
-                type="button"
-                onClick={() => setCreateOpen(true)}
-              >
-                新增辅料
-              </button>
-            ) : null}
+            <p className="eyebrow">原材料列表</p>
+            <h3>全部原材料</h3>
           </div>
         </div>
 
-        <div className="listToolbar skuToolbar">
-          <label>
-            搜索辅料编码 / 名称 / 分类 / 规格 / 备注
-            <input
-              value={searchKeyword}
-              onChange={(event) => setSearchKeyword(event.target.value)}
-              placeholder="输入辅料编码、名称、分类、规格或备注"
-            />
-          </label>
-
+        <SearchFilterBar
+          searchLabel="搜索物料名称 / 编码 / 规格"
+          searchValue={searchKeyword}
+          searchPlaceholder="输入名称、编码或规格"
+          onSearchChange={setSearchKeyword}
+          onReset={() => {
+            setSearchKeyword("");
+            setStatusFilter("all");
+            setCategoryFilter("all");
+            setSupplierFilter("all");
+            setPage(1);
+          }}
+        >
           <label>
             状态
             <select
@@ -1118,10 +1215,7 @@ export default function AdminMaterialsPage() {
             </select>
           </label>
 
-          <button className="secondaryButton" type="button" onClick={refreshAll}>
-            刷新
-          </button>
-        </div>
+        </SearchFilterBar>
 
         {canManageMaterials ? (
           <BulkActionBar
@@ -1136,151 +1230,19 @@ export default function AdminMaterialsPage() {
           />
         ) : null}
 
-        {loading ? <div className="debugNotice">正在读取辅料数据...</div> : null}
-
-        {!loading && materials.length === 0 ? (
-          <div className="emptyState">暂无辅料</div>
-        ) : null}
-
-        {!loading && materials.length > 0 ? (
-          <div className="tableWrap">
-            <table className="dataTable skuTable">
-              <thead>
-                <tr>
-                  {canManageMaterials ? (
-                    <th className="selectColumn">
-                      <input
-                        aria-label="全选当前辅料"
-                        className="tableCheckbox"
-                        type="checkbox"
-                        checked={allFilteredSelected}
-                        onChange={toggleAllFilteredMaterials}
-                      />
-                    </th>
-                  ) : null}
-                  <th>辅料编码</th>
-                  <th>辅料名称</th>
-                  <th>分类</th>
-                  <th>单位</th>
-                  <th>规格</th>
-                  <th>默认供应商</th>
-                  <th>供应商联系人</th>
-                  <th>供应商电话</th>
-                  <th>状态</th>
-                  <th>当前库存</th>
-                  <th>安全库存</th>
-                  <th>BOM 引用</th>
-                  <th>需求引用</th>
-                  <th>采购引用</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {materials.map((material) => {
-                  const statusUpdating = statusUpdatingId === material.id;
-
-                  return (
-                    <tr key={material.id}>
-                      {canManageMaterials ? (
-                        <td>
-                          <input
-                            aria-label={`选择辅料 ${material.sku_code}`}
-                            className="tableCheckbox"
-                            type="checkbox"
-                            checked={selectedMaterialIds.includes(material.id)}
-                            onChange={() => toggleMaterialSelection(material.id)}
-                          />
-                        </td>
-                      ) : null}
-                      <td>
-                        <strong>{material.sku_code}</strong>
-                      </td>
-                      <td>{material.sku_name}</td>
-                      <td>{getMaterialCategory(material)}</td>
-                      <td>{material.unit}</td>
-                      <td className="notesCell">{material.specs ?? "-"}</td>
-                      <td>{getMaterialSupplierLabel(material)}</td>
-                      <td>{material.default_supplier?.contact_name ?? "-"}</td>
-                      <td>{material.default_supplier?.phone ?? "-"}</td>
-                      <td>
-                        <span
-                          className={`tablePill sku-status-${material.status}`}
-                        >
-                          {getMaterialStatusLabel(material.status)}
-                        </span>
-                      </td>
-                      <td className="quantityCell">
-                        {formatQuantity(material.inventory_quantity)}
-                        <span>
-                          {material.inventory_row_count > 0
-                            ? `占用 ${formatQuantity(material.reserved_quantity)}`
-                            : "暂无库存记录"}
-                        </span>
-                      </td>
-                      <td className="quantityCell">
-                        {formatQuantity(material.safety_stock_quantity)}
-                        {isLowStock(material) ? <span>低于安全库存</span> : null}
-                      </td>
-                      <td>{material.bom_usage_count}</td>
-                      <td>{material.material_requirement_usage_count}</td>
-                      <td>{material.purchase_usage_count}</td>
-                      <td>
-                        <div className="rowActions skuRowActions">
-                          <button
-                            type="button"
-                            onClick={() => openMaterialDetail(material)}
-                            disabled={detailLoading}
-                          >
-                            查看
-                          </button>
-                          {canManageMaterials ? (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => startEditMaterial(material)}
-                                disabled={updating}
-                              >
-                                编辑
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => changeMaterialStatus(material)}
-                                disabled={statusUpdating}
-                              >
-                                {statusUpdating
-                                  ? "正在处理..."
-                                  : material.status === "active"
-                                    ? "停用"
-                                    : "启用"}
-                              </button>
-                              <button
-                                className="dangerButton"
-                                type="button"
-                                onClick={() => setMaterialToDelete(material)}
-                                disabled={deletingMaterialId === material.id}
-                              >
-                                删除
-                              </button>
-                            </>
-                          ) : null}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-
-        {!loading && totalMaterials > 0 ? (
-          <Pagination
-            page={page}
-            pageSize={DEFAULT_PAGE_SIZE}
-            total={totalMaterials}
-            onPageChange={setPage}
-          />
-        ) : null}
+        <DataTable
+          columns={materialColumns}
+          rows={materials}
+          getRowKey={(material) => material.id}
+          loading={loading}
+          loadingText="正在读取原材料数据..."
+          emptyText="暂无原材料"
+          minWidth={860}
+          page={page}
+          pageSize={DEFAULT_PAGE_SIZE}
+          total={totalMaterials}
+          onPageChange={setPage}
+        />
       </section>
 
       {detailLoading ? (
@@ -1288,11 +1250,10 @@ export default function AdminMaterialsPage() {
       ) : null}
 
       {selectedDetailMaterial ? (
-        <Modal
+        <DetailDrawer
           open={Boolean(selectedDetailMaterial)}
-          eyebrow="辅料详情"
           title={`${selectedDetailMaterial.sku_code} / ${selectedDetailMaterial.sku_name}`}
-          maxWidth="xl"
+          width="lg"
           onClose={() => {
             setSelectedDetailMaterial(null);
             setMaterialDetail(null);
@@ -1585,7 +1546,7 @@ export default function AdminMaterialsPage() {
               </section>
             </>
           ) : null}
-        </Modal>
+        </DetailDrawer>
       ) : null}
 
       <BulkImportDialog<MaterialImportInput>

@@ -4,10 +4,12 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { BulkActionBar } from "@/components/BulkActionBar";
 import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { Modal } from "@/components/Modal";
-import { Pagination } from "@/components/Pagination";
+import { DataTable, type DataTableColumn } from "@/components/ui/DataTable";
+import { DetailDrawer } from "@/components/ui/detail-drawer";
+import { DrawerForm } from "@/components/ui/DrawerForm";
+import { InfoCell } from "@/components/ui/info-cell";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { ProductImage } from "@/components/ui/ProductImage";
+import { RowActions } from "@/components/ui/row-actions";
 import { SearchFilterBar } from "@/components/ui/SearchFilterBar";
 import { StatCard } from "@/components/ui/StatCard";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -829,12 +831,106 @@ export default function BomPage() {
     }
   };
 
+  const bomColumns: DataTableColumn<BomListRow>[] = [
+    {
+      key: "select",
+      title: (
+        <input
+          aria-label="全选 BOM"
+          className="tableCheckbox"
+          type="checkbox"
+          checked={allBomsSelected}
+          onChange={toggleAllBoms}
+        />
+      ),
+      className: "selectColumn",
+      render: (bom) => (
+        <input
+          aria-label={`选择 BOM ${bom.bom_code}`}
+          className="tableCheckbox"
+          type="checkbox"
+          checked={selectedBomIds.includes(bom.id)}
+          onChange={() => toggleBomSelection(bom.id)}
+        />
+      )
+    },
+    {
+      key: "product",
+      title: "成品信息",
+      width: "34%",
+      render: (bom) => (
+        <InfoCell
+          imageUrl={bom.product_sku?.product?.product_image_url}
+          imageAlt={`${bom.product_sku?.sku_code ?? "BOM"} ${bom.product_sku?.sku_name ?? ""}`}
+          title={bom.product_sku?.sku_code ?? "-"}
+          subtitle={bom.product_sku?.product?.name ?? bom.product_sku?.sku_name ?? "-"}
+          tag={<span className="tableSubText">{getBrandCodeName(bom.product_sku?.product?.brand)}</span>}
+        />
+      )
+    },
+    {
+      key: "version",
+      title: "BOM 版本",
+      render: (bom) => bom.version
+    },
+    {
+      key: "itemCount",
+      title: "原材料数量",
+      align: "right",
+      render: (bom) => bom.item_count
+    },
+    {
+      key: "status",
+      title: "状态",
+      render: (bom) => <StatusBadge status={bom.status} label={bomStatusLabels[bom.status] ?? bom.status} />
+    },
+    {
+      key: "updatedAt",
+      title: "更新时间",
+      render: (bom) => formatDateTime(bom.updated_at)
+    },
+    {
+      key: "actions",
+      title: "操作",
+      render: (bom) => {
+        const updating = statusUpdatingId === bom.id;
+
+        return (
+          <RowActions
+            onView={() => openBomDetail(bom.id)}
+            moreActions={[
+              {
+                label: "添加辅料",
+                disabled: detailLoading,
+                onClick: () => openBomDetail(bom.id, true)
+              },
+              {
+                label: updating
+                  ? "正在处理"
+                  : bom.status === "active"
+                    ? "停用"
+                    : "启用",
+                disabled: updating,
+                onClick: () => changeBomStatus(bom)
+              },
+              {
+                label: "删除",
+                danger: true,
+                disabled: deletingBomId === bom.id,
+                onClick: () => setBomToDelete(bom)
+              }
+            ]}
+          />
+        );
+      }
+    }
+  ];
+
   return (
     <main className="pageShell modernPageShell">
       <PageHeader
         eyebrow="生产基础资料"
         title="BOM 管理"
-        description="管理每个成品 SKU 的 BOM 版本和辅料用量，生产任务会按启用中的 BOM 自动计算物料需求。"
         actions={
           <div className="rowActions">
             <button
@@ -844,11 +940,11 @@ export default function BomPage() {
               }
             >
               <DownloadIcon size={16} />
-              下载模板
+              导出模板
             </button>
             <button type="button" onClick={() => setImportOpen(true)}>
               <UploadIcon size={16} />
-              批量导入
+              导入
             </button>
             <button className="primaryButton" type="button" onClick={() => setCreateOpen(true)}>
               <PlusIcon size={16} />
@@ -879,12 +975,21 @@ export default function BomPage() {
         </div>
       ) : null}
 
-      <Modal
+      <DrawerForm
         open={createOpen}
-        eyebrow="新增 BOM"
-        title="创建成品 SKU 的 BOM 版本"
-        maxWidth="lg"
+        title="新增 BOM"
+        width="lg"
         onClose={() => setCreateOpen(false)}
+        footer={
+          <>
+            <button className="secondaryButton" type="button" onClick={() => setCreateOpen(false)}>
+              取消
+            </button>
+            <button className="primaryButton" form="create-bom-form" type="submit" disabled={submittingHeader || loading}>
+              {submittingHeader ? "正在创建..." : "新增 BOM"}
+            </button>
+          </>
+        }
       >
         {selectedActiveBom ? (
           <div className="warningNotice">
@@ -896,7 +1001,7 @@ export default function BomPage() {
           </div>
         ) : null}
 
-        <form className="dataForm bomHeaderForm" onSubmit={submitHeader}>
+        <form id="create-bom-form" className="dataForm bomHeaderForm" onSubmit={submitHeader}>
           <BomSkuSearchSelect
             label="成品 SKU"
             skus={finishedGoodSkus}
@@ -959,18 +1064,8 @@ export default function BomPage() {
               placeholder="可填写 BOM 说明"
             />
           </label>
-
-          <div className="formActions">
-            <button
-              className="primaryButton"
-              type="submit"
-              disabled={submittingHeader || loading}
-            >
-              {submittingHeader ? "正在创建..." : "新增 BOM"}
-            </button>
-          </div>
         </form>
-      </Modal>
+      </DrawerForm>
 
       <section className="modernCard">
         <div className="modernCardHeader">
@@ -1022,127 +1117,19 @@ export default function BomPage() {
           </label>
         </SearchFilterBar>
 
-        {loading ? <div className="debugNotice">正在读取 BOM 数据...</div> : null}
-
-        {!loading && boms.length === 0 ? (
-          <div className="emptyState">暂无 BOM</div>
-        ) : null}
-
-        {!loading && boms.length > 0 ? (
-          <div className="tableWrap">
-            <table className="dataTable bomTable">
-              <thead>
-                <tr>
-                  <th className="selectColumn">
-                    <input
-                      aria-label="全选 BOM"
-                      className="tableCheckbox"
-                      type="checkbox"
-                      checked={allBomsSelected}
-                      onChange={toggleAllBoms}
-                    />
-                  </th>
-                  <th>产品图片</th>
-                  <th>BOM 编号</th>
-                  <th>成品 SKU 编码</th>
-                  <th>成品 SKU 名称</th>
-                  <th>产品名称</th>
-                  <th>品牌</th>
-                  <th>BOM 版本</th>
-                  <th>BOM 状态</th>
-                  <th>辅料数量</th>
-                  <th>创建时间</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {boms.map((bom) => {
-                  const updating = statusUpdatingId === bom.id;
-
-                  return (
-                    <tr key={bom.id}>
-                      <td>
-                        <input
-                          aria-label={`选择 BOM ${bom.bom_code}`}
-                          className="tableCheckbox"
-                          type="checkbox"
-                          checked={selectedBomIds.includes(bom.id)}
-                          onChange={() => toggleBomSelection(bom.id)}
-                        />
-                      </td>
-                      <td>
-                        <ProductImage
-                          src={bom.product_sku?.product?.product_image_url}
-                          alt={`${bom.product_sku?.sku_code ?? "BOM"} ${bom.product_sku?.sku_name ?? ""}`}
-                        />
-                      </td>
-                      <td>{bom.bom_code}</td>
-                      <td>{bom.product_sku?.sku_code ?? "-"}</td>
-                      <td>{bom.product_sku?.sku_name ?? "-"}</td>
-                      <td>{bom.product_sku?.product?.name ?? "-"}</td>
-                      <td>{getBrandCodeName(bom.product_sku?.product?.brand)}</td>
-                      <td>{bom.version}</td>
-                      <td>
-                        <StatusBadge status={bom.status} label={bomStatusLabels[bom.status] ?? bom.status} />
-                      </td>
-                      <td>{bom.item_count}</td>
-                      <td>{formatDateTime(bom.created_at)}</td>
-                      <td>
-                        <div className="rowActions">
-                          <button
-                            type="button"
-                            onClick={() => openBomDetail(bom.id)}
-                            disabled={detailLoading}
-                          >
-                            查看明细
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openBomDetail(bom.id, true)}
-                            disabled={detailLoading}
-                          >
-                            添加辅料
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => changeBomStatus(bom)}
-                            disabled={updating}
-                          >
-                            {updating
-                              ? "正在处理..."
-                              : bom.status === "active"
-                                ? "停用"
-                                : "启用"}
-                          </button>
-                          <button type="button" disabled>
-                            编辑（预留）
-                          </button>
-                          <button
-                            className="dangerButton"
-                            type="button"
-                            onClick={() => setBomToDelete(bom)}
-                            disabled={deletingBomId === bom.id}
-                          >
-                            删除
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-
-        {!loading && totalBoms > 0 ? (
-          <Pagination
-            page={page}
-            pageSize={DEFAULT_PAGE_SIZE}
-            total={totalBoms}
-            onPageChange={setPage}
-          />
-        ) : null}
+        <DataTable
+          columns={bomColumns}
+          rows={boms}
+          getRowKey={(bom) => bom.id}
+          loading={loading}
+          loadingText="正在读取 BOM 数据..."
+          emptyText="暂无 BOM"
+          minWidth={900}
+          page={page}
+          pageSize={DEFAULT_PAGE_SIZE}
+          total={totalBoms}
+          onPageChange={setPage}
+        />
       </section>
 
       {detailLoading ? (
@@ -1150,11 +1137,10 @@ export default function BomPage() {
       ) : null}
 
       {bomDetail ? (
-        <Modal
+        <DetailDrawer
           open={Boolean(bomDetail)}
-          eyebrow="BOM 明细"
           title={bomDetail.bom_code}
-          maxWidth="xl"
+          width="lg"
           onClose={() => {
             setBomDetail(null);
             setSelectedBomId("");
@@ -1428,7 +1414,7 @@ export default function BomPage() {
               </table>
             </div>
           )}
-        </Modal>
+        </DetailDrawer>
       ) : null}
 
       <BulkImportDialog<BomImportInput>

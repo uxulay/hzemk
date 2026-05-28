@@ -2420,6 +2420,29 @@ FBA 出库是单独动作，不能把成品入库自动等同于发往 FBA。
 - 已运行 `npm run build`，通过。
 - 已运行 `git diff --check`，通过结果见本次收尾输出。
 
+### 3.13 渐进式 UI/UX 重构第五阶段：基础资料 / 系统管理一致性收尾（2026-05-28）
+
+本轮只处理基础资料和系统管理相关页面，没有修改 Supabase schema、RLS 或 seed，没有重写已有 Supabase 查询和写入 API。
+
+已完成：
+
+- `/admin/products` 产品管理页继续复用真实 `products.product_image_url` 展示 32px 产品图；主列表压缩为产品信息、类目、SKU 数量、状态、创建时间、操作，产品说明和关联 SKU 放到右侧抽屉。
+- `/admin/skus` SKU 管理页改为统一 `DataTable`，主列表压缩为 SKU 信息、SPU、规格/米数、状态、创建时间、操作；新增 SKU 改为先选产品，再填规格/米数，SKU 名称自动按“产品名称-规格/米数”生成。
+- `/bom` BOM 管理页改为统一 `DataTable` + `DetailDrawer`，主列表只展示成品信息、BOM 版本、原材料数量、状态、更新时间和操作；BOM 原材料明细继续放详情抽屉里维护，不在列表页展开。
+- `/admin/materials` 原材料管理页改为统一 `PageHeader`、`SearchFilterBar`、`DataTable`、`DrawerForm` 和 `DetailDrawer`；主列表压缩为物料信息、类别、单位、安全库存、状态、操作，供应商、规格备注、库存、BOM、采购和流水放详情抽屉。
+- `/admin/suppliers` 供应商管理页改为统一组件；主列表压缩为供应商信息、联系方式、供应物料、状态、创建时间、操作，地址、邮箱、备注、关联物料和采购单放详情抽屉。
+- `/admin/warehouses` 仓库管理页改为统一组件；主列表压缩为仓库信息、类型、库存品类、状态、创建时间、操作，详细地址和库存明细放详情抽屉。
+- `/admin/users` 用户管理页改为统一组件；新增/编辑改为 `DrawerForm`，查看改为 `DetailDrawer`。仍只维护 `profiles` 业务资料，不创建 Supabase Auth 登录账号，不使用 service_role key。
+- 新增 `/admin/roles` 角色权限页面，当前只做 UI 占位和 `roles` 表只读展示，不会修改登录、RLS 或真实权限。
+- 新增 `/admin/settings` 系统设置页面，继续展示当前 EMK logo 地址；当前只做设置分组占位，不写数据库，也不假装保存成功。
+- 本轮补充了角色权限和系统设置页面所需的轻量 CSS，继续沿用白底卡片、浅色边框、紧凑表格和右侧抽屉风格。
+
+验证：
+
+- 已运行 `npm run typecheck`，通过。
+- 已运行 `npm run build`，通过。
+- `git diff --check` 结果见本次收尾输出。
+
 ## 10. 给后续 Codex 的开发提醒
 
 后续开发前请先阅读 `PROJECT_NOTES.md`。

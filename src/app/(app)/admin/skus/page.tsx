@@ -5,10 +5,12 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import { BulkActionBar } from "@/components/BulkActionBar";
 import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { Modal } from "@/components/Modal";
-import { Pagination } from "@/components/Pagination";
+import { DataTable, type DataTableColumn } from "@/components/ui/DataTable";
+import { DetailDrawer } from "@/components/ui/detail-drawer";
+import { DrawerForm } from "@/components/ui/DrawerForm";
+import { InfoCell } from "@/components/ui/info-cell";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { ProductImage } from "@/components/ui/ProductImage";
+import { RowActions } from "@/components/ui/row-actions";
 import { SearchFilterBar } from "@/components/ui/SearchFilterBar";
 import { StatCard } from "@/components/ui/StatCard";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -178,16 +180,6 @@ function formatDate(value: string | null | undefined) {
   return new Date(value).toLocaleDateString("zh-CN");
 }
 
-function formatQuantity(value: number | null | undefined) {
-  if (value === null || value === undefined) {
-    return "-";
-  }
-
-  return Number(value).toLocaleString("zh-CN", {
-    maximumFractionDigits: 4
-  });
-}
-
 function getProductLabel(product: SkuProductOption | null | undefined) {
   if (!product) {
     return "未绑定产品";
@@ -345,6 +337,13 @@ export default function AdminSkusPage() {
   );
   const allPageSelected =
     skus.length > 0 && skus.every((sku) => selectedSkuIds.includes(sku.id));
+
+  const buildSkuName = (productId: string, specs: string) => {
+    const productName = products.find((product) => product.id === productId)?.name ?? "";
+    const normalizedSpecs = specs.trim();
+
+    return [productName, normalizedSpecs].filter(Boolean).join("-");
+  };
 
   const loadSkuPage = async (targetPage = page) => {
     try {
@@ -645,12 +644,104 @@ export default function AdminSkusPage() {
     }
   };
 
+  const skuColumns: DataTableColumn<SkuListRow>[] = [
+    {
+      key: "select",
+      title: (
+        <input
+          aria-label="全选当前页 SKU"
+          className="tableCheckbox"
+          type="checkbox"
+          checked={allPageSelected}
+          onChange={toggleAllPageSkus}
+        />
+      ),
+      className: "selectColumn",
+      render: (sku) => (
+        <input
+          aria-label={`选择 SKU ${sku.sku_code}`}
+          className="tableCheckbox"
+          type="checkbox"
+          checked={selectedSkuIds.includes(sku.id)}
+          onChange={() => toggleSkuSelection(sku.id)}
+        />
+      )
+    },
+    {
+      key: "sku",
+      title: "SKU 信息",
+      width: "34%",
+      render: (sku) => (
+        <InfoCell
+          imageUrl={sku.product?.product_image_url}
+          imageAlt={`${sku.sku_code} ${sku.sku_name}`}
+          title={sku.sku_code}
+          subtitle={`${sku.product?.name ?? "未绑定产品"} / ${sku.sku_name}`}
+        />
+      )
+    },
+    {
+      key: "spu",
+      title: "SPU",
+      render: (sku) => sku.product?.product_code ?? "-"
+    },
+    {
+      key: "specs",
+      title: "规格/米数",
+      render: (sku) => sku.specs ?? "-"
+    },
+    {
+      key: "status",
+      title: "状态",
+      render: (sku) => <StatusBadge status={sku.status} label={getSkuStatusLabel(sku.status)} />
+    },
+    {
+      key: "createdAt",
+      title: "创建时间",
+      render: (sku) => formatDateTime(sku.created_at)
+    },
+    {
+      key: "actions",
+      title: "操作",
+      render: (sku) => {
+        const statusUpdating = statusUpdatingId === sku.id;
+
+        return (
+          <RowActions
+            onView={() => openBomUsage(sku)}
+            onEdit={() => startEditSku(sku)}
+            moreActions={[
+              {
+                label: statusUpdating
+                  ? "正在处理"
+                  : sku.status === "active"
+                    ? "停用"
+                    : "启用",
+                disabled: statusUpdating,
+                onClick: () => changeSkuStatus(sku)
+              },
+              {
+                label: "查看库存",
+                onClick: () => router.push(getInventoryHref(sku.sku_type))
+              },
+              {
+                label: "删除",
+                danger: true,
+                disabled: deletingSkuId === sku.id,
+                onClick: () => setSkuToDelete(sku)
+              }
+            ]}
+          />
+        );
+      }
+    }
+  ];
+
   return (
     <main className="pageShell modernPageShell">
       <PageHeader
         eyebrow="基础资料"
         title="SKU 管理"
-        description="只管理成品和半成品 SKU。辅料已经拆到独立的辅料管理页面。"
         actions={
           <div className="rowActions">
             <button type="button" onClick={() => router.push("/admin/materials")}>
@@ -663,11 +754,11 @@ export default function AdminSkusPage() {
               }
             >
               <DownloadIcon size={16} />
-              下载模板
+              导出模板
             </button>
             <button type="button" onClick={() => setImportOpen(true)}>
               <UploadIcon size={16} />
-              批量导入
+              导入
             </button>
             <button className="primaryButton" type="button" onClick={() => setCreateOpen(true)}>
               <PlusIcon size={16} />
@@ -699,14 +790,23 @@ export default function AdminSkusPage() {
         </div>
       ) : null}
 
-      <Modal
+      <DrawerForm
         open={createOpen}
-        eyebrow="新增 SKU"
-        title="创建 SKU 基础资料"
-        maxWidth="lg"
+        title="新增 SKU"
+        width="lg"
         onClose={() => setCreateOpen(false)}
+        footer={
+          <>
+            <button className="secondaryButton" type="button" onClick={() => setCreateOpen(false)}>
+              取消
+            </button>
+            <button className="primaryButton" form="create-sku-form" type="submit" disabled={creating}>
+              {creating ? "正在新增..." : "新增 SKU"}
+            </button>
+          </>
+        }
       >
-        <form className="dataForm skuForm" onSubmit={submitCreateSku}>
+        <form id="create-sku-form" className="dataForm skuForm" onSubmit={submitCreateSku}>
           <label>
             SKU 编码
             <input
@@ -727,16 +827,12 @@ export default function AdminSkusPage() {
             SKU 名称
             <input
               value={skuForm.skuName}
-              onChange={(event) =>
-                setSkuForm((current) => ({
-                  ...current,
-                  skuName: event.target.value
-                }))
-              }
+              readOnly
               disabled={creating}
-              placeholder="例如 折叠收纳箱 黑色"
+              placeholder="选择产品并填写规格后自动生成"
               required
             />
+            <span className="fieldHint">由“产品名称 + '-' + 规格/米数”自动生成。</span>
           </label>
 
           <label>
@@ -768,7 +864,8 @@ export default function AdminSkusPage() {
             onChange={(productId) =>
               setSkuForm((current) => ({
                 ...current,
-                productId
+                productId,
+                skuName: buildSkuName(productId, current.specs)
               }))
             }
           />
@@ -807,37 +904,41 @@ export default function AdminSkusPage() {
           </label>
 
           <label className="fullField">
-            备注
-            <textarea
+            规格/米数
+            <input
               value={skuForm.specs}
               onChange={(event) =>
                 setSkuForm((current) => ({
                   ...current,
-                  specs: event.target.value
+                  specs: event.target.value,
+                  skuName: buildSkuName(current.productId, event.target.value)
                 }))
               }
               disabled={creating}
-              placeholder="可填写规格或备注"
+              placeholder="例如 1.5m / 黑色 / 10pcs"
             />
           </label>
-
-          <div className="formActions">
-            <button className="primaryButton" type="submit" disabled={creating}>
-              {creating ? "正在新增..." : "新增 SKU"}
-            </button>
-          </div>
         </form>
-      </Modal>
+      </DrawerForm>
 
       {editForm ? (
-        <Modal
+        <DrawerForm
           open={Boolean(editForm)}
-          eyebrow="编辑 SKU"
-          title={editForm.skuCode}
-          maxWidth="lg"
+          title={`编辑 SKU：${editForm.skuCode}`}
+          width="lg"
           onClose={() => setEditForm(null)}
+          footer={
+            <>
+              <button className="secondaryButton" type="button" onClick={() => setEditForm(null)}>
+                取消
+              </button>
+              <button className="primaryButton" form="edit-sku-form" type="submit" disabled={updating}>
+                {updating ? "正在保存..." : "保存编辑"}
+              </button>
+            </>
+          }
         >
-          <form className="dataForm skuForm" onSubmit={submitEditSku}>
+          <form id="edit-sku-form" className="dataForm skuForm" onSubmit={submitEditSku}>
             <label>
               SKU 编码
               <input value={editForm.skuCode} disabled />
@@ -938,8 +1039,8 @@ export default function AdminSkusPage() {
             </label>
 
             <label className="fullField">
-              备注
-              <textarea
+              规格/米数
+              <input
                 value={editForm.specs}
                 onChange={(event) =>
                   setEditForm((current) =>
@@ -952,21 +1053,11 @@ export default function AdminSkusPage() {
                   )
                 }
                 disabled={updating}
-                placeholder="可填写规格或备注"
+                placeholder="例如 1.5m / 黑色 / 10pcs"
               />
             </label>
-
-            <div className="formActions">
-              <button
-                className="primaryButton"
-                type="submit"
-                disabled={updating}
-              >
-                {updating ? "正在保存..." : "保存编辑"}
-              </button>
-            </div>
           </form>
-        </Modal>
+        </DrawerForm>
       ) : null}
 
       <section className="modernCard">
@@ -983,9 +1074,9 @@ export default function AdminSkusPage() {
         </div>
 
         <SearchFilterBar
-          searchLabel="搜索 SKU 编码 / 名称 / 规格"
+          searchLabel="搜索 SKU / 产品名称 / SPU"
           searchValue={searchKeyword}
-          searchPlaceholder="输入 SKU 编码、名称或规格"
+          searchPlaceholder="输入 SKU、产品名称、SPU 或规格"
           onSearchChange={(value) => {
             resetToFirstPage();
             setSearchKeyword(value);
@@ -1079,150 +1170,19 @@ export default function AdminSkusPage() {
           onDeleteSelected={batchDeleteSkus}
         />
 
-        {loading ? <div className="debugNotice">正在读取 SKU 数据...</div> : null}
-
-        {!loading && skus.length === 0 ? (
-          <div className="emptyState">暂无 SKU</div>
-        ) : null}
-
-        {!loading && skus.length > 0 ? (
-          <div className="tableWrap">
-            <table className="dataTable skuTable">
-              <thead>
-                <tr>
-                  <th className="selectColumn">
-                    <input
-                      aria-label="全选当前页 SKU"
-                      className="tableCheckbox"
-                      type="checkbox"
-                      checked={allPageSelected}
-                      onChange={toggleAllPageSkus}
-                    />
-                  </th>
-                  <th>产品图片</th>
-                  <th>SKU 编码</th>
-                  <th>SKU 名称</th>
-                  <th>SKU 类型</th>
-                  <th>所属产品</th>
-                  <th>品牌</th>
-                  <th>单位</th>
-                  <th>状态</th>
-                  <th>当前库存数量</th>
-                  <th>创建时间</th>
-                  <th>更新时间</th>
-                  <th>备注</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {skus.map((sku) => {
-                  const statusUpdating = statusUpdatingId === sku.id;
-
-                  return (
-                    <tr key={sku.id}>
-                      <td>
-                        <input
-                          aria-label={`选择 SKU ${sku.sku_code}`}
-                          className="tableCheckbox"
-                          type="checkbox"
-                          checked={selectedSkuIds.includes(sku.id)}
-                          onChange={() => toggleSkuSelection(sku.id)}
-                        />
-                      </td>
-                      <td>
-                        <ProductImage
-                          src={sku.product?.product_image_url}
-                          alt={`${sku.sku_code} ${sku.sku_name}`}
-                        />
-                      </td>
-                      <td>
-                        <strong>{sku.sku_code}</strong>
-                      </td>
-                      <td>{sku.sku_name}</td>
-                      <td>
-                        <StatusBadge status={sku.sku_type === "semi_finished" ? "pending" : "accepted"} label={getSkuTypeLabel(sku.sku_type)} />
-                      </td>
-                      <td>{getProductLabel(sku.product)}</td>
-                      <td>
-                        {getSkuBrandLabel({
-                          skuType: sku.sku_type,
-                          product: sku.product
-                        })}
-                      </td>
-                      <td>{sku.unit}</td>
-                      <td>
-                        <StatusBadge status={sku.status} label={getSkuStatusLabel(sku.status)} />
-                      </td>
-                      <td className="quantityCell">
-                        {formatQuantity(sku.inventory_quantity)}
-                        <span>
-                          {sku.inventory_row_count > 0
-                            ? `占用 ${formatQuantity(sku.reserved_quantity)}`
-                            : "暂无库存记录"}
-                        </span>
-                      </td>
-                      <td>{formatDateTime(sku.created_at)}</td>
-                      <td>{formatDateTime(sku.updated_at)}</td>
-                      <td className="notesCell">{sku.specs ?? "-"}</td>
-                      <td>
-                        <div className="rowActions skuRowActions">
-                          <button
-                            type="button"
-                            onClick={() => startEditSku(sku)}
-                            disabled={updating}
-                          >
-                            编辑
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => changeSkuStatus(sku)}
-                            disabled={statusUpdating}
-                          >
-                            {statusUpdating
-                              ? "正在处理..."
-                              : sku.status === "active"
-                                ? "停用"
-                                : "启用"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => router.push(getInventoryHref(sku.sku_type))}
-                          >
-                            查看库存
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openBomUsage(sku)}
-                            disabled={bomUsageLoading}
-                          >
-                            查看 BOM
-                          </button>
-                          <button
-                            className="dangerButton"
-                            type="button"
-                            onClick={() => setSkuToDelete(sku)}
-                            disabled={deletingSkuId === sku.id}
-                          >
-                            删除
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-
-        {!loading && skuTotal > 0 ? (
-          <Pagination
-            page={page}
-            pageSize={SKU_PAGE_SIZE}
-            total={skuTotal}
-            onPageChange={setPage}
-          />
-        ) : null}
+        <DataTable
+          columns={skuColumns}
+          rows={skus}
+          getRowKey={(sku) => sku.id}
+          loading={loading}
+          loadingText="正在读取 SKU 数据..."
+          emptyText="暂无 SKU"
+          minWidth={900}
+          page={page}
+          pageSize={SKU_PAGE_SIZE}
+          total={skuTotal}
+          onPageChange={setPage}
+        />
       </section>
 
       {bomUsageLoading ? (
@@ -1230,11 +1190,10 @@ export default function AdminSkusPage() {
       ) : null}
 
       {selectedBomSku ? (
-        <Modal
+        <DetailDrawer
           open={Boolean(selectedBomSku)}
-          eyebrow="BOM 关联"
           title={`${selectedBomSku.sku_code} / ${getBomUsageTitle(selectedBomSku)}`}
-          maxWidth="xl"
+          width="lg"
           onClose={() => {
             setSelectedBomSku(null);
             setBomUsage(null);
@@ -1315,7 +1274,7 @@ export default function AdminSkusPage() {
               当前 SKU 不是成品 SKU，暂不展示 BOM 主表关系。
             </div>
           ) : null}
-        </Modal>
+        </DetailDrawer>
       ) : null}
 
       <BulkImportDialog<SkuImportInput>

@@ -1,12 +1,17 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { BulkActionBar } from "@/components/BulkActionBar";
 import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { Modal } from "@/components/Modal";
-import { Pagination } from "@/components/Pagination";
+import { DataTable, type DataTableColumn } from "@/components/ui/DataTable";
+import { DetailDrawer } from "@/components/ui/detail-drawer";
+import { DrawerForm } from "@/components/ui/DrawerForm";
+import { InfoCell } from "@/components/ui/info-cell";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { RowActions } from "@/components/ui/row-actions";
+import { SearchFilterBar } from "@/components/ui/SearchFilterBar";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
   bulkImportWarehouses,
   deactivateWarehousesByIds,
@@ -170,10 +175,6 @@ function toEditableStatus(status: string): WarehouseStatus {
 
 function getTransactionsHref(warehouse: Pick<WarehouseListRow, "id">) {
   return `/inventory/transactions?warehouseId=${encodeURIComponent(warehouse.id)}`;
-}
-
-function getWarehouseTypeClass(warehouseType: string) {
-  return warehouseType.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
 function hasKnownWarehouseType(warehouseType: string) {
@@ -487,19 +488,129 @@ export default function AdminWarehousesPage() {
     }
   };
 
+  const warehouseColumns: DataTableColumn<WarehouseListRow>[] = [
+    {
+      key: "select",
+      title: (
+        <input
+          aria-label="全选当前页仓库"
+          className="tableCheckbox"
+          type="checkbox"
+          checked={allFilteredSelected}
+          onChange={toggleAllFilteredWarehouses}
+        />
+      ),
+      className: "selectColumn",
+      render: (warehouse) => (
+        <input
+          aria-label={`选择仓库 ${warehouse.warehouse_code}`}
+          className="tableCheckbox"
+          type="checkbox"
+          checked={selectedWarehouseIds.includes(warehouse.id)}
+          onChange={() => toggleWarehouseSelection(warehouse.id)}
+        />
+      )
+    },
+    {
+      key: "warehouse",
+      title: "仓库信息",
+      width: "34%",
+      render: (warehouse) => (
+        <InfoCell
+          title={warehouse.name}
+          subtitle={`${warehouse.warehouse_code}${warehouse.address ? ` / ${warehouse.address}` : ""}`}
+        />
+      )
+    },
+    {
+      key: "type",
+      title: "类型",
+      render: (warehouse) => getWarehouseTypeLabel(warehouse.warehouse_type)
+    },
+    {
+      key: "inventory",
+      title: "库存品类",
+      align: "right",
+      render: (warehouse) => warehouse.inventory_sku_count
+    },
+    {
+      key: "status",
+      title: "状态",
+      render: (warehouse) => (
+        <StatusBadge status={warehouse.status} label={getWarehouseStatusLabel(warehouse.status)} />
+      )
+    },
+    {
+      key: "createdAt",
+      title: "创建时间",
+      render: (warehouse) => formatDateTime(warehouse.created_at)
+    },
+    {
+      key: "actions",
+      title: "操作",
+      render: (warehouse) => {
+        const statusUpdating = statusUpdatingId === warehouse.id;
+
+        return (
+          <RowActions
+            onView={() => openWarehouseInventory(warehouse)}
+            onEdit={() => startEditWarehouse(warehouse)}
+            moreActions={[
+              {
+                label: statusUpdating
+                  ? "正在处理"
+                  : warehouse.status === "active"
+                    ? "停用"
+                    : "启用",
+                disabled: statusUpdating,
+                onClick: () => changeWarehouseStatus(warehouse)
+              },
+              {
+                label: "查看流水",
+                onClick: () => {
+                  window.location.href = getTransactionsHref(warehouse);
+                }
+              },
+              {
+                label: "删除",
+                danger: true,
+                disabled: deletingWarehouseId === warehouse.id,
+                onClick: () => setWarehouseToDelete(warehouse)
+              }
+            ]}
+          />
+        );
+      }
+    }
+  ];
+
   return (
-    <main className="pageShell">
-      <section className="pageHero">
-        <div>
-          <p className="eyebrow">基础资料</p>
-          <h2>仓库管理</h2>
-          <p>
-            维护仓库基础资料。库存、入库、出库和库存流水都会通过仓库 ID
-            关联到这里的仓库。
-          </p>
-        </div>
-        <span className="statusPill">Supabase 数据</span>
-      </section>
+    <main className="pageShell modernPageShell">
+      <PageHeader
+        eyebrow="基础资料"
+        title="仓库管理"
+        actions={
+          <div className="rowActions">
+            <button
+              type="button"
+              onClick={() =>
+                downloadCsvTemplate(
+                  "warehouses-import-template.csv",
+                  warehouseImportFields
+                )
+              }
+            >
+              导出模板
+            </button>
+            <button type="button" onClick={() => setImportOpen(true)}>
+              导入
+            </button>
+            <button className="primaryButton" type="button" onClick={() => setCreateOpen(true)}>
+              新增仓库
+            </button>
+          </div>
+        }
+      />
 
       <section className="metricGrid warehouseMetricGrid">
         <div className="metric">
@@ -538,14 +649,23 @@ export default function AdminWarehousesPage() {
         </div>
       ) : null}
 
-      <Modal
+      <DrawerForm
         open={createOpen}
-        eyebrow="新增仓库"
-        title="创建仓库基础资料"
-        maxWidth="lg"
+        title="新增仓库"
+        width="lg"
         onClose={() => setCreateOpen(false)}
+        footer={
+          <>
+            <button className="secondaryButton" type="button" onClick={() => setCreateOpen(false)}>
+              取消
+            </button>
+            <button className="primaryButton" form="create-warehouse-form" type="submit" disabled={creating}>
+              {creating ? "正在新增..." : "新增仓库"}
+            </button>
+          </>
+        }
       >
-        <form className="dataForm warehouseForm" onSubmit={submitCreateWarehouse}>
+        <form id="create-warehouse-form" className="dataForm warehouseForm" onSubmit={submitCreateWarehouse}>
           <label>
             仓库编码
             <input
@@ -629,24 +749,27 @@ export default function AdminWarehousesPage() {
               placeholder="可填写仓库地址"
             />
           </label>
-
-          <div className="formActions">
-            <button className="primaryButton" type="submit" disabled={creating}>
-              {creating ? "正在新增..." : "新增仓库"}
-            </button>
-          </div>
         </form>
-      </Modal>
+      </DrawerForm>
 
       {editForm ? (
-        <Modal
+        <DrawerForm
           open={Boolean(editForm)}
-          eyebrow="编辑仓库"
-          title={editForm.warehouseCode}
-          maxWidth="lg"
+          title={`编辑仓库：${editForm.warehouseCode}`}
+          width="lg"
           onClose={() => setEditForm(null)}
+          footer={
+            <>
+              <button className="secondaryButton" type="button" onClick={() => setEditForm(null)}>
+                取消
+              </button>
+              <button className="primaryButton" form="edit-warehouse-form" type="submit" disabled={updating}>
+                {updating ? "正在保存..." : "保存编辑"}
+              </button>
+            </>
+          }
         >
-          <form className="dataForm warehouseForm" onSubmit={submitEditWarehouse}>
+          <form id="edit-warehouse-form" className="dataForm warehouseForm" onSubmit={submitEditWarehouse}>
             <label>
               仓库编码
               <input value={editForm.warehouseCode} disabled />
@@ -742,64 +865,35 @@ export default function AdminWarehousesPage() {
                 placeholder="可填写仓库地址"
               />
             </label>
-
-            <div className="formActions">
-              <button
-                className="primaryButton"
-                type="submit"
-                disabled={updating}
-              >
-                {updating ? "正在保存..." : "保存编辑"}
-              </button>
-            </div>
           </form>
-        </Modal>
+        </DrawerForm>
       ) : null}
 
-      <section className="listPanel">
-        <div className="sectionHeader">
+      <section className="modernCard">
+        <div className="modernCardHeader">
           <div>
             <p className="eyebrow">仓库列表</p>
             <h3>所有仓库</h3>
           </div>
           <div className="rowActions">
-            <button
-              type="button"
-              onClick={() =>
-                downloadCsvTemplate(
-                  "warehouses-import-template.csv",
-                  warehouseImportFields
-                )
-              }
-            >
-              下载模板
-            </button>
-            <button type="button" onClick={() => setImportOpen(true)}>
-              批量导入
-            </button>
             <button type="button" onClick={refreshAll}>
               {loading ? "正在刷新..." : "刷新列表"}
-            </button>
-            <button
-              className="primaryButton"
-              type="button"
-              onClick={() => setCreateOpen(true)}
-            >
-              新增仓库
             </button>
           </div>
         </div>
 
-        <div className="listToolbar warehouseToolbar">
-          <label>
-            搜索仓库名称 / 编码
-            <input
-              value={searchKeyword}
-              onChange={(event) => setSearchKeyword(event.target.value)}
-              placeholder="输入仓库名称或编码"
-            />
-          </label>
-
+        <SearchFilterBar
+          searchLabel="搜索仓库名称 / 编码"
+          searchValue={searchKeyword}
+          searchPlaceholder="输入仓库名称或编码"
+          onSearchChange={setSearchKeyword}
+          onReset={() => {
+            setSearchKeyword("");
+            setWarehouseTypeFilter("all");
+            setStatusFilter("all");
+            setPage(1);
+          }}
+        >
           <label>
             仓库类型
             <select
@@ -826,11 +920,7 @@ export default function AdminWarehousesPage() {
               <option value="inactive">停用</option>
             </select>
           </label>
-
-          <button className="secondaryButton" type="button" onClick={refreshAll}>
-            刷新
-          </button>
-        </div>
+        </SearchFilterBar>
 
         <BulkActionBar
           selectedItems={selectedWarehouses}
@@ -843,143 +933,19 @@ export default function AdminWarehousesPage() {
           onDeleteSelected={batchDeleteWarehouses}
         />
 
-        {loading ? (
-          <div className="debugNotice">正在读取仓库数据...</div>
-        ) : null}
-
-        {!loading && warehouses.length === 0 ? (
-          <div className="emptyState">暂无仓库</div>
-        ) : null}
-
-        {!loading && warehouses.length > 0 ? (
-          <div className="tableWrap">
-            <table className="dataTable warehouseTable">
-              <thead>
-                <tr>
-                  <th className="selectColumn">
-                    <input
-                      aria-label="全选当前页仓库"
-                      className="tableCheckbox"
-                      type="checkbox"
-                      checked={allFilteredSelected}
-                      onChange={toggleAllFilteredWarehouses}
-                    />
-                  </th>
-                  <th>仓库编码</th>
-                  <th>仓库名称</th>
-                  <th>仓库类型</th>
-                  <th>地址</th>
-                  <th>状态</th>
-                  <th>当前库存 SKU 数量</th>
-                  <th>当前库存总数量</th>
-                  <th>创建时间</th>
-                  <th>更新时间</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {warehouses.map((warehouse) => {
-                  const statusUpdating = statusUpdatingId === warehouse.id;
-
-                  return (
-                    <tr key={warehouse.id}>
-                      <td>
-                        <input
-                          aria-label={`选择仓库 ${warehouse.warehouse_code}`}
-                          className="tableCheckbox"
-                          type="checkbox"
-                          checked={selectedWarehouseIds.includes(warehouse.id)}
-                          onChange={() => toggleWarehouseSelection(warehouse.id)}
-                        />
-                      </td>
-                      <td>
-                        <strong>{warehouse.warehouse_code}</strong>
-                      </td>
-                      <td>{warehouse.name}</td>
-                      <td>
-                        <span
-                          className={`tablePill warehouse-type-${getWarehouseTypeClass(
-                            warehouse.warehouse_type
-                          )}`}
-                        >
-                          {getWarehouseTypeLabel(warehouse.warehouse_type)}
-                        </span>
-                      </td>
-                      <td className="notesCell">
-                        {getOptionalText(warehouse.address)}
-                      </td>
-                      <td>
-                        <span
-                          className={`tablePill warehouse-status-${warehouse.status}`}
-                        >
-                          {getWarehouseStatusLabel(warehouse.status)}
-                        </span>
-                      </td>
-                      <td>{warehouse.inventory_sku_count}</td>
-                      <td className="quantityCell">
-                        {formatQuantity(warehouse.inventory_total_quantity)}
-                      </td>
-                      <td>{formatDateTime(warehouse.created_at)}</td>
-                      <td>{formatDateTime(warehouse.updated_at)}</td>
-                      <td>
-                        <div className="rowActions warehouseRowActions">
-                          <button
-                            type="button"
-                            onClick={() => startEditWarehouse(warehouse)}
-                            disabled={updating}
-                          >
-                            编辑
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => changeWarehouseStatus(warehouse)}
-                            disabled={statusUpdating}
-                          >
-                            {statusUpdating
-                              ? "正在处理..."
-                              : warehouse.status === "active"
-                                ? "停用"
-                                : "启用"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openWarehouseInventory(warehouse)}
-                            disabled={inventoryLoading}
-                          >
-                            查看库存
-                          </button>
-                          <Link
-                            className="secondaryButton"
-                            href={getTransactionsHref(warehouse)}
-                          >
-                            查看流水
-                          </Link>
-                          <button
-                            className="dangerButton"
-                            type="button"
-                            onClick={() => setWarehouseToDelete(warehouse)}
-                            disabled={deletingWarehouseId === warehouse.id}
-                          >
-                            删除
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-
-        {!loading && totalWarehouses > 0 ? (
-          <Pagination
-            page={page}
-            pageSize={DEFAULT_PAGE_SIZE}
-            total={totalWarehouses}
-            onPageChange={setPage}
-          />
-        ) : null}
+        <DataTable
+          columns={warehouseColumns}
+          rows={warehouses}
+          getRowKey={(warehouse) => warehouse.id}
+          loading={loading}
+          loadingText="正在读取仓库数据..."
+          emptyText="暂无仓库"
+          minWidth={900}
+          page={page}
+          pageSize={DEFAULT_PAGE_SIZE}
+          total={totalWarehouses}
+          onPageChange={setPage}
+        />
       </section>
 
       {inventoryLoading ? (
@@ -987,11 +953,10 @@ export default function AdminWarehousesPage() {
       ) : null}
 
       {selectedWarehouse ? (
-        <Modal
+        <DetailDrawer
           open={Boolean(selectedWarehouse)}
-          eyebrow="仓库库存"
           title={`${selectedWarehouse.warehouse_code} / ${selectedWarehouse.name}`}
-          maxWidth="xl"
+          width="lg"
           onClose={() => {
             setSelectedWarehouse(null);
             setWarehouseInventory([]);
@@ -1032,7 +997,7 @@ export default function AdminWarehousesPage() {
               </table>
             </div>
           )}
-        </Modal>
+        </DetailDrawer>
       ) : null}
 
       <BulkImportDialog<WarehouseImportInput>

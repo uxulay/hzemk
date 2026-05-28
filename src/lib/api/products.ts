@@ -45,6 +45,7 @@ export type ProductStats = {
 export type ProductListFilters = {
   status?: string;
   brandId?: string;
+  category?: string;
 };
 
 export type ProductPageParams = ListPageParams<ProductListFilters>;
@@ -247,6 +248,7 @@ export async function getProductsPage(
   const keyword = params.keyword?.trim() ?? "";
   const status = params.filters?.status;
   const brandId = params.filters?.brandId;
+  const category = params.filters?.category;
 
   let query = supabase
     .from("products")
@@ -272,6 +274,13 @@ export async function getProductsPage(
       brandId === "none"
         ? query.is("brand_id", null)
         : query.eq("brand_id", brandId);
+  }
+
+  if (category && category !== "all") {
+    query =
+      category === "none"
+        ? query.is("category", null)
+        : query.eq("category", category);
   }
 
   const { data, error, count } = await withTimeout(query, "分页读取产品列表");

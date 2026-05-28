@@ -1,8 +1,14 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
-import { Modal } from "@/components/Modal";
-import { Pagination } from "@/components/Pagination";
+import { DataTable, type DataTableColumn } from "@/components/ui/DataTable";
+import { DetailDrawer } from "@/components/ui/detail-drawer";
+import { DrawerForm } from "@/components/ui/DrawerForm";
+import { InfoCell } from "@/components/ui/info-cell";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { RowActions } from "@/components/ui/row-actions";
+import { SearchFilterBar } from "@/components/ui/SearchFilterBar";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
   createUserProfile,
   getRoles,
@@ -18,9 +24,10 @@ import {
 import { DEFAULT_PAGE_SIZE } from "@/lib/utils/pagination";
 
 const userStatusLabels: Record<string, string> = {
-  active: "启用",
+  active: "正常",
   disabled: "停用",
-  inactive: "停用"
+  inactive: "停用",
+  pending: "待激活"
 };
 
 type UserFormState = {
@@ -64,14 +71,6 @@ function getErrorMessage(error: unknown) {
 
 function getStatusLabel(status: string) {
   return userStatusLabels[status] ?? status;
-}
-
-function getStatusClass(status: string) {
-  return status.replace(/[^a-zA-Z0-9_-]/g, "_");
-}
-
-function getRoleClass(code: string | null | undefined) {
-  return (code ?? "unassigned").replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
 function getRoleLabel(role: RoleRow | null) {
@@ -124,6 +123,7 @@ export default function AdminUsersPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [userTotal, setUserTotal] = useState(0);
+  const [createOpen, setCreateOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [updating, setUpdating] = useState(false);
@@ -202,6 +202,7 @@ export default function AdminUsersPage() {
 
       setSuccessMessage(`用户资料 ${created.full_name} 新增成功。`);
       setUserForm(initialUserForm);
+      setCreateOpen(false);
       await loadPageData();
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
@@ -264,19 +265,86 @@ export default function AdminUsersPage() {
     }
   };
 
+  const userColumns: DataTableColumn<UserListRow>[] = [
+    {
+      key: "user",
+      title: "用户信息",
+      width: "34%",
+      render: (user) => (
+        <InfoCell
+          title={user.full_name}
+          subtitle={user.email || user.id}
+        />
+      )
+    },
+    {
+      key: "role",
+      title: "角色",
+      render: (user) => getRoleLabel(user.role)
+    },
+    {
+      key: "department",
+      title: "部门",
+      render: (user) => user.role?.name ?? "-"
+    },
+    {
+      key: "status",
+      title: "状态",
+      render: (user) => (
+        <StatusBadge
+          status={toEditableStatus(user.status)}
+          label={getStatusLabel(user.status)}
+          type={toEditableStatus(user.status) === "active" ? "success" : "neutral"}
+        />
+      )
+    },
+    {
+      key: "lastLogin",
+      title: "最后登录",
+      render: () => "-"
+    },
+    {
+      key: "actions",
+      title: "操作",
+      render: (user) => {
+        const statusUpdating = statusUpdatingId === user.id;
+
+        return (
+          <RowActions
+            onView={() => setSelectedUser(user)}
+            onEdit={() => startEditUser(user)}
+            moreActions={[
+              {
+                label: "分配角色",
+                onClick: () => startEditUser(user)
+              },
+              {
+                label: statusUpdating
+                  ? "正在处理"
+                  : user.status === "active"
+                    ? "停用"
+                    : "启用",
+                disabled: statusUpdating,
+                onClick: () => changeUserStatus(user)
+              }
+            ]}
+          />
+        );
+      }
+    }
+  ];
+
   return (
-    <main className="pageShell">
-      <section className="pageHero">
-        <div>
-          <p className="eyebrow">基础资料</p>
-          <h2>用户管理</h2>
-          <p>
-            管理 profiles 用户资料和 roles 角色分配。当前页面只维护业务资料，
-            不创建登录账号，也不使用 service_role key。
-          </p>
-        </div>
-        <span className="statusPill">Supabase 数据</span>
-      </section>
+    <main className="pageShell modernPageShell">
+      <PageHeader
+        eyebrow="系统管理"
+        title="用户管理"
+        actions={
+          <button className="primaryButton" type="button" onClick={() => setCreateOpen(true)}>
+            新增用户
+          </button>
+        }
+      />
 
       <div className="warningNotice">
         <strong>
@@ -329,15 +397,23 @@ export default function AdminUsersPage() {
         </div>
       ) : null}
 
-      <section className="formPanel">
-        <div className="sectionHeader">
-          <div>
-            <p className="eyebrow">新增用户资料</p>
-            <h3>创建 profiles 业务资料</h3>
-          </div>
-        </div>
-
-        <form className="dataForm userForm" onSubmit={submitCreateUser}>
+      <DrawerForm
+        open={createOpen}
+        title="新增用户"
+        width="lg"
+        onClose={() => setCreateOpen(false)}
+        footer={
+          <>
+            <button className="secondaryButton" type="button" onClick={() => setCreateOpen(false)}>
+              取消
+            </button>
+            <button className="primaryButton" form="create-user-form" type="submit" disabled={creating}>
+              {creating ? "正在新增..." : "新增用户"}
+            </button>
+          </>
+        }
+      >
+        <form id="create-user-form" className="dataForm userForm" onSubmit={submitCreateUser}>
           <label>
             Supabase Auth 用户 ID
             <input
@@ -444,23 +520,27 @@ export default function AdminUsersPage() {
             </select>
           </label>
 
-          <div className="formActions">
-            <button className="primaryButton" type="submit" disabled={creating}>
-              {creating ? "正在新增..." : "新增用户资料"}
-            </button>
-          </div>
         </form>
-      </section>
+      </DrawerForm>
 
       {editForm ? (
-        <Modal
+        <DrawerForm
           open={Boolean(editForm)}
-          eyebrow="编辑用户资料"
-          title={editForm.fullName}
-          maxWidth="lg"
+          title={`编辑用户：${editForm.fullName}`}
+          width="lg"
           onClose={() => setEditForm(null)}
+          footer={
+            <>
+              <button className="secondaryButton" type="button" onClick={() => setEditForm(null)}>
+                取消
+              </button>
+              <button className="primaryButton" form="edit-user-form" type="submit" disabled={updating}>
+                {updating ? "正在保存..." : "保存编辑"}
+              </button>
+            </>
+          }
         >
-          <form className="dataForm userForm" onSubmit={submitEditUser}>
+          <form id="edit-user-form" className="dataForm userForm" onSubmit={submitEditUser}>
             <label>
               用户 ID
               <input value={editForm.profileId} disabled />
@@ -573,22 +653,12 @@ export default function AdminUsersPage() {
                 <option value="disabled">停用</option>
               </select>
             </label>
-
-            <div className="formActions">
-              <button
-                className="primaryButton"
-                type="submit"
-                disabled={updating}
-              >
-                {updating ? "正在保存..." : "保存编辑"}
-              </button>
-            </div>
           </form>
-        </Modal>
+        </DrawerForm>
       ) : null}
 
-      <section className="listPanel">
-        <div className="sectionHeader">
+      <section className="modernCard">
+        <div className="modernCardHeader">
           <div>
             <p className="eyebrow">用户列表</p>
             <h3>所有 profiles 用户资料</h3>
@@ -598,16 +668,18 @@ export default function AdminUsersPage() {
           </button>
         </div>
 
-        <div className="listToolbar usersToolbar">
-          <label>
-            搜索用户名称 / 邮箱
-            <input
-              value={searchKeyword}
-              onChange={(event) => setSearchKeyword(event.target.value)}
-              placeholder="输入名称或邮箱"
-            />
-          </label>
-
+        <SearchFilterBar
+          searchLabel="搜索姓名 / 账号 / 邮箱"
+          searchValue={searchKeyword}
+          searchPlaceholder="输入姓名或邮箱"
+          onSearchChange={setSearchKeyword}
+          onReset={() => {
+            setSearchKeyword("");
+            setRoleFilter("all");
+            setStatusFilter("all");
+            setPage(1);
+          }}
+        >
           <label>
             角色
             <select
@@ -634,124 +706,28 @@ export default function AdminUsersPage() {
               <option value="disabled">停用</option>
             </select>
           </label>
+        </SearchFilterBar>
 
-          <button className="secondaryButton" type="button" onClick={() => loadPageData(page)}>
-            刷新
-          </button>
-        </div>
-
-        {loading ? <div className="debugNotice">正在读取用户数据...</div> : null}
-
-        {!loading && users.length === 0 ? (
-          <div className="emptyState">暂无用户</div>
-        ) : null}
-
-        {!loading && users.length > 0 ? (
-          <div className="tableWrap">
-            <table className="dataTable usersTable">
-              <thead>
-                <tr>
-                  <th>用户名称</th>
-                  <th>邮箱</th>
-                  <th>角色</th>
-                  <th>手机号</th>
-                  <th>状态</th>
-                  <th>创建时间</th>
-                  <th>更新时间</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.map((user) => {
-                  const statusUpdating = statusUpdatingId === user.id;
-
-                  return (
-                    <tr key={user.id}>
-                      <td>
-                        <strong>{user.full_name}</strong>
-                        <span>{user.id}</span>
-                      </td>
-                      <td>{user.email}</td>
-                      <td>
-                        <span
-                          className={`tablePill rolePill role-code-${getRoleClass(
-                            user.role?.code
-                          )}`}
-                        >
-                          {getRoleLabel(user.role)}
-                        </span>
-                        <span>{user.role?.code ?? "-"}</span>
-                      </td>
-                      <td>{getOptionalText(user.phone)}</td>
-                      <td>
-                        <span
-                          className={`tablePill user-status-${getStatusClass(
-                            user.status
-                          )}`}
-                        >
-                          {getStatusLabel(user.status)}
-                        </span>
-                      </td>
-                      <td>{formatDateTime(user.created_at)}</td>
-                      <td>{formatDateTime(user.updated_at)}</td>
-                      <td>
-                        <div className="rowActions userRowActions">
-                          <button
-                            type="button"
-                            onClick={() => setSelectedUser(user)}
-                          >
-                            查看
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => startEditUser(user)}
-                            disabled={updating}
-                          >
-                            编辑
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => startEditUser(user)}
-                            disabled={updating}
-                          >
-                            分配角色
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => changeUserStatus(user)}
-                            disabled={statusUpdating}
-                          >
-                            {statusUpdating
-                              ? "正在处理..."
-                              : user.status === "active"
-                                ? "停用"
-                                : "启用"}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-
-        {!loading && users.length > 0 ? (
-          <Pagination
-            page={page}
-            pageSize={DEFAULT_PAGE_SIZE}
-            total={userTotal}
-            onPageChange={(nextPage) => loadPageData(nextPage)}
-          />
-        ) : null}
+        <DataTable
+          columns={userColumns}
+          rows={users}
+          getRowKey={(user) => user.id}
+          loading={loading}
+          loadingText="正在读取用户数据..."
+          emptyText="暂无用户"
+          minWidth={860}
+          page={page}
+          pageSize={DEFAULT_PAGE_SIZE}
+          total={userTotal}
+          onPageChange={(nextPage) => loadPageData(nextPage)}
+        />
       </section>
 
       {selectedUser ? (
-        <Modal
+        <DetailDrawer
           open={Boolean(selectedUser)}
-          eyebrow="用户资料详情"
           title={selectedUser.full_name}
+          width="md"
           onClose={() => setSelectedUser(null)}
         >
           <div className="detailGrid">
@@ -788,7 +764,7 @@ export default function AdminUsersPage() {
               <strong>{formatDateTime(selectedUser.updated_at)}</strong>
             </div>
           </div>
-        </Modal>
+        </DetailDrawer>
       ) : null}
 
       <section className="listPanel">

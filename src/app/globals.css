@@ -4620,6 +4620,96 @@ button:disabled {
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
 }
 
+.rolePermissionLayout {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 260px minmax(0, 1fr);
+}
+
+.roleList {
+  display: grid;
+  gap: 8px;
+}
+
+.roleList button {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  color: #334155;
+  min-height: 34px;
+  text-align: left;
+  padding: 0 12px;
+}
+
+.roleList button.active {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #2563eb;
+  font-weight: 700;
+}
+
+.permissionGrid,
+.settingsGrid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.permissionCell {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  display: flex;
+  justify-content: space-between;
+  min-height: 42px;
+  padding: 0 12px;
+}
+
+.settingsBrandPreview {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+}
+
+.settingsBrandPreview img {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  height: 48px;
+  object-fit: contain;
+  width: 96px;
+}
+
+.settingsBrandPreview div,
+.settingsCard ul {
+  display: grid;
+  gap: 6px;
+}
+
+.settingsBrandPreview span,
+.settingsCard li {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.settingsCard ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.settingsFooter {
+  justify-content: flex-start;
+  margin: 14px -16px -16px;
+}
+
+@media (max-width: 900px) {
+  .rolePermissionLayout,
+  .permissionGrid,
+  .settingsGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .linkButton {
   background: transparent;
   border: 0;
