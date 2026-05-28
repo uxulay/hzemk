@@ -313,6 +313,43 @@ export type ProductionPlanningSummary = {
   totalRequestedQuantity: number;
 };
 
+export type ProductionPlanningShortageLine = {
+  material_id: string | null;
+  material_code: string;
+  material_name: string;
+  required_quantity: number;
+  available_quantity: number;
+  shortage_quantity: number;
+  unit: string;
+};
+
+export type ProductionPlanningMaterialPreview = {
+  requestId: string;
+  status: "ready" | "shortage";
+  shortageCount: number;
+  shortageLines: ProductionPlanningShortageLine[];
+  readySkuCount: number;
+  shortageSkuCount: number;
+};
+
+export type CreateMergedProductionOrderInput = {
+  replenishmentRequestIds: string[];
+  plannedStartDate?: string;
+  plannedEndDate?: string;
+  assignedTo?: string;
+  priority?: string;
+  notes?: string;
+  items: Array<{
+    replenishmentRequestId: string;
+    replenishmentRequestNo: string;
+    replenishmentRequestItemId: string | null;
+    skuId: string;
+    requestedQuantity: number;
+    plannedQuantity: number;
+    remark?: string | null;
+  }>;
+};
+
 export type ProductionPlanningPageFilters = {
   status?: string;
   priority?: string;
@@ -1519,6 +1556,114 @@ async function getAvailableInventoryByMaterial(
   return availability;
 }
 
+export async function getProductionPlanningMaterialPreviews(
+  requests: PlanningFbaReplenishmentRequest[]
+): Promise<Record<string, ProductionPlanningMaterialPreview>> {
+  const supabase = getSupabaseClient();
+  const previews: Record<string, ProductionPlanningMaterialPreview> = {};
+
+  for (const request of requests) {
+    const requirementByMaterial = new Map<
+      string,
+      {
+        material_id: string;
+        material_code: string;
+        material_name: string;
+        required_quantity: number;
+        unit: string;
+      }
+    >();
+    const missingBomLines: ProductionPlanningShortageLine[] = [];
+    const shortageSkuIds = new Set<string>();
+
+    for (const item of request.items) {
+      try {
+        const bomHeader = await getActiveBomHeader(supabase, item.sku_id);
+        const bomItems = await getBomItems(supabase, bomHeader.id);
+        const requirementLines = await resolveBomRequirementLines(supabase, bomItems);
+
+        for (const bomItem of requirementLines) {
+          const quantityPer = Number(bomItem.quantity_per);
+          const lossRate = Number(bomItem.loss_rate);
+          const requiredQuantity = roundQuantity(
+            Number(item.requested_quantity) * quantityPer * (1 + lossRate)
+          );
+          const materialNameParts = bomItem.material_label.split(" / ");
+          const current = requirementByMaterial.get(bomItem.key);
+
+          if (current) {
+            current.required_quantity = roundQuantity(
+              current.required_quantity + requiredQuantity
+            );
+          } else {
+            requirementByMaterial.set(bomItem.key, {
+              material_id: bomItem.material_id,
+              material_code: materialNameParts[0] ?? "-",
+              material_name: materialNameParts.slice(1).join(" / ") || bomItem.material_label,
+              required_quantity: requiredQuantity,
+              unit: bomItem.unit
+            });
+          }
+        }
+      } catch {
+        shortageSkuIds.add(item.sku_id);
+        missingBomLines.push({
+          material_id: null,
+          material_code: item.sku?.sku_code ?? "-",
+          material_name: "未配置启用 BOM",
+          required_quantity: Number(item.requested_quantity),
+          available_quantity: 0,
+          shortage_quantity: Number(item.requested_quantity),
+          unit: item.sku?.unit ?? "pcs"
+        });
+      }
+    }
+
+    const materialIds = [...requirementByMaterial.values()].map(
+      (requirement) => requirement.material_id
+    );
+    const availableByMaterial = await getAvailableInventoryByMaterial(
+      supabase,
+      materialIds
+    );
+    const shortageLines = [...requirementByMaterial.values()]
+      .map((requirement) => {
+        const availableQuantity = availableByMaterial.get(requirement.material_id) ?? 0;
+        const shortageQuantity = roundQuantity(
+          Math.max(0, requirement.required_quantity - availableQuantity)
+        );
+
+        return {
+          material_id: requirement.material_id,
+          material_code: requirement.material_code,
+          material_name: requirement.material_name,
+          required_quantity: requirement.required_quantity,
+          available_quantity: availableQuantity,
+          shortage_quantity: shortageQuantity,
+          unit: requirement.unit
+        };
+      })
+      .filter((line) => line.shortage_quantity > 0);
+
+    if (shortageLines.length > 0) {
+      request.items.forEach((item) => shortageSkuIds.add(item.sku_id));
+    }
+
+    const allShortageLines = [...missingBomLines, ...shortageLines];
+
+    previews[request.id] = {
+      requestId: request.id,
+      status: allShortageLines.length > 0 ? "shortage" : "ready",
+      shortageCount: allShortageLines.length,
+      shortageLines: allShortageLines,
+      readySkuCount: Math.max(0, request.sku_count - shortageSkuIds.size),
+      shortageSkuCount: shortageSkuIds.size
+    };
+  }
+
+  return previews;
+}
+
 async function ensureMaterialRequirementsDoNotExist(
   supabase: ReturnType<typeof getSupabaseClient>,
   productionOrderId: string
@@ -2453,6 +2598,202 @@ export async function createProductionOrder(
       .update({ status: "in_production" })
       .eq("id", input.replenishmentRequestId),
     "更新 FBA 备货需求为生产中"
+  );
+
+  if (statusError) {
+    throw new Error(
+      `生产任务已创建（${created.production_order_no}），物料需求已生成，但更新 FBA 备货需求状态失败：${statusError.message}`
+    );
+  }
+
+  return {
+    ...created,
+    material_requirement_count: materialRequirementCount
+  };
+}
+
+export async function createMergedProductionOrder(
+  input: CreateMergedProductionOrderInput
+): Promise<CreatedProductionOrder> {
+  const replenishmentRequestIds = [
+    ...new Set(input.replenishmentRequestIds.filter(Boolean))
+  ];
+
+  if (replenishmentRequestIds.length === 0) {
+    throw new Error("请先选择至少一张备货单。");
+  }
+
+  const normalizedItems = input.items
+    .map((item) => ({
+      ...item,
+      requestedQuantity: Number(item.requestedQuantity),
+      plannedQuantity: Number(item.plannedQuantity),
+      remark: item.remark?.trim() || null
+    }))
+    .filter((item) => replenishmentRequestIds.includes(item.replenishmentRequestId));
+
+  if (normalizedItems.length === 0) {
+    throw new Error("所选备货单没有可生成生产任务的 SKU 明细。");
+  }
+
+  const invalidItem = normalizedItems.find(
+    (item) =>
+      !item.skuId ||
+      !Number.isInteger(item.plannedQuantity) ||
+      item.plannedQuantity <= 0
+  );
+
+  if (invalidItem) {
+    throw new Error("每个 SKU 的计划生产数量都必须是正整数。");
+  }
+
+  const supabase = getSupabaseClient();
+  const existingResult = await withTimeout(
+    supabase
+      .from("production_orders")
+      .select("id, production_order_no, replenishment_request_id")
+      .in("replenishment_request_id", replenishmentRequestIds)
+      .limit(1),
+    "检查所选备货单是否已创建生产任务"
+  );
+
+  if (existingResult.error) {
+    throw formatSupabaseError("检查所选备货单是否已创建生产任务", existingResult.error);
+  }
+
+  if ((existingResult.data ?? []).length > 0) {
+    throw new Error("所选备货单里已有单据创建过生产任务，请刷新后重新选择。");
+  }
+
+  const itemBySkuId = new Map<
+    string,
+    {
+      skuId: string;
+      replenishmentRequestItemId: string | null;
+      requestedQuantity: number;
+      plannedQuantity: number;
+      remarks: string[];
+    }
+  >();
+
+  normalizedItems.forEach((item) => {
+    const current = itemBySkuId.get(item.skuId);
+    const sourceNote = `${item.replenishmentRequestNo}：需求 ${item.requestedQuantity}`;
+    const remarkParts = [sourceNote, item.remark].filter(Boolean) as string[];
+
+    if (current) {
+      current.requestedQuantity = roundQuantity(
+        current.requestedQuantity + item.requestedQuantity
+      );
+      current.plannedQuantity = roundQuantity(
+        current.plannedQuantity + item.plannedQuantity
+      );
+      current.remarks.push(...remarkParts);
+      return;
+    }
+
+    itemBySkuId.set(item.skuId, {
+      skuId: item.skuId,
+      replenishmentRequestItemId: item.replenishmentRequestItemId,
+      requestedQuantity: item.requestedQuantity,
+      plannedQuantity: item.plannedQuantity,
+      remarks: remarkParts
+    });
+  });
+
+  const mergedItems = [...itemBySkuId.values()];
+  const firstItem = mergedItems[0];
+  const firstBomHeader = await getActiveBomHeader(supabase, firstItem.skuId);
+  const totalPlannedQuantity = mergedItems.reduce(
+    (sum, item) => roundQuantity(sum + item.plannedQuantity),
+    0
+  );
+  const mergedNotes = [
+    input.notes?.trim(),
+    `合并来源：${replenishmentRequestIds.length} 张备货单`,
+    input.priority ? `优先级：${input.priority}` : null
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const { data, error } = await withTimeout(
+    supabase
+      .from("production_orders")
+      .insert({
+        production_order_no: createProductionOrderNo(),
+        replenishment_request_id: replenishmentRequestIds[0],
+        sku_id: firstItem.skuId,
+        bom_header_id: firstBomHeader.id,
+        planned_quantity: totalPlannedQuantity,
+        completed_quantity: 0,
+        planned_start_date: input.plannedStartDate || null,
+        planned_end_date: input.plannedEndDate || null,
+        actual_start_at: null,
+        actual_completed_at: null,
+        status: "planned",
+        assigned_to: input.assignedTo || null,
+        notes: mergedNotes || null
+      })
+      .select("id, production_order_no")
+      .single(),
+    "合并创建生产任务"
+  );
+
+  if (error) {
+    throw formatSupabaseError("合并创建生产任务", error);
+  }
+
+  const created = data as InsertedProductionOrder;
+  const { error: itemError } = await withTimeout(
+    supabase.from("production_order_items").insert(
+      mergedItems.map((item) => ({
+        production_order_id: created.id,
+        replenishment_request_item_id: item.replenishmentRequestItemId,
+        sku_id: item.skuId,
+        requested_quantity: item.requestedQuantity,
+        planned_quantity: item.plannedQuantity,
+        completed_quantity: 0,
+        remark: item.remarks.join("\n") || null
+      }))
+    ),
+    "写入合并生产任务明细"
+  );
+
+  if (itemError) {
+    await supabase
+      .from("production_orders")
+      .update({
+        status: "cancelled",
+        notes: `${mergedNotes}\n系统提示：合并生产任务明细创建失败，这张生产任务不要继续流转。`.trim()
+      })
+      .eq("id", created.id);
+    throw new Error(
+      `生产任务主表已创建，但明细创建失败，系统已把主表标记为取消：${itemError.message}`
+    );
+  }
+
+  let materialRequirementCount = 0;
+  try {
+    materialRequirementCount = await generateMaterialRequirementsForOrderItems(
+      supabase,
+      created.id,
+      replenishmentRequestIds[0],
+      mergedItems.map((item) => ({
+        skuId: item.skuId,
+        plannedQuantity: item.plannedQuantity
+      }))
+    );
+  } catch (error) {
+    throw new Error(
+      `生产任务已创建（${created.production_order_no}），但物料需求生成失败：${getErrorMessage(error)}`
+    );
+  }
+
+  const { error: statusError } = await withTimeout(
+    supabase
+      .from("fba_replenishment_requests")
+      .update({ status: "in_production" })
+      .in("id", replenishmentRequestIds),
+    "更新所选 FBA 备货需求为生产中"
   );
 
   if (statusError) {

@@ -2366,6 +2366,37 @@ FBA 出库是单独动作，不能把成品入库自动等同于发往 FBA。
 - 已运行 `npm run typecheck`，通过。
 - 已运行 `npm run build`，通过。
 
+### 3.11 渐进式 UI/UX 重构第三阶段：备货需求 / 厂长排产（2026-05-28）
+
+本轮只重构两个核心业务页面，没有修改 Supabase 数据库 schema，没有关闭 RLS，没有改 seed。
+
+已完成：
+
+- `/replenishment` 改为“总单聚合模式”：列表一行代表一张备货单，不再把所有 SKU 明细铺在主列表。
+- 备货需求页复用第一阶段公共组件：`PageHeader`、`SearchFilterBar`、`DataTable`、`DetailDrawer`、`DrawerForm`、`StatusBadge`、`RowActions`、`InfoCell`、`ImageCell`、`EllipsisText`。
+- 备货需求列表字段压缩为：备货单号、平台、产品/SKU 汇总、SKU数/总数量、运营、计划发货、状态、操作；备注、创建时间、库存和缺口等细节移入详情抽屉。
+- 备货单详情改为 `DetailDrawer`，展示基本信息和 SKU 明细；SKU 明细展示产品信息、SKU、需求数量、当前成品库存、预计可生产、缺口和备注。
+- 新增备货单改为 `DrawerForm`，保留原有 `createFbaReplenishmentDocument` 写入逻辑；明细仍支持 SKU 搜索添加、数量/备注编辑、删除行、CSV 上传预览和错误行提示。
+- `/production/planning` 改为“待排产池 + 排产汇总/规则建议”布局，主表一行代表一张备货单，厂长可勾选整张备货单后合并生成生产任务。
+- 厂长排产页复用公共组件：`PageHeader`、`SearchFilterBar`、`DataTable`、`DrawerForm`、`DetailDrawer`、`StatusBadge`、`RowActions`、`InfoCell`、`EllipsisText`。
+- 待排产池列表字段压缩为：选择框、备货单号、产品/SKU 汇总、总数量、交期、缺料状态、建议优先级、操作。
+- 新增轻量缺料预估读取：基于现有 BOM、`inventory_items.quantity_on_hand - reserved_quantity` 计算当前页备货单的齐料/缺料提示，只读查询，不新增字段。
+- 缺料标签支持 hover 查看前几条缺料明细，更多明细继续引导到物料需求页面。
+- 右侧汇总展示已选单据数、合计 SKU、合计数量、预计工时、缺料 SKU 数、缺料物料项、齐料 SKU 数，以及高/中/低优先级分布和排产建议。
+- 合并生成生产任务改为 `DrawerForm`，要求计划开始日期和负责人必填，展示已选单据和合并后预估。
+
+业务逻辑说明：
+
+- 新增备货单仍复用 `createFbaReplenishmentDocument`，继续写 `fba_replenishment_requests` 主表和 `fba_replenishment_request_items` 明细表。
+- 单张备货单生成生产任务仍复用原 `createProductionOrder`。
+- 多张备货单合并生成生产任务新增 `createMergedProductionOrder` 薄封装，仍写现有 `production_orders`、`production_order_items`，并复用现有 BOM 自动生成 `material_requirements` 的规则；受当前 schema 限制，生产任务主表仍只能挂一个主来源备货单，其他来源会通过生产任务明细和备注保留。
+- 本轮没有实现编辑备货单的写入逻辑；原阶段禁用的编辑入口仍保持禁用，没有删除。
+
+验证：
+
+- 已运行 `npm run typecheck`，通过。
+- `npm run build` 等本轮最终验证结果见本次收尾输出。
+
 ## 10. 给后续 Codex 的开发提醒
 
 后续开发前请先阅读 `PROJECT_NOTES.md`。

@@ -4584,6 +4584,254 @@ button:disabled {
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
 }
 
+.linkButton {
+  background: transparent;
+  border: 0;
+  color: #2563eb;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 0;
+  text-align: left;
+}
+
+.metricText {
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.goodText {
+  color: #166534;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.drawerSection {
+  display: grid;
+  gap: 12px;
+}
+
+.drawerSection + .drawerSection {
+  margin-top: 16px;
+}
+
+.drawerSectionHeader {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.drawerSectionHeader h4 {
+  color: #0f172a;
+  font-size: 14px;
+  margin: 0;
+}
+
+.drawerSectionHeader span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.compactDetailGrid {
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.noHorizontalScroll {
+  overflow-x: hidden;
+}
+
+.drawerDetailTable,
+.selectedOrdersTable {
+  min-width: 0;
+}
+
+.drawerDetailTable th,
+.drawerDetailTable td,
+.selectedOrdersTable th,
+.selectedOrdersTable td {
+  padding: 8px 10px;
+}
+
+.dragUploadBox {
+  border-style: dashed;
+}
+
+.planningWorkbenchGrid {
+  align-items: start;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) 286px;
+  margin-top: 12px;
+}
+
+.planningPoolPanel,
+.planningSummaryPanel {
+  min-width: 0;
+}
+
+.compactSectionHeader {
+  margin-bottom: 2px;
+}
+
+.compactSectionHeader h3,
+.planningSummaryPanel h3,
+.summaryBlock h4 {
+  color: #0f172a;
+  font-size: 14px;
+  margin: 0;
+}
+
+.planningSummaryPanel {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+
+.summaryBlock {
+  display: grid;
+  gap: 10px;
+}
+
+.summaryMetricGrid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.summaryMetric {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.summaryMetric span {
+  color: #64748b;
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.summaryMetric strong {
+  color: #0f172a;
+  display: block;
+  font-size: 16px;
+  margin-top: 4px;
+}
+
+.priorityLine {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 8px 20px minmax(0, 1fr) 24px;
+}
+
+.priorityDot {
+  border-radius: 999px;
+  height: 8px;
+  width: 8px;
+}
+
+.priorityDot-danger,
+.priorityLineBar-danger {
+  background: #ef4444;
+}
+
+.priorityDot-warning,
+.priorityLineBar-warning {
+  background: #f59e0b;
+}
+
+.priorityDot-success,
+.priorityLineBar-success {
+  background: #22c55e;
+}
+
+.priorityLineTrack {
+  background: #e2e8f0;
+  border-radius: 999px;
+  height: 4px;
+  overflow: hidden;
+}
+
+.priorityLineBar {
+  display: block;
+  height: 100%;
+}
+
+.ruleList {
+  color: #475569;
+  display: grid;
+  font-size: 13px;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.summaryPrimaryButton {
+  width: 100%;
+}
+
+.hoverPopoverWrap {
+  display: inline-flex;
+  position: relative;
+}
+
+.hoverPopover {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
+  color: #0f172a;
+  display: none;
+  gap: 6px;
+  left: 0;
+  min-width: 220px;
+  padding: 10px;
+  position: absolute;
+  top: calc(100% + 8px);
+  z-index: 30;
+}
+
+.hoverPopoverWrap:hover .hoverPopover {
+  display: grid;
+}
+
+.hoverPopover strong {
+  font-size: 13px;
+}
+
+.hoverPopover span,
+.hoverPopover a {
+  color: #475569;
+  font-size: 12px;
+}
+
+.hoverPopover a {
+  color: #2563eb;
+  font-weight: 700;
+}
+
+.productionDrawerForm {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 1240px) {
+  .planningWorkbenchGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .planningSummaryPanel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 980px) {
   .appFrame,
   .appFrameCollapsed {

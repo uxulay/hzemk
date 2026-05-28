@@ -3,7 +3,16 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useMockRole } from "@/components/auth/mock-role-provider";
 import { Modal } from "@/components/Modal";
-import { Pagination } from "@/components/Pagination";
+import { DataTable, type DataTableColumn } from "@/components/ui/DataTable";
+import { DetailDrawer } from "@/components/ui/detail-drawer";
+import { DrawerForm } from "@/components/ui/DrawerForm";
+import { EllipsisText } from "@/components/ui/ellipsis-text";
+import { InfoCell } from "@/components/ui/info-cell";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { RowActions } from "@/components/ui/row-actions";
+import { SearchFilterBar } from "@/components/ui/SearchFilterBar";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { DownloadIcon, PlusIcon, UploadIcon } from "@/components/ui/icons";
 import { type Product, type Warehouse } from "@/lib/api/master-data";
 import { searchWarehouseOptions } from "@/lib/api/warehouses";
 import {
@@ -29,6 +38,7 @@ import { DEFAULT_PAGE_SIZE } from "@/lib/utils/pagination";
 type StatusFilter = FbaRequestStatus | "all";
 
 type CreateRequestFormState = {
+  platform: string;
   targetWarehouseId: string;
   targetShipDate: string;
   notes: string;
@@ -116,6 +126,7 @@ function getProductsFromSkuOptions(skuData: FbaReplenishmentSkuOption[]) {
 }
 
 const initialCreateForm: CreateRequestFormState = {
+  platform: "US",
   targetWarehouseId: "",
   targetShipDate: "",
   notes: ""
@@ -493,8 +504,11 @@ export default function ReplenishmentPage() {
   const [skuOptions, setSkuOptions] = useState<FbaReplenishmentSkuOption[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [platformFilter, setPlatformFilter] = useState("all");
   const [brandFilter, setBrandFilter] = useState("all");
   const [skuKeyword, setSkuKeyword] = useState("");
+  const [targetShipDateStart, setTargetShipDateStart] = useState("");
+  const [targetShipDateEnd, setTargetShipDateEnd] = useState("");
   const [selectedRequest, setSelectedRequest] =
     useState<FbaReplenishmentRequest | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -563,7 +577,9 @@ export default function ReplenishmentPage() {
           keyword: skuKeyword,
           filters: {
             status: statusFilter,
-            brandId: brandFilter
+            brandId: brandFilter,
+            targetShipDateStart,
+            targetShipDateEnd
           }
         });
 
@@ -590,7 +606,7 @@ export default function ReplenishmentPage() {
     return () => {
       isMounted = false;
     };
-  }, [page, statusFilter, skuKeyword, brandFilter]);
+  }, [page, statusFilter, skuKeyword, brandFilter, targetShipDateStart, targetShipDateEnd]);
 
   useEffect(() => {
     if (!pickerOpen) {
@@ -707,7 +723,7 @@ export default function ReplenishmentPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [brandFilter, skuKeyword, statusFilter]);
+  }, [brandFilter, platformFilter, skuKeyword, statusFilter, targetShipDateStart, targetShipDateEnd]);
 
   const refreshRequests = async () => {
     try {
@@ -721,7 +737,9 @@ export default function ReplenishmentPage() {
         keyword: skuKeyword,
         filters: {
           status: statusFilter,
-          brandId: brandFilter
+          brandId: brandFilter,
+          targetShipDateStart,
+          targetShipDateEnd
         }
       });
       setRequests(data.rows);
@@ -968,6 +986,27 @@ export default function ReplenishmentPage() {
         });
       });
 
+      const duplicateSkuIds = new Set(
+        parsedRows
+          .map((row) => row.sku.id)
+          .filter((skuId, index, skuIds) => skuIds.indexOf(skuId) !== index)
+      );
+
+      if (duplicateSkuIds.size > 0) {
+        parsedRows
+          .filter((row) => duplicateSkuIds.has(row.sku.id))
+          .forEach((row) => {
+            issues.push({
+              rowNumber: row.rowNumber,
+              skuCode: row.sku.sku_code,
+              reason: "文件内重复 SKU，请合并成一行后再导入"
+            });
+          });
+      }
+
+      const validParsedRows = parsedRows.filter(
+        (row) => !duplicateSkuIds.has(row.sku.id)
+      );
       const rowBySkuId = new Map<
         string,
         {
@@ -976,9 +1015,9 @@ export default function ReplenishmentPage() {
           remark: string;
         }
       >();
-      let duplicateMergeCount = 0;
+      let duplicateMergeCount = duplicateSkuIds.size;
 
-      parsedRows.forEach((row) => {
+      validParsedRows.forEach((row) => {
         const existing = rowBySkuId.get(row.sku.id);
 
         if (!existing) {
@@ -1003,10 +1042,10 @@ export default function ReplenishmentPage() {
       );
       const mergeResult = mergeDraftItems(draftItems, incomingItems);
       const uniqueWarehouseIds = new Set(
-        parsedRows.map((row) => row.warehouseId).filter(Boolean)
+        validParsedRows.map((row) => row.warehouseId).filter(Boolean)
       );
       const uniqueExpectedDates = new Set(
-        parsedRows.map((row) => row.expectedDeliveryDate).filter(Boolean)
+        validParsedRows.map((row) => row.expectedDeliveryDate).filter(Boolean)
       );
       const notes: string[] = [];
 
@@ -1109,7 +1148,7 @@ export default function ReplenishmentPage() {
     }
 
     return {
-      amazonSite: "US",
+      amazonSite: createForm.platform || "US",
       targetWarehouseId: createForm.targetWarehouseId,
       fbaWarehouseCode: "",
       targetShipDate: createForm.targetShipDate || null,
@@ -1154,27 +1193,208 @@ export default function ReplenishmentPage() {
     }
   };
 
+  const platformOptions = useMemo(() => {
+    const platforms = new Set(
+      requests
+        .map((request) => parseNotes(request.notes).amazonSite)
+        .filter((platform) => platform && platform !== "-")
+    );
+
+    return ["all", ...[...platforms].sort((first, second) => first.localeCompare(second))];
+  }, [requests]);
+  const visibleRequests = useMemo(() => {
+    if (platformFilter === "all") {
+      return requests;
+    }
+
+    return requests.filter(
+      (request) => parseNotes(request.notes).amazonSite === platformFilter
+    );
+  }, [platformFilter, requests]);
+  const skuStockById = useMemo(
+    () => new Map(skuOptions.map((sku) => [sku.id, sku.current_stock])),
+    [skuOptions]
+  );
+  const getRequestSummary = (request: FbaReplenishmentRequest) => {
+    const items = request.items.slice(0, 2);
+    const labels = items.map((item) => {
+      const product = item.product ?? item.sku?.product ?? null;
+      const productName = product?.name ?? "未关联产品";
+      const skuCode = item.sku?.sku_code ?? "-";
+
+      return `${productName} / ${skuCode}`;
+    });
+    const extraCount = Math.max(0, request.items.length - labels.length);
+
+    return {
+      main: labels.join("、") || request.sku?.sku_name || "-",
+      extra: extraCount > 0 ? `等 ${extraCount} 项` : ""
+    };
+  };
+  const getItemStock = (item: FbaReplenishmentRequestItem) =>
+    skuStockById.get(item.sku_id);
+  const getItemShortage = (item: FbaReplenishmentRequestItem) => {
+    const stock = getItemStock(item);
+
+    if (stock === undefined) {
+      return null;
+    }
+
+    return Math.max(0, Number(item.requested_quantity) - stock);
+  };
+  const resetFilters = () => {
+    setSkuKeyword("");
+    setStatusFilter("all");
+    setPlatformFilter("all");
+    setBrandFilter("all");
+    setTargetShipDateStart("");
+    setTargetShipDateEnd("");
+    setPage(1);
+  };
+  const openHeaderImport = () => {
+    openCreateModal();
+    openImportModal();
+  };
+  const exportRequests = () => {
+    downloadCsvTemplate(
+      "fba-replenishment-list.csv",
+      [
+        { key: "备货单号", label: "备货单号" },
+        { key: "平台", label: "平台" },
+        { key: "SKU数", label: "SKU 数" },
+        { key: "总数量", label: "总数量" },
+        { key: "运营", label: "运营" },
+        { key: "计划发货", label: "计划发货" },
+        { key: "状态", label: "状态" }
+      ],
+      visibleRequests.map((request) => ({
+        备货单号: request.request_no,
+        平台: parseNotes(request.notes).amazonSite,
+        SKU数: String(request.sku_count),
+        总数量: String(request.total_requested_quantity),
+        运营: request.requested_by_profile?.full_name ?? "",
+        计划发货: request.target_ship_date ?? "",
+        状态: statusLabels[request.status] ?? request.status
+      }))
+    );
+  };
+  const requestColumns: DataTableColumn<FbaReplenishmentRequest>[] = [
+    {
+      key: "request_no",
+      title: "备货单号",
+      width: 150,
+      render: (request) => (
+        <button
+          className="linkButton"
+          type="button"
+          onClick={() => setSelectedRequest(request)}
+        >
+          {request.request_no}
+        </button>
+      )
+    },
+    {
+      key: "platform",
+      title: "平台",
+      width: 92,
+      render: (request) => parseNotes(request.notes).amazonSite
+    },
+    {
+      key: "summary",
+      title: "产品/SKU 汇总",
+      render: (request) => {
+        const summary = getRequestSummary(request);
+        const firstItem = request.items[0];
+        const product = firstItem?.product ?? firstItem?.sku?.product ?? null;
+
+        return (
+          <InfoCell
+            imageUrl={product?.product_image_url ?? null}
+            imageAlt={product?.name ?? "产品"}
+            title={summary.main}
+            subtitle={summary.extra || getRequestBrandSummary(request)}
+          />
+        );
+      }
+    },
+    {
+      key: "quantity",
+      title: "SKU数 / 总数量",
+      width: 130,
+      render: (request) => (
+        <span className="metricText">
+          {request.sku_count} / {formatQuantity(request.total_requested_quantity)}
+        </span>
+      )
+    },
+    {
+      key: "operator",
+      title: "运营",
+      width: 92,
+      render: (request) => request.requested_by_profile?.full_name ?? "-"
+    },
+    {
+      key: "target_ship_date",
+      title: "计划发货",
+      width: 112,
+      render: (request) => formatDate(request.target_ship_date)
+    },
+    {
+      key: "status",
+      title: "状态",
+      width: 98,
+      render: (request) => (
+        <StatusBadge status={request.status} label={statusLabels[request.status]} />
+      )
+    },
+    {
+      key: "actions",
+      title: "操作",
+      width: 150,
+      render: (request) => (
+        <RowActions
+          onView={() => setSelectedRequest(request)}
+          moreActions={[
+            {
+              label: "编辑",
+              disabled: true,
+              onClick: () => undefined
+            },
+            {
+              label: "生成排产建议",
+              onClick: () => {
+                window.location.href = "/production/planning";
+              }
+            }
+          ]}
+        />
+      )
+    }
+  ];
+
   return (
     <main className="pageShell">
-      <section className="pageHero">
-        <div>
-          <p className="eyebrow">备货管理</p>
-          <h2>备货需求</h2>
-          <p>
-            按整张备货单查看运营需求。一张单可以包含多个产品和多个 SKU 明细。
-          </p>
-        </div>
-        <div className="pageHeroActions">
-          <span className="statusPill">Supabase 数据</span>
-          <button
-            className="primaryButton successButton"
-            type="button"
-            onClick={openCreateModal}
-          >
-            + 创建备货单
+      <PageHeader
+        title="备货需求"
+        secondaryActions={
+          <>
+            <button className="secondaryButton" type="button" onClick={openHeaderImport}>
+              <UploadIcon size={14} />
+              导入
+            </button>
+            <button className="secondaryButton" type="button" onClick={exportRequests}>
+              <DownloadIcon size={14} />
+              导出
+            </button>
+          </>
+        }
+        primaryAction={
+          <button className="primaryButton" type="button" onClick={openCreateModal}>
+            <PlusIcon size={14} />
+            新增备货单
           </button>
-        </div>
-      </section>
+        }
+      />
 
       {successMessage ? (
         <div className="successNotice">
@@ -1184,63 +1404,95 @@ export default function ReplenishmentPage() {
       ) : null}
 
       <section className="listPanel">
-        <div className="listToolbar">
-          <label>
-            状态
-            <select
-              value={statusFilter}
-              onChange={(event) =>
-                setStatusFilter(event.target.value as StatusFilter)
-              }
+        <SearchFilterBar
+          searchLabel="搜索"
+          searchValue={skuKeyword}
+          searchPlaceholder="单号 / 产品 / SKU / 运营"
+          onSearchChange={setSkuKeyword}
+          onReset={resetFilters}
+          filters={
+            <>
+              <label>
+                状态
+                <select
+                  value={statusFilter}
+                  onChange={(event) =>
+                    setStatusFilter(event.target.value as StatusFilter)
+                  }
+                  disabled={loading}
+                >
+                  {statusOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                平台
+                <select
+                  value={platformFilter}
+                  onChange={(event) => setPlatformFilter(event.target.value)}
+                  disabled={loading}
+                >
+                  {platformOptions.map((platform) => (
+                    <option key={platform} value={platform}>
+                      {platform === "all" ? "全部平台" : platform}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                品牌
+                <select
+                  value={brandFilter}
+                  onChange={(event) => setBrandFilter(event.target.value)}
+                  disabled={loading}
+                >
+                  <option value="all">全部品牌</option>
+                  <option value="none">无品牌</option>
+                  {brandOptions.map((brand) => (
+                    <option key={brand.id} value={brand.id}>
+                      {getBrandCodeName(brand)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          }
+          dateFilters={
+            <>
+              <label>
+                计划发货起
+                <input
+                  type="date"
+                  value={targetShipDateStart}
+                  onChange={(event) => setTargetShipDateStart(event.target.value)}
+                  disabled={loading}
+                />
+              </label>
+              <label>
+                计划发货止
+                <input
+                  type="date"
+                  value={targetShipDateEnd}
+                  onChange={(event) => setTargetShipDateEnd(event.target.value)}
+                  disabled={loading}
+                />
+              </label>
+            </>
+          }
+          rightActions={
+            <button
+              className="secondaryButton"
+              type="button"
+              onClick={refreshRequests}
               disabled={loading}
             >
-              {statusOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label>
-            SKU 搜索
-            <input
-              value={skuKeyword}
-              onChange={(event) => setSkuKeyword(event.target.value)}
-              placeholder="输入 SKU 编码或名称"
-            />
-          </label>
-
-          <label>
-            品牌
-            <select
-              value={brandFilter}
-              onChange={(event) => setBrandFilter(event.target.value)}
-              disabled={loading}
-            >
-              <option value="all">全部品牌</option>
-              <option value="none">无品牌</option>
-              {brandOptions.map((brand) => (
-                <option key={brand.id} value={brand.id}>
-                  {getBrandCodeName(brand)}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <button
-            className="secondaryButton"
-            type="button"
-            onClick={refreshRequests}
-            disabled={loading}
-          >
-            {loading ? "正在刷新..." : "刷新列表"}
-          </button>
-        </div>
-
-        {loading ? (
-          <div className="debugNotice">正在读取备货需求列表...</div>
-        ) : null}
+              {loading ? "刷新中" : "刷新"}
+            </button>
+          }
+        />
 
         {errorMessage ? (
           <div className="debugError">
@@ -1249,210 +1501,198 @@ export default function ReplenishmentPage() {
           </div>
         ) : null}
 
-        {!loading && !errorMessage && requests.length === 0 ? (
-          <div className="emptyState">暂无备货需求</div>
-        ) : null}
-
-        {!loading && !errorMessage && requests.length > 0 ? (
-          <div className="tableWrap">
-            <table className="dataTable">
-              <thead>
-                <tr>
-                  <th>备货单号</th>
-                  <th>亚马逊站点</th>
-                  <th>目标 FBA 仓库</th>
-                  <th>产品数量</th>
-                  <th>品牌</th>
-                  <th>SKU 数量</th>
-                  <th>总备货数量</th>
-                  <th>状态</th>
-                  <th>优先级</th>
-                  <th>创建人</th>
-                  <th>创建时间</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {requests.map((request) => {
-                  const notes = parseNotes(request.notes);
-
-                  return (
-                    <tr key={request.id}>
-                      <td>{request.request_no}</td>
-                      <td>{notes.amazonSite}</td>
-                      <td>
-                        <strong>{request.target_warehouse?.name ?? "-"}</strong>
-                        <span>{request.fba_warehouse_code ?? "-"}</span>
-                      </td>
-                      <td>{request.product_count}</td>
-                      <td>{getRequestBrandSummary(request)}</td>
-                      <td>{request.sku_count}</td>
-                      <td>{formatQuantity(request.total_requested_quantity)}</td>
-                      <td>
-                        <span className={`tablePill status-${request.status}`}>
-                          {statusLabels[request.status] ?? request.status}
-                        </span>
-                      </td>
-                      <td>{priorityLabels[request.priority] ?? request.priority}</td>
-                      <td>{request.requested_by_profile?.full_name ?? "-"}</td>
-                      <td>{formatDateTime(request.created_at)}</td>
-                      <td>
-                        <div className="rowActions">
-                          <button
-                            type="button"
-                            onClick={() => setSelectedRequest(request)}
-                          >
-                            查看
-                          </button>
-                          <button type="button" disabled>
-                            编辑
-                          </button>
-                          <button type="button" disabled>
-                            删除
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-
-        {!loading && !errorMessage && totalRequests > 0 ? (
-          <Pagination
-            page={page}
-            pageSize={DEFAULT_PAGE_SIZE}
-            total={totalRequests}
-            onPageChange={setPage}
-          />
-        ) : null}
+        <DataTable
+          columns={requestColumns}
+          rows={visibleRequests}
+          getRowKey={(request) => request.id}
+          loading={loading}
+          loadingText="正在读取备货需求列表..."
+          emptyText="暂无备货需求"
+          minWidth={960}
+          page={page}
+          pageSize={DEFAULT_PAGE_SIZE}
+          total={platformFilter === "all" ? totalRequests : visibleRequests.length}
+          onPageChange={setPage}
+        />
       </section>
 
       {selectedRequest ? (
-        <Modal
+        <DetailDrawer
           open={Boolean(selectedRequest)}
-          eyebrow="备货需求详情"
-          title={selectedRequest.request_no}
+          title="备货单详情"
+          width="lg"
           onClose={() => setSelectedRequest(null)}
+          footer={
+            <>
+              <button
+                className="secondaryButton"
+                type="button"
+                onClick={() => setSelectedRequest(null)}
+              >
+                关闭
+              </button>
+              <button className="secondaryButton" type="button" disabled>
+                编辑
+              </button>
+              <button
+                className="primaryButton"
+                type="button"
+                onClick={() => {
+                  window.location.href = "/production/planning";
+                }}
+              >
+                生成排产建议
+              </button>
+            </>
+          }
         >
-          <div className="detailGrid">
-            <DetailItem
-              label="亚马逊站点"
-              value={parseNotes(selectedRequest.notes).amazonSite}
-            />
-            <DetailItem
-              label="目标仓库"
-              value={`${selectedRequest.target_warehouse?.name ?? "-"} / ${
-                selectedRequest.target_warehouse?.warehouse_code ?? "-"
-              }`}
-            />
-            <DetailItem
-              label="FBA 仓库代码"
-              value={selectedRequest.fba_warehouse_code ?? "-"}
-            />
-            <DetailItem
-              label="备货数量"
-              value={formatQuantity(selectedRequest.total_requested_quantity)}
-            />
-            <DetailItem
-              label="产品数量"
-              value={String(selectedRequest.product_count)}
-            />
-            <DetailItem label="SKU 数量" value={String(selectedRequest.sku_count)} />
-            <DetailItem
-              label="期望完成日期"
-              value={formatDate(selectedRequest.target_ship_date)}
-            />
-            <DetailItem
-              label="状态"
-              value={statusLabels[selectedRequest.status] ?? selectedRequest.status}
-            />
-            <DetailItem
-              label="优先级"
-              value={
-                priorityLabels[selectedRequest.priority] ??
-                selectedRequest.priority
-              }
-            />
-            <DetailItem
-              label="创建人"
-              value={
-                selectedRequest.requested_by_profile
-                  ? `${selectedRequest.requested_by_profile.full_name} / ${selectedRequest.requested_by_profile.email}`
-                  : "-"
-              }
-            />
-            <DetailItem
-              label="创建时间"
-              value={formatDateTime(selectedRequest.created_at)}
-            />
-            <DetailItem
-              label="更新时间"
-              value={formatDateTime(selectedRequest.updated_at)}
-            />
-            <DetailItem
-              label="拒绝原因"
-              value={selectedRequest.rejected_reason ?? "-"}
-            />
-            <DetailItem
-              label="备注"
-              value={parseNotes(selectedRequest.notes).displayNotes}
-              wide
-            />
-          </div>
-
-          <div className="groupList">
-            {groupRequestItemsByProduct(selectedRequest.items).map((group) => (
-              <section className="productGroup" key={group.productCode}>
-                <ProductHeader
-                  imageUrl={group.imageUrl}
-                  name={group.productName}
-                  code={group.productCode}
-                  brandLabel={group.brandLabel}
+          <section className="drawerSection">
+            <div className="drawerSectionHeader">
+              <h4>基本信息</h4>
+            </div>
+            <div className="detailGrid compactDetailGrid">
+              <DetailItem label="备货单号" value={selectedRequest.request_no} />
+              <DetailItem
+                label="平台"
+                value={parseNotes(selectedRequest.notes).amazonSite}
+              />
+              <DetailItem
+                label="运营"
+                value={selectedRequest.requested_by_profile?.full_name ?? "-"}
+              />
+              <DetailItem
+                label="创建时间"
+                value={formatDateTime(selectedRequest.created_at)}
+              />
+              <DetailItem
+                label="计划发货"
+                value={formatDate(selectedRequest.target_ship_date)}
+              />
+              <div className="detailItem">
+                <span>状态</span>
+                <StatusBadge
+                  status={selectedRequest.status}
+                  label={statusLabels[selectedRequest.status]}
                 />
-                <div className="tableWrap compactTableWrap">
-                  <table className="dataTable compactDataTable">
-                    <thead>
-                      <tr>
-                        <th>SKU 编码</th>
-                        <th>SKU 名称 / 规格</th>
-                        <th>备货数量</th>
-                        <th>备注</th>
+              </div>
+              <DetailItem
+                label="目标仓库"
+                value={`${selectedRequest.target_warehouse?.name ?? "-"} / ${
+                  selectedRequest.target_warehouse?.warehouse_code ?? "-"
+                }`}
+              />
+              <DetailItem
+                label="SKU / 数量"
+                value={`${selectedRequest.sku_count} / ${formatQuantity(
+                  selectedRequest.total_requested_quantity
+                )}`}
+              />
+              <DetailItem
+                label="备注"
+                value={parseNotes(selectedRequest.notes).displayNotes}
+                wide
+              />
+            </div>
+          </section>
+
+          <section className="drawerSection">
+            <div className="drawerSectionHeader">
+              <h4>SKU 明细</h4>
+              <span>共 {selectedRequest.items.length} 项</span>
+            </div>
+            <div className="tableWrap compactTableWrap noHorizontalScroll">
+              <table className="dataTable compactDataTable drawerDetailTable">
+                <thead>
+                  <tr>
+                    <th>产品信息</th>
+                    <th>SKU</th>
+                    <th>需求数量</th>
+                    <th>当前成品库存</th>
+                    <th>预计可生产</th>
+                    <th>缺口</th>
+                    <th>备注</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedRequest.items.map((item) => {
+                    const stock = getItemStock(item);
+                    const shortage = getItemShortage(item);
+                    const product = item.product ?? item.sku?.product ?? null;
+
+                    return (
+                      <tr key={item.id}>
+                        <td>
+                          <InfoCell
+                            imageUrl={product?.product_image_url ?? null}
+                            imageAlt={product?.name ?? "产品"}
+                            title={product?.name ?? "未关联产品"}
+                            subtitle={product?.product_code ?? "-"}
+                          />
+                        </td>
+                        <td>
+                          <EllipsisText title={item.sku?.sku_code ?? undefined}>
+                            {item.sku?.sku_code ?? "-"}
+                          </EllipsisText>
+                          <span className="tableSubText">
+                            {item.sku?.sku_name ?? "-"}
+                          </span>
+                        </td>
+                        <td>{formatQuantity(item.requested_quantity)}</td>
+                        <td>
+                          {stock === undefined ? "未加载" : formatQuantity(stock)}
+                        </td>
+                        <td>{stock === undefined ? "待算料" : "排产后计算"}</td>
+                        <td>
+                          {shortage === null || shortage === 0 ? (
+                            <span className="goodText">
+                              {shortage === null ? "-" : "充足"}
+                            </span>
+                          ) : (
+                            <span className="dangerText">
+                              {formatQuantity(shortage)}
+                            </span>
+                          )}
+                        </td>
+                        <td className="notesCell">{item.remark ?? "-"}</td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {group.items.map((item) => (
-                        <tr key={item.id}>
-                          <td>{item.sku?.sku_code ?? "-"}</td>
-                          <td>
-                            <strong>{item.sku?.sku_name ?? "-"}</strong>
-                            <span>{item.sku?.specs ?? "-"}</span>
-                          </td>
-                          <td>{formatQuantity(item.requested_quantity)}</td>
-                          <td className="notesCell">{item.remark ?? "-"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-            ))}
-          </div>
-        </Modal>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </DetailDrawer>
       ) : null}
 
-      <Modal
+      <DrawerForm
         open={createOpen}
-        eyebrow="运营创建"
         title="创建备货单"
-        maxWidth="xl"
+        width="lg"
         onClose={() => {
           if (!submitting) {
             setCreateOpen(false);
           }
         }}
+        footer={
+          <>
+            <button
+              className="secondaryButton"
+              type="button"
+              onClick={() => setCreateOpen(false)}
+              disabled={submitting}
+            >
+              取消
+            </button>
+            <button
+              className="primaryButton"
+              type="submit"
+              form="replenishment-create-form"
+              disabled={loadingOptions || submitting}
+            >
+              {submitting ? "正在创建..." : "提交备货单"}
+            </button>
+          </>
+        }
       >
         {loadingOptions ? (
           <div className="debugNotice">正在读取产品、SKU、库存和仓库数据...</div>
@@ -1473,6 +1713,7 @@ export default function ReplenishmentPage() {
         ) : null}
 
         <form
+          id="replenishment-create-form"
           className="dataForm replenishmentCreateForm"
           onSubmit={handleCreateRequest}
         >
@@ -1481,6 +1722,27 @@ export default function ReplenishmentPage() {
             <DetailItem label="需求人" value={user.name} />
             <DetailItem label="需求日期" value={todayText} />
           </div>
+
+          <label>
+            平台
+            <select
+              value={createForm.platform}
+              onChange={(event) =>
+                updateCreateForm("platform", event.target.value)
+              }
+              disabled={submitting}
+            >
+              <option value="US">US</option>
+              <option value="CA">CA</option>
+              <option value="MX">MX</option>
+              <option value="UK">UK</option>
+              <option value="DE">DE</option>
+              <option value="FR">FR</option>
+              <option value="IT">IT</option>
+              <option value="ES">ES</option>
+              <option value="JP">JP</option>
+            </select>
+          </label>
 
           <label>
             目的仓库
@@ -1670,15 +1932,6 @@ export default function ReplenishmentPage() {
             </span>
           </div>
 
-          <div className="formActions fullField">
-            <button
-              className="primaryButton successButton"
-              type="submit"
-              disabled={loadingOptions || submitting}
-            >
-              {submitting ? "正在创建..." : "提交备货单"}
-            </button>
-          </div>
         </form>
 
         <Modal
@@ -1716,7 +1969,14 @@ export default function ReplenishmentPage() {
               </button>
             </div>
 
-            <div className="bulkUploadBox">
+            <div
+              className="bulkUploadBox dragUploadBox"
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault();
+                handleImportFile(event.dataTransfer.files?.[0]);
+              }}
+            >
               <input
                 ref={importInputRef}
                 className="hiddenFileInput"
@@ -1728,7 +1988,7 @@ export default function ReplenishmentPage() {
               <span>
                 {importFileName
                   ? `已选择：${importFileName}`
-                  : "模板字段：SKU编码、本次备货数量、备注。"}
+                  : "拖拽上传 Excel 导出的 CSV，或点击按钮选择文件。"}
               </span>
             </div>
 
@@ -1757,7 +2017,7 @@ export default function ReplenishmentPage() {
                     成功导入 <strong>{importSummary.successSkuCount}</strong> 个 SKU
                   </span>
                   <span>
-                    自动合并重复 SKU{" "}
+                    文件重复 SKU{" "}
                     <strong>{importSummary.duplicateMergeCount}</strong> 个
                   </span>
                   <span>
@@ -1964,7 +2224,7 @@ export default function ReplenishmentPage() {
             </div>
           </div>
         </Modal>
-      </Modal>
+      </DrawerForm>
     </main>
   );
 }
