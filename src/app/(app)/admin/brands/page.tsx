@@ -1,29 +1,25 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { BulkActionBar } from "@/components/BulkActionBar";
-import { BulkImportDialog } from "@/components/BulkImportDialog";
+import { useEffect, useState, type FormEvent } from "react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { ImageCell } from "@/components/ImageCell";
-import { Modal } from "@/components/Modal";
-import { Pagination } from "@/components/Pagination";
-import {
-  bulkImportBrands,
-  deactivateBrandsByIds,
-  deleteBrandsByIds,
-  validateBrandImportRows,
-  type BrandImportInput
-} from "@/lib/api/bulk-management";
+import { DataTable, type DataTableColumn } from "@/components/ui/DataTable";
+import { DetailDrawer } from "@/components/ui/detail-drawer";
+import { DrawerForm } from "@/components/ui/DrawerForm";
+import { EllipsisText } from "@/components/ui/ellipsis-text";
+import { InfoCell } from "@/components/ui/info-cell";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { RowActions } from "@/components/ui/row-actions";
+import { SearchFilterBar } from "@/components/ui/SearchFilterBar";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { deleteBrandsByIds } from "@/lib/api/bulk-management";
 import {
   createBrand,
   getBrandsPage,
   toggleBrandStatus,
   updateBrand,
   type BrandListRow,
-  type BrandStats,
   type BrandStatus
 } from "@/lib/api/brands";
-import { downloadCsvTemplate, type CsvTemplateField } from "@/lib/utils/csv";
 import { DEFAULT_PAGE_SIZE } from "@/lib/utils/pagination";
 
 const brandStatusLabels: Record<string, string> = {
@@ -54,48 +50,6 @@ const initialBrandForm: BrandFormState = {
   notes: ""
 };
 
-const initialStats: BrandStats = {
-  totalBrands: 0,
-  activeBrands: 0,
-  inactiveBrands: 0,
-  totalLinkedProducts: 0
-};
-
-const brandImportFields: CsvTemplateField[] = [
-  {
-    key: "brand_code",
-    label: "品牌编码",
-    required: true,
-    example: "BRAND-A"
-  },
-  {
-    key: "name",
-    label: "品牌名称",
-    required: true,
-    example: "品牌 A"
-  },
-  {
-    key: "english_name",
-    label: "英文名称",
-    example: "Brand A"
-  },
-  {
-    key: "logo_url",
-    label: "Logo URL",
-    example: "https://example.com/logo.png"
-  },
-  {
-    key: "status",
-    label: "状态",
-    example: "active"
-  },
-  {
-    key: "notes",
-    label: "备注",
-    example: "品牌说明"
-  }
-];
-
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) {
     return error.message;
@@ -124,17 +78,14 @@ function toEditableStatus(status: string): BrandStatus {
 
 export default function AdminBrandsPage() {
   const [brands, setBrands] = useState<BrandListRow[]>([]);
-  const [stats, setStats] = useState<BrandStats>(initialStats);
   const [brandForm, setBrandForm] = useState<BrandFormState>(initialBrandForm);
   const [editForm, setEditForm] = useState<BrandEditFormState | null>(null);
   const [selectedBrand, setSelectedBrand] = useState<BrandListRow | null>(null);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [selectedBrandIds, setSelectedBrandIds] = useState<string[]>([]);
   const [page, setPage] = useState(1);
   const [totalBrands, setTotalBrands] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
-  const [importOpen, setImportOpen] = useState(false);
   const [brandToDelete, setBrandToDelete] = useState<BrandListRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -143,14 +94,6 @@ export default function AdminBrandsPage() {
   const [deletingBrandId, setDeletingBrandId] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
-
-  const selectedBrands = useMemo(
-    () => brands.filter((brand) => selectedBrandIds.includes(brand.id)),
-    [brands, selectedBrandIds]
-  );
-  const allFilteredSelected =
-    brands.length > 0 &&
-    brands.every((brand) => selectedBrandIds.includes(brand.id));
 
   const loadPageData = async () => {
     try {
@@ -167,13 +110,7 @@ export default function AdminBrandsPage() {
       });
 
       setBrands(brandPage.rows);
-      setStats(brandPage.summary);
       setTotalBrands(brandPage.total);
-      setSelectedBrandIds((current) =>
-        current.filter((brandId) =>
-          brandPage.rows.some((brand) => brand.id === brandId)
-        )
-      );
       setSelectedBrand((current) => {
         if (!current) {
           return null;
@@ -184,9 +121,7 @@ export default function AdminBrandsPage() {
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setBrands([]);
-      setStats(initialStats);
       setTotalBrands(0);
-      setSelectedBrandIds([]);
       setSelectedBrand(null);
     } finally {
       setLoading(false);
@@ -283,54 +218,6 @@ export default function AdminBrandsPage() {
     }
   };
 
-  const toggleBrandSelection = (brandId: string) => {
-    setSelectedBrandIds((current) =>
-      current.includes(brandId)
-        ? current.filter((id) => id !== brandId)
-        : [...current, brandId]
-    );
-  };
-
-  const toggleAllFilteredBrands = () => {
-    if (allFilteredSelected) {
-      setSelectedBrandIds((current) =>
-        current.filter((brandId) => !brands.some((brand) => brand.id === brandId))
-      );
-      return;
-    }
-
-    setSelectedBrandIds((current) =>
-      Array.from(new Set([...current, ...brands.map((brand) => brand.id)]))
-    );
-  };
-
-  const importBrands = async (rows: Array<{ data?: BrandImportInput }>) => {
-    const result = await bulkImportBrands(
-      rows
-        .map((row) => row.data)
-        .filter((row): row is BrandImportInput => Boolean(row))
-    );
-
-    await loadPageData();
-    setSuccessMessage(
-      `品牌批量导入完成：成功 ${result.successCount} 条，失败 ${result.failedCount} 条。`
-    );
-
-    return result;
-  };
-
-  const batchDeactivateBrands = async (items: BrandListRow[]) => {
-    const results = await deactivateBrandsByIds(items.map((item) => item.id));
-    await loadPageData();
-    return results;
-  };
-
-  const batchDeleteBrands = async (items: BrandListRow[]) => {
-    const results = await deleteBrandsByIds(items.map((item) => item.id));
-    await loadPageData();
-    return results;
-  };
-
   const confirmDeleteBrand = async () => {
     if (!brandToDelete) {
       return;
@@ -358,35 +245,74 @@ export default function AdminBrandsPage() {
     }
   };
 
-  return (
-    <main className="pageShell">
-      <section className="pageHero">
-        <div>
-          <p className="eyebrow">基础资料</p>
-          <h2>品牌管理</h2>
-          <p>管理公司品牌基础资料。品牌挂在产品 SPU 上，SKU 会自动跟随所属产品的品牌。</p>
-        </div>
-        <span className="statusPill">Supabase 数据</span>
-      </section>
+  const brandColumns: DataTableColumn<BrandListRow>[] = [
+    {
+      key: "brand",
+      title: "品牌信息",
+      width: "48%",
+      render: (brand) => (
+        <InfoCell
+          title={brand.name}
+          subtitle={`${brand.brand_code}${brand.notes ? ` / ${brand.notes}` : ""}`}
+        />
+      )
+    },
+    {
+      key: "status",
+      title: "状态",
+      render: (brand) => (
+        <StatusBadge status={brand.status} label={getStatusLabel(brand.status)} />
+      )
+    },
+    {
+      key: "createdAt",
+      title: "创建时间",
+      render: (brand) => formatDateTime(brand.created_at)
+    },
+    {
+      key: "actions",
+      title: "操作",
+      render: (brand) => {
+        const statusUpdating = statusUpdatingId === brand.id;
 
-      <section className="metricGrid">
-        <div className="metric">
-          <span>品牌总数</span>
-          <strong>{stats.totalBrands}</strong>
-        </div>
-        <div className="metric">
-          <span>启用品牌数</span>
-          <strong>{stats.activeBrands}</strong>
-        </div>
-        <div className="metric">
-          <span>停用品牌数</span>
-          <strong>{stats.inactiveBrands}</strong>
-        </div>
-        <div className="metric">
-          <span>已关联产品数</span>
-          <strong>{stats.totalLinkedProducts}</strong>
-        </div>
-      </section>
+        return (
+          <RowActions
+            onView={() => setSelectedBrand(brand)}
+            onEdit={() => startEditBrand(brand)}
+            moreActions={[
+              {
+                label: statusUpdating
+                  ? "正在处理"
+                  : brand.status === "active"
+                    ? "停用"
+                    : "启用",
+                disabled: statusUpdating,
+                onClick: () => changeBrandStatus(brand)
+              },
+              {
+                label: "删除",
+                danger: true,
+                disabled: deletingBrandId === brand.id,
+                onClick: () => setBrandToDelete(brand)
+              }
+            ]}
+          />
+        );
+      }
+    }
+  ];
+
+  return (
+    <main className="pageShell modernPageShell">
+      <PageHeader
+        eyebrow="基础资料"
+        title="品牌管理"
+        actions={
+          <button className="primaryButton" type="button" onClick={() => setCreateOpen(true)}>
+            新增品牌
+          </button>
+        }
+      />
 
       {successMessage ? (
         <div className="successNotice">
@@ -402,14 +328,23 @@ export default function AdminBrandsPage() {
         </div>
       ) : null}
 
-      <Modal
+      <DrawerForm
         open={createOpen}
-        eyebrow="新增品牌"
-        title="创建品牌基础资料"
-        maxWidth="lg"
+        title="新增品牌"
+        width="lg"
         onClose={() => setCreateOpen(false)}
+        footer={
+          <>
+            <button className="secondaryButton" type="button" onClick={() => setCreateOpen(false)}>
+              取消
+            </button>
+            <button className="primaryButton" form="create-brand-form" type="submit" disabled={creating}>
+              {creating ? "正在新增..." : "新增品牌"}
+            </button>
+          </>
+        }
       >
-        <form className="dataForm productForm" onSubmit={submitCreateBrand}>
+        <form id="create-brand-form" className="dataForm productForm" onSubmit={submitCreateBrand}>
           <label>
             品牌编码
             <input
@@ -503,24 +438,27 @@ export default function AdminBrandsPage() {
               placeholder="可填写品牌说明"
             />
           </label>
-
-          <div className="formActions">
-            <button className="primaryButton" type="submit" disabled={creating}>
-              {creating ? "正在新增..." : "新增品牌"}
-            </button>
-          </div>
         </form>
-      </Modal>
+      </DrawerForm>
 
       {editForm ? (
-        <Modal
+        <DrawerForm
           open={Boolean(editForm)}
-          eyebrow="编辑品牌"
-          title={editForm.brandCode}
-          maxWidth="lg"
+          title={`编辑品牌：${editForm.brandCode}`}
+          width="lg"
           onClose={() => setEditForm(null)}
+          footer={
+            <>
+              <button className="secondaryButton" type="button" onClick={() => setEditForm(null)}>
+                取消
+              </button>
+              <button className="primaryButton" form="edit-brand-form" type="submit" disabled={updating}>
+                {updating ? "正在保存..." : "保存编辑"}
+              </button>
+            </>
+          }
         >
-          <form className="dataForm productForm" onSubmit={submitEditBrand}>
+          <form id="edit-brand-form" className="dataForm productForm" onSubmit={submitEditBrand}>
             <label>
               品牌名称
               <input
@@ -593,57 +531,34 @@ export default function AdminBrandsPage() {
                 disabled={updating}
               />
             </label>
-
-            <div className="formActions">
-              <button className="primaryButton" type="submit" disabled={updating}>
-                {updating ? "正在保存..." : "保存编辑"}
-              </button>
-            </div>
           </form>
-        </Modal>
+        </DrawerForm>
       ) : null}
 
-      <section className="listPanel">
-        <div className="sectionHeader">
+      <section className="modernCard">
+        <div className="modernCardHeader">
           <div>
             <p className="eyebrow">品牌列表</p>
             <h3>所有品牌</h3>
           </div>
           <div className="rowActions">
-            <button
-              type="button"
-              onClick={() =>
-                downloadCsvTemplate("brands-import-template.csv", brandImportFields)
-              }
-            >
-              下载模板
-            </button>
-            <button type="button" onClick={() => setImportOpen(true)}>
-              批量导入
-            </button>
             <button type="button" onClick={refreshAll}>
               {loading ? "正在刷新..." : "刷新列表"}
-            </button>
-            <button
-              className="primaryButton"
-              type="button"
-              onClick={() => setCreateOpen(true)}
-            >
-              新增品牌
             </button>
           </div>
         </div>
 
-        <div className="listToolbar productToolbar">
-          <label>
-            搜索品牌编码 / 名称
-            <input
-              value={searchKeyword}
-              onChange={(event) => setSearchKeyword(event.target.value)}
-              placeholder="输入品牌编码、中文名或英文名"
-            />
-          </label>
-
+        <SearchFilterBar
+          searchLabel="搜索品牌名称 / 编码"
+          searchValue={searchKeyword}
+          searchPlaceholder="输入品牌名称或编码"
+          onSearchChange={setSearchKeyword}
+          onReset={() => {
+            setSearchKeyword("");
+            setStatusFilter("all");
+            setPage(1);
+          }}
+        >
           <label>
             品牌状态
             <select
@@ -655,142 +570,28 @@ export default function AdminBrandsPage() {
               <option value="inactive">停用</option>
             </select>
           </label>
+        </SearchFilterBar>
 
-          <button className="secondaryButton" type="button" onClick={refreshAll}>
-            刷新
-          </button>
-        </div>
-
-        <BulkActionBar
-          selectedItems={selectedBrands}
-          getItemLabel={(brand) => `${brand.brand_code} / ${brand.name}`}
-          entityName="品牌"
-          onClearSelection={() => setSelectedBrandIds([])}
-          onDeactivateSelected={batchDeactivateBrands}
-          onDeleteSelected={batchDeleteBrands}
+        <DataTable
+          columns={brandColumns}
+          rows={brands}
+          getRowKey={(brand) => brand.id}
+          loading={loading}
+          loadingText="正在读取品牌数据..."
+          emptyText="暂无品牌"
+          minWidth={760}
+          page={page}
+          pageSize={DEFAULT_PAGE_SIZE}
+          total={totalBrands}
+          onPageChange={setPage}
         />
-
-        {loading ? <div className="debugNotice">正在读取品牌数据...</div> : null}
-
-        {!loading && brands.length === 0 ? (
-          <div className="emptyState">暂无品牌</div>
-        ) : null}
-
-        {!loading && brands.length > 0 ? (
-          <div className="tableWrap">
-            <table className="dataTable productTable">
-              <thead>
-                <tr>
-                  <th className="selectColumn">
-                    <input
-                      aria-label="全选当前页品牌"
-                      className="tableCheckbox"
-                      type="checkbox"
-                      checked={allFilteredSelected}
-                      onChange={toggleAllFilteredBrands}
-                    />
-                  </th>
-                  <th>Logo</th>
-                  <th>品牌编码</th>
-                  <th>品牌名称</th>
-                  <th>英文名称</th>
-                  <th>状态</th>
-                  <th>关联产品数</th>
-                  <th>创建时间</th>
-                  <th>更新时间</th>
-                  <th>备注</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {brands.map((brand) => {
-                  const statusUpdating = statusUpdatingId === brand.id;
-
-                  return (
-                    <tr key={brand.id}>
-                      <td>
-                        <input
-                          aria-label={`选择品牌 ${brand.brand_code}`}
-                          className="tableCheckbox"
-                          type="checkbox"
-                          checked={selectedBrandIds.includes(brand.id)}
-                          onChange={() => toggleBrandSelection(brand.id)}
-                        />
-                      </td>
-                      <td>
-                        <ImageCell
-                          src={brand.logo_url}
-                          alt={`${brand.brand_code} ${brand.name}`}
-                        />
-                      </td>
-                      <td>{brand.brand_code}</td>
-                      <td>{brand.name}</td>
-                      <td>{brand.english_name ?? "-"}</td>
-                      <td>
-                        <span className={`tablePill product-status-${brand.status}`}>
-                          {getStatusLabel(brand.status)}
-                        </span>
-                      </td>
-                      <td>{brand.product_count}</td>
-                      <td>{formatDateTime(brand.created_at)}</td>
-                      <td>{formatDateTime(brand.updated_at)}</td>
-                      <td className="notesCell">{brand.notes ?? "-"}</td>
-                      <td>
-                        <div className="rowActions">
-                          <button type="button" onClick={() => setSelectedBrand(brand)}>
-                            查看
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => startEditBrand(brand)}
-                            disabled={updating}
-                          >
-                            编辑
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => changeBrandStatus(brand)}
-                            disabled={statusUpdating}
-                          >
-                            {statusUpdating
-                              ? "正在处理..."
-                              : brand.status === "active"
-                                ? "停用"
-                                : "启用"}
-                          </button>
-                          <button
-                            className="dangerButton"
-                            type="button"
-                            onClick={() => setBrandToDelete(brand)}
-                            disabled={deletingBrandId === brand.id}
-                          >
-                            删除
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-
-        {!loading && totalBrands > 0 ? (
-          <Pagination
-            page={page}
-            pageSize={DEFAULT_PAGE_SIZE}
-            total={totalBrands}
-            onPageChange={setPage}
-          />
-        ) : null}
       </section>
 
       {selectedBrand ? (
-        <Modal
+        <DetailDrawer
           open={Boolean(selectedBrand)}
-          eyebrow="品牌详情"
           title={`${selectedBrand.brand_code} / ${selectedBrand.name}`}
+          width="md"
           onClose={() => setSelectedBrand(null)}
         >
           <div className="detailGrid">
@@ -820,26 +621,23 @@ export default function AdminBrandsPage() {
             </div>
             <div className="detailItem detailItemWide">
               <span>Logo URL</span>
-              <strong>{selectedBrand.logo_url ?? "-"}</strong>
+              <strong>
+                <EllipsisText title={selectedBrand.logo_url ?? undefined}>
+                  {selectedBrand.logo_url ?? "-"}
+                </EllipsisText>
+              </strong>
             </div>
             <div className="detailItem detailItemWide">
               <span>备注</span>
-              <strong>{selectedBrand.notes ?? "-"}</strong>
+              <strong>
+                <EllipsisText title={selectedBrand.notes ?? undefined}>
+                  {selectedBrand.notes ?? "-"}
+                </EllipsisText>
+              </strong>
             </div>
           </div>
-        </Modal>
+        </DetailDrawer>
       ) : null}
-
-      <BulkImportDialog<BrandImportInput>
-        open={importOpen}
-        title="品牌批量导入"
-        description="请按模板填写品牌编码、品牌名称、英文名称、Logo URL、状态和备注。上传后会先逐行校验，确认导入后才写入 Supabase。"
-        templateFileName="brands-import-template.csv"
-        fields={brandImportFields}
-        validateRows={validateBrandImportRows}
-        onImport={importBrands}
-        onClose={() => setImportOpen(false)}
-      />
 
       <ConfirmDialog
         open={Boolean(brandToDelete)}
