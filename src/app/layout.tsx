@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "FBA 备货生产管理系统",
-  description: "内部使用的跨境电商工贸一体 FBA 备货生产管理系统"
+  title: "EMK 管理系统",
+  description: "内部生产与库存管理后台"
 };
 
 export default function RootLayout({

@@ -51,7 +51,7 @@ const relatedOrderTypeLabels: Record<
 > = {
   purchase_order: "采购单",
   production_order: "生产任务",
-  fba_replenishment_request: "FBA 备货单"
+  fba_replenishment_request: "备货单"
 };
 
 const emptySummary: InventoryTransactionSummary = {

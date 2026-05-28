@@ -1,6 +1,7 @@
 type StatusBadgeProps = {
-  status: string;
+  status?: string;
   label?: string;
+  type?: "success" | "warning" | "danger" | "info" | "neutral";
 };
 
 function getTone(status: string) {
@@ -9,7 +10,7 @@ function getTone(status: string) {
       status
     )
   ) {
-    return "green";
+    return "success";
   }
 
   if (
@@ -22,7 +23,7 @@ function getTone(status: string) {
       "material_in"
     ].includes(status)
   ) {
-    return "blue";
+    return "info";
   }
 
   if (
@@ -36,7 +37,7 @@ function getTone(status: string) {
       "low_stock"
     ].includes(status)
   ) {
-    return "orange";
+    return "warning";
   }
 
   if (
@@ -44,15 +45,17 @@ function getTone(status: string) {
       status
     )
   ) {
-    return "red";
+    return "danger";
   }
 
-  return "gray";
+  return "neutral";
 }
 
-export function StatusBadge({ status, label }: StatusBadgeProps) {
+export function StatusBadge({ status = "neutral", label, type }: StatusBadgeProps) {
+  const tone = type ?? getTone(status);
+
   return (
-    <span className={`statusBadge statusBadge-${getTone(status)}`}>
+    <span className={`statusBadge statusBadge-${tone}`}>
       {label ?? status}
     </span>
   );

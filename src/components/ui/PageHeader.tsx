@@ -4,23 +4,37 @@ type PageHeaderProps = {
   eyebrow?: string;
   title: string;
   description?: string;
+  subtitle?: string;
   actions?: ReactNode;
+  secondaryActions?: ReactNode;
+  primaryAction?: ReactNode;
 };
 
 export function PageHeader({
   eyebrow,
   title,
   description,
-  actions
+  subtitle,
+  actions,
+  secondaryActions,
+  primaryAction
 }: PageHeaderProps) {
+  const supportText = subtitle ?? description;
+
   return (
     <section className="pageHeader">
       <div>
         {eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}
         <h1>{title}</h1>
-        {description ? <p>{description}</p> : null}
+        {supportText ? <p>{supportText}</p> : null}
       </div>
-      {actions ? <div className="pageHeaderActions">{actions}</div> : null}
+      {actions || secondaryActions || primaryAction ? (
+        <div className="pageHeaderActions">
+          {secondaryActions}
+          {actions}
+          {primaryAction}
+        </div>
+      ) : null}
     </section>
   );
 }

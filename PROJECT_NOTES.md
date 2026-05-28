@@ -2301,6 +2301,71 @@ FBA 出库是单独动作，不能把成品入库自动等同于发往 FBA。
 - 已运行 `npm run typecheck`，通过。
 - `npm run build` 等本轮最终验证结果见本次收尾输出。
 
+### 3.9 渐进式 UI/UX 重构第一阶段（2026-05-28）
+
+本轮只做前端外壳和公共组件，不改 Supabase 表结构，不改业务 API，不重写业务查询逻辑。
+
+已完成：
+
+- 全局后台外壳改为紧凑 ERP 风格：左侧固定 Sidebar、顶部 56px Header、主内容区使用浅灰背景和 16px/20px 级别间距。
+- Sidebar 顶部只显示 Supabase Storage 里的 EMK logo，不再显示旧文字品牌、默认图标或介绍文案。
+- Sidebar 支持 240px 展开和 64px 折叠；菜单按“核心 / 业务 / 基础 / 系统”整理。
+- Header 增加折叠按钮、面包屑、全局搜索、通知、用户头像和用户名称；不再放大标题或系统介绍。
+- 新增/升级公共组件：`PageHeader`、`SearchFilterBar`、`DataTable`、`RowActions`、`DetailDrawer`、`DrawerForm`、`StatusBadge`、`InfoCell`、`ImageCell`、`EllipsisText`。
+- 全局样式统一为 `#F8FAFC` 背景、白色卡片、`#0F172A` 主文字、`#64748B` 次要文字、`#E2E8F0` 边框、`#2563EB` 主按钮。
+- 表格、按钮、输入框统一压缩到更适合高频操作的密度：表格 13px、表头 12px、按钮/输入框约 32px-36px。
+- 前端界面范围内清理旧系统介绍和旧品牌文案，例如“FBA 备货生产管理系统”“FBA 备货需求”等页面展示文案。
+- 新增 `/data-dashboard` 和 `/ai-assistant` 轻量占位页，避免新菜单点击后直接 404；具体业务内容留到后续阶段接入。
+
+本轮 logo 引用：
+
+- `https://wrxqiaphfxihjclqnged.supabase.co/storage/v1/object/public/public-assets/emk_logo.png`
+
+验证：
+
+- 已运行 `npm run typecheck`，通过。
+- 已运行 `npm run build`，通过。
+
+后续建议：
+
+- 第二阶段再逐步把备货、生产、采购、库存等页面的旧表格和筛选区套到新公共组件上。
+- `/data-dashboard` 和 `/ai-assistant` 当前只是占位页，后续需要按真实业务逐步接入数据和功能。
+
+### 3.10 渐进式 UI/UX 重构第二阶段：首页 / 工作台（2026-05-28）
+
+本轮把 `/dashboard` 从偏 Dashboard 展示继续改成实际 ERP 工作台，没有修改数据库结构，没有关闭 RLS，也没有改业务写入逻辑。
+
+已完成：
+
+- 首页继续复用第一阶段的 `PageHeader`、`DataTable`、`StatusBadge`、`DetailDrawer` 和统一后台外壳。
+- 顶部改为 4 个固定快照卡片：待排产、生产中、待采购、库存预警。卡片统一尺寸，窄屏自动换行。
+- 删除旧首页的大图表、业务趋势、花哨分析卡片和大面积介绍文字，不再展示“跨境电商工贸一体管理系统”“备货、生产、采购、库存协同”等旧首页文案。
+- KPI 下方新增通栏阻断性预警 Banner，按库存预警、交期延误、采购延迟组合统计，右侧提供“立即处理”入口。
+- 中间新增 4 列核心业务管道：运营待办、厂长排产、采购跟踪、仓库收发。每个管道项可点击，优先打开右侧详情抽屉，抽屉内展示对应的前 5 条真实业务记录，并提供“查看全部”跳转。
+- 底部保留紧凑三列表：最近备货单、最近生产任务、最近采购单，每块最多 5 行，字段控制为单号、状态、日期，点击单号跳转到对应业务页面。
+- 响应式规则：1366px 下保持无页面横向滚动；宽度不足时 KPI、四列管道、最近列表会自动变成两列或一列。
+
+数据来源：
+
+- 快照和管道统计仍基于现有 `get_dashboard_summary` RPC 和当前真实状态字段。
+- 待排产读取 `fba_replenishment_requests.status in ('submitted', 'accepted')`。
+- 生产中读取 `production_orders.status = 'in_progress'`。
+- 待采购组合缺料 `material_requirements.status = 'shortage'` 和未下单采购 `purchase_orders.status = 'draft'`。
+- 库存预警组合低库存辅料和成品库存异常，继续沿用 `inventory_items.quantity_on_hand - reserved_quantity` 与 `safety_stock_quantity` 的当前判断。
+- 最近业务列表分别读取备货单、生产任务、采购单现有表，每块只取首页需要的 5 行。
+
+本次修改文件：
+
+- `src/lib/api/dashboard.ts`
+- `src/app/(app)/dashboard/page.tsx`
+- `src/app/globals.css`
+- `PROJECT_NOTES.md`
+
+验证：
+
+- 已运行 `npm run typecheck`，通过。
+- 已运行 `npm run build`，通过。
+
 ## 10. 给后续 Codex 的开发提醒
 
 后续开发前请先阅读 `PROJECT_NOTES.md`。

@@ -1334,7 +1334,7 @@ export default function AdminSkusPage() {
         title="确认删除 SKU"
         description={
           <p>
-            删除前会检查 BOM、FBA 备货、生产任务、物料需求、采购单、当前库存和库存流水。只要已有任何引用，就不能物理删除，建议改为停用。
+            删除前会检查 BOM、备货单、生产任务、物料需求、采购单、当前库存和库存流水。只要已有任何引用，就不能物理删除，建议改为停用。
           </p>
         }
         confirmLabel="确认删除"

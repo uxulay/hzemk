@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { XIcon } from "@/components/ui/icons";
 
 type DrawerFormProps = {
   open: boolean;
@@ -9,6 +10,10 @@ type DrawerFormProps = {
   children: ReactNode;
   footer?: ReactNode;
   onClose: () => void;
+  width?: "md" | "lg";
+  onSave?: () => void;
+  onSaveAndContinue?: () => void;
+  saving?: boolean;
 };
 
 export function DrawerForm({
@@ -17,33 +22,63 @@ export function DrawerForm({
   description,
   children,
   footer,
-  onClose
+  onClose,
+  width = "md",
+  onSave,
+  onSaveAndContinue,
+  saving = false
 }: DrawerFormProps) {
   if (!open) {
     return null;
   }
 
   return (
-    <div className="drawerBackdrop" role="presentation" onMouseDown={onClose}>
+    <div className="drawerBackdrop" role="presentation">
       <aside
-        className="drawerPanel"
+        className={`drawerPanel drawerPanel-${width}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="drawer-title"
-        onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="detailHeader">
           <div>
-            <p className="eyebrow">表单</p>
             <h3 id="drawer-title">{title}</h3>
             {description ? <p className="drawerDescription">{description}</p> : null}
           </div>
-          <button className="secondaryButton" type="button" onClick={onClose}>
-            关闭
+          <button className="iconButton" type="button" onClick={onClose} aria-label="关闭">
+            <XIcon size={18} />
           </button>
         </div>
         <div className="drawerBody">{children}</div>
-        {footer ? <div className="modalFooter">{footer}</div> : null}
+        <div className="modalFooter drawerFooter">
+          {footer ?? (
+            <>
+              <button className="secondaryButton" type="button" onClick={onClose}>
+                取消
+              </button>
+              {onSaveAndContinue ? (
+                <button
+                  className="secondaryButton"
+                  type="button"
+                  onClick={onSaveAndContinue}
+                  disabled={saving}
+                >
+                  保存并继续新增
+                </button>
+              ) : null}
+              {onSave ? (
+                <button
+                  className="primaryButton"
+                  type="button"
+                  onClick={onSave}
+                  disabled={saving}
+                >
+                  保存
+                </button>
+              ) : null}
+            </>
+          )}
+        </div>
       </aside>
     </div>
   );

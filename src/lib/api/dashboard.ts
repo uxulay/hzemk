@@ -56,6 +56,55 @@ export type RoleDashboardData = {
   quickLinks: DashboardQuickLink[];
   listSections: DashboardListSection[];
   exceptions: DashboardException[];
+  workbench: DashboardWorkbenchData;
+};
+
+export type DashboardKpiCard = {
+  id: string;
+  title: string;
+  value: number;
+  unit: string;
+  hint: string;
+  href: string;
+  tone: DashboardTone;
+};
+
+export type DashboardPipelineItem = {
+  id: string;
+  label: string;
+  count: number;
+  href: string;
+  tone: DashboardTone;
+  items: DashboardTodoItem[];
+  emptyText: string;
+};
+
+export type DashboardPipelineSection = {
+  id: string;
+  title: string;
+  items: DashboardPipelineItem[];
+};
+
+export type DashboardRecentSection = {
+  id: string;
+  title: string;
+  href: string;
+  rows: DashboardTodoItem[];
+};
+
+export type DashboardAlertSummary = {
+  total: number;
+  parts: Array<{
+    label: string;
+    count: number;
+  }>;
+};
+
+export type DashboardWorkbenchData = {
+  kpiCards: DashboardKpiCard[];
+  alertSummary: DashboardAlertSummary;
+  pipelines: DashboardPipelineSection[];
+  recentSections: DashboardRecentSection[];
 };
 
 type MaybeRelation<T> = T | T[] | null;
@@ -1340,10 +1389,275 @@ function totalCards(cards: DashboardSummaryCard[]) {
   return cards.reduce((sum, item) => sum + item.value, 0);
 }
 
+async function getDashboardWorkbench(counts: Awaited<ReturnType<typeof getCounts>>) {
+  const [
+    pendingPlanning,
+    activeProduction,
+    shortageMaterials,
+    draftPurchaseOrders,
+    orderedPurchaseOrders,
+    partialPurchaseOrders,
+    overduePurchaseOrders,
+    lowStockMaterials,
+    overdueFba,
+    overdueProduction,
+    purchaseInbound,
+    productionInbound,
+    fbaOutbound,
+    recentFba,
+    recentProduction,
+    recentPurchase,
+    recentAdjustments
+  ] = await Promise.all([
+    getFbaRequestsByStatus(["submitted", "accepted"], "读取工作台待排产备货需求", 5),
+    getProductionOrdersByStatus(["in_progress"], "读取工作台生产中任务", 5),
+    getMaterialRequirementsByStatus(["shortage"], "读取工作台缺料需求", 5),
+    getPurchaseOrdersByStatus(["draft"], "读取工作台待下单采购单", 5),
+    getPurchaseOrdersByStatus(["ordered"], "读取工作台已下单未到货采购单", 5),
+    getPurchaseOrdersByStatus(["partially_received"], "读取工作台部分到货采购单", 5),
+    getOverduePurchaseOrders(5),
+    getLowStockMaterials(5),
+    getOverdueFbaRequests(5),
+    getOverdueProductionOrders(5),
+    getPurchaseOrdersByStatus(["ordered", "partially_received"], "读取工作台待采购入库", 5),
+    getPendingProductionInboundOrders(5),
+    getFbaRequestsByStatus(["completed"], "读取工作台待备货出库", 5),
+    getFbaRequestsByStatus(["submitted", "accepted", "in_production", "completed"], "读取工作台最近备货单", 5),
+    getProductionOrdersByStatus(["planned", "material_pending", "in_progress", "completed"], "读取工作台最近生产任务", 5),
+    getPurchaseOrdersByStatus(["draft", "ordered", "partially_received", "received"], "读取工作台最近采购单", 5),
+    getRecentAdjustmentTransactions(5)
+  ]);
+
+  const stockWarningCount = counts.lowStockMaterials + counts.abnormalFinishedStock;
+  const alertParts = [
+    { label: "库存预警", count: stockWarningCount },
+    { label: "交期延误", count: counts.overdueFba + counts.overdueProduction },
+    { label: "采购延迟", count: counts.overduePurchase }
+  ];
+
+  return {
+    kpiCards: [
+      {
+        id: "pending-planning",
+        title: "待排产",
+        value: counts.fbaSubmitted + counts.fbaAccepted,
+        unit: "单",
+        hint: "待接单或待建生产任务",
+        href: "/production/planning",
+        tone: "info"
+      },
+      {
+        id: "production-active",
+        title: "生产中",
+        value: counts.productionInProgress,
+        unit: "单",
+        hint: "正在生产的任务",
+        href: "/production/orders",
+        tone: "warning"
+      },
+      {
+        id: "purchase-pending",
+        title: "待采购",
+        value: counts.shortageMaterials + counts.purchaseDraft,
+        unit: "项",
+        hint: "缺料与未下单",
+        href: "/purchase/orders",
+        tone: "danger"
+      },
+      {
+        id: "stock-warning",
+        title: "库存预警",
+        value: stockWarningCount,
+        unit: "条",
+        hint: "低库存和异常库存",
+        href: "/inventory/overview",
+        tone: "warning"
+      }
+    ],
+    alertSummary: {
+      total: alertParts.reduce((sum, item) => sum + item.count, 0),
+      parts: alertParts
+    },
+    pipelines: [
+      {
+        id: "operations",
+        title: "运营待办",
+        items: [
+          {
+            id: "confirm-replenishment",
+            label: "待确认备货需求",
+            count: counts.fbaSubmitted,
+            href: "/production/planning",
+            tone: "info",
+            items: pendingPlanning.map(toFbaTodo),
+            emptyText: "暂无待确认备货需求"
+          },
+          {
+            id: "low-stock-suggestion",
+            label: "低库存补货建议",
+            count: counts.lowStockMaterials,
+            href: "/inventory/materials",
+            tone: "warning",
+            items: lowStockMaterials.map(toInventoryTodo),
+            emptyText: "暂无低库存补货建议"
+          },
+          {
+            id: "overdue-outbound",
+            label: "超期未出库单",
+            count: counts.overdueFba,
+            href: "/inventory/fba-outbound",
+            tone: "danger",
+            items: overdueFba.map(toFbaTodo),
+            emptyText: "暂无超期未出库单"
+          }
+        ]
+      },
+      {
+        id: "production",
+        title: "厂长排产",
+        items: [
+          {
+            id: "pending-production-plan",
+            label: "待排产单",
+            count: counts.fbaSubmitted + counts.fbaAccepted,
+            href: "/production/planning",
+            tone: "info",
+            items: pendingPlanning.map(toFbaTodo),
+            emptyText: "暂无待排产单"
+          },
+          {
+            id: "shortage-production",
+            label: "缺料生产单",
+            count: counts.shortageMaterials,
+            href: "/materials/requirements",
+            tone: "danger",
+            items: shortageMaterials.map(toMaterialTodo),
+            emptyText: "暂无缺料生产单"
+          },
+          {
+            id: "active-production",
+            label: "生产中任务",
+            count: counts.productionInProgress,
+            href: "/production/orders",
+            tone: "warning",
+            items: activeProduction.map(toProductionTodo),
+            emptyText: "暂无生产中任务"
+          }
+        ]
+      },
+      {
+        id: "purchase",
+        title: "采购跟踪",
+        items: [
+          {
+            id: "pending-material-order",
+            label: "待下单物料",
+            count: counts.shortageMaterials + counts.purchaseDraft,
+            href: "/purchase/orders",
+            tone: "danger",
+            items: [...shortageMaterials.map(toMaterialTodo), ...draftPurchaseOrders.map(toPurchaseTodo)].slice(0, 5),
+            emptyText: "暂无待下单物料"
+          },
+          {
+            id: "ordered-not-arrived",
+            label: "已下单未到货",
+            count: counts.purchaseOrdered,
+            href: "/purchase/orders",
+            tone: "info",
+            items: orderedPurchaseOrders.map(toPurchaseTodo),
+            emptyText: "暂无已下单未到货采购单"
+          },
+          {
+            id: "partial-arrived",
+            label: "部分到货",
+            count: partialPurchaseOrders.length,
+            href: "/purchase/orders",
+            tone: "warning",
+            items: partialPurchaseOrders.map(toPurchaseTodo),
+            emptyText: "暂无部分到货采购单"
+          },
+          {
+            id: "purchase-overdue",
+            label: "采购延期",
+            count: counts.overduePurchase,
+            href: "/purchase/orders",
+            tone: "danger",
+            items: overduePurchaseOrders.map(toPurchaseTodo),
+            emptyText: "暂无采购延期"
+          }
+        ]
+      },
+      {
+        id: "warehouse",
+        title: "仓库收发",
+        items: [
+          {
+            id: "purchase-inbound",
+            label: "待采购入库",
+            count: counts.purchaseOrdered,
+            href: "/inventory/inbound",
+            tone: "info",
+            items: purchaseInbound.map(toPurchaseTodo),
+            emptyText: "暂无待采购入库"
+          },
+          {
+            id: "production-inbound",
+            label: "待生产入库",
+            count: counts.pendingProductionInbound,
+            href: "/inventory/inbound",
+            tone: "warning",
+            items: productionInbound.map(toProductionTodo),
+            emptyText: "暂无待生产入库"
+          },
+          {
+            id: "replenishment-outbound",
+            label: "待备货出库",
+            count: counts.fbaCompleted,
+            href: "/inventory/fba-outbound",
+            tone: "success",
+            items: fbaOutbound.map(toFbaTodo),
+            emptyText: "暂无待备货出库"
+          },
+          {
+            id: "adjustment-review",
+            label: "库存调整待审核",
+            count: recentAdjustments.length,
+            href: "/inventory/adjustments",
+            tone: "neutral",
+            items: recentAdjustments.map(toTransactionTodo),
+            emptyText: "暂无库存调整记录"
+          }
+        ]
+      }
+    ],
+    recentSections: [
+      {
+        id: "recent-fba",
+        title: "最近备货单",
+        href: "/replenishment",
+        rows: recentFba.map(toFbaTodo).slice(0, 5)
+      },
+      {
+        id: "recent-production",
+        title: "最近生产任务",
+        href: "/production/orders",
+        rows: recentProduction.map(toProductionTodo).slice(0, 5)
+      },
+      {
+        id: "recent-purchase",
+        title: "最近采购单",
+        href: "/purchase/orders",
+        rows: recentPurchase.map(toPurchaseTodo).slice(0, 5)
+      }
+    ]
+  } satisfies DashboardWorkbenchData;
+}
+
 export async function getRoleDashboard(
   role: UserRole
 ): Promise<RoleDashboardData> {
   const counts = await getCounts();
+  const workbench = await getDashboardWorkbench(counts);
 
   if (role === "operations") {
     const [
@@ -1416,7 +1730,8 @@ export async function getRoleDashboard(
         exception("overdue-fba", "已超期但还没 shipped 的备货单", counts.overdueFba, "/replenishment", "danger"),
         exception("stock-abnormal", "成品库存不足或被占用过多", counts.abnormalFinishedStock, "/inventory/products", "warning"),
         exception("overdue-fba-list", "最近超期备货单", overdueFba.length, "/replenishment", "danger")
-      ]
+      ],
+      workbench
     };
   }
 
@@ -1468,7 +1783,8 @@ export async function getRoleDashboard(
         exception("shortage", "缺料生产任务", counts.shortageMaterials, "/materials/requirements", "danger"),
         exception("overdue-production", "生产中但已超期", counts.overdueProduction, "/production/orders", "danger"),
         exception("overdue-production-list", "最近超期生产任务", overdueProduction.length, "/production/orders", "danger")
-      ]
+      ],
+      workbench
     };
   }
 
@@ -1516,7 +1832,8 @@ export async function getRoleDashboard(
         exception("no-supplier", "未设置默认供应商的辅料", counts.materialsWithoutSupplier, "/admin/materials", "warning"),
         exception("inactive-supplier", "停用供应商仍被辅料引用", counts.inactiveSupplierReferences, "/admin/materials", "danger"),
         exception("overdue-po-list", "最近超期采购单", overduePurchaseOrders.length, "/purchase/orders", "danger")
-      ]
+      ],
+      workbench
     };
   }
 
@@ -1565,7 +1882,8 @@ export async function getRoleDashboard(
       exceptions: [
         exception("low-stock-material", "辅料低库存", counts.lowStockMaterials, "/inventory/materials", "warning"),
         exception("stock-abnormal", "成品库存异常", counts.abnormalFinishedStock, "/inventory/products", "danger")
-      ]
+      ],
+      workbench
     };
   }
 
@@ -1623,6 +1941,7 @@ export async function getRoleDashboard(
       exception("products-no-brand", "未设置品牌的产品", counts.productsWithoutBrand, "/admin/products", "warning"),
       exception("materials-no-supplier", "未设置默认供应商的辅料", counts.materialsWithoutSupplier, "/admin/materials", "warning"),
       exception("low-stock-material", "低库存辅料", counts.lowStockMaterials, "/inventory/materials", "warning")
-    ]
+    ],
+    workbench
   };
 }

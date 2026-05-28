@@ -576,7 +576,7 @@ export default function AdminProductsPage() {
       <PageHeader
         eyebrow="基础资料"
         title="产品管理"
-        description="管理产品 SPU、图片、类目、状态和关联 SKU。产品是 SKU、BOM 和 FBA 备货需求的上级资料。"
+        description="管理产品 SPU、图片、类目、状态和关联 SKU。"
         actions={
           <div className="rowActions">
             <button

@@ -1,17 +1,84 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
+import { usePathname } from "next/navigation";
 import { GlobalSearch } from "@/components/GlobalSearch";
 import { NotificationDropdown } from "@/components/NotificationDropdown";
 import { useMockRole } from "@/components/auth/mock-role-provider";
+import { ChevronRightIcon, MenuIcon } from "@/components/ui/icons";
+import { getNavigationForRole } from "@/lib/navigation";
 import { roleLabels, type UserRole } from "@/types/roles";
 
 const roleOptions = Object.entries(roleLabels) as Array<[UserRole, string]>;
 
-export function Header() {
+type HeaderProps = {
+  sidebarCollapsed: boolean;
+  onToggleSidebar: () => void;
+};
+
+export function Header({ sidebarCollapsed, onToggleSidebar }: HeaderProps) {
   const { user, setRole } = useMockRole();
+  const pathname = usePathname();
+  const [currentUrl, setCurrentUrl] = useState(pathname);
+  const groups = useMemo(() => getNavigationForRole(user.role), [user.role]);
+
+  useEffect(() => {
+    setCurrentUrl(`${window.location.pathname}${window.location.search}`);
+  }, [pathname]);
+  const breadcrumb = useMemo(() => {
+    const links = groups.flatMap((group) => {
+      const own = group.href
+        ? [{ group: group.section ?? group.label, label: group.label, href: group.href }]
+        : [];
+
+      return [
+        ...own,
+        ...group.items.map((item) => ({
+          group: group.label,
+          label: item.label,
+          href: item.href
+        }))
+      ];
+    });
+
+    return (
+      links
+        .sort((first, second) => second.href.length - first.href.length)
+        .find((item) => {
+          if (item.href.includes("?")) {
+            return currentUrl === item.href;
+          }
+
+          return pathname === item.href || pathname.startsWith(`${item.href}/`);
+        }) ?? {
+        group: "工作台",
+        label: "工作台",
+        href: "/dashboard"
+      }
+    );
+  }, [currentUrl, groups, pathname]);
 
   return (
     <header className="topHeader">
+      <div className="topHeaderLeft">
+        <button
+          className="iconButton headerMenuButton"
+          type="button"
+          aria-label={sidebarCollapsed ? "展开菜单" : "折叠菜单"}
+          onClick={onToggleSidebar}
+        >
+          <MenuIcon size={18} />
+        </button>
+        <nav className="breadcrumb" aria-label="当前位置">
+          <span>{breadcrumb.group}</span>
+          {breadcrumb.group !== breadcrumb.label ? (
+            <>
+              <ChevronRightIcon size={14} />
+              <strong>{breadcrumb.label}</strong>
+            </>
+          ) : null}
+        </nav>
+      </div>
       <div className="topHeaderActions">
         <GlobalSearch />
         <NotificationDropdown />

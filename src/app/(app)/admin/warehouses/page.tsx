@@ -1051,7 +1051,7 @@ export default function AdminWarehousesPage() {
         title="确认删除仓库"
         description={
           <p>
-            删除前会检查当前库存、库存流水、FBA 备货目标仓和采购单引用。已有任何业务记录的仓库不能物理删除，建议改为停用。
+            删除前会检查当前库存、库存流水、备货目标仓和采购单引用。已有任何业务记录的仓库不能物理删除，建议改为停用。
           </p>
         }
         confirmLabel="确认删除"
