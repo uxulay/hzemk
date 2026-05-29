@@ -20,6 +20,7 @@ import {
   getFbaReplenishmentSkuOptions,
   getReplenishmentRequestsPage,
   searchFbaReplenishmentSkuOptions,
+  updateFbaReplenishmentDocument,
   type CreateFbaReplenishmentDocumentInput,
   type FbaReplenishmentRequest,
   type FbaReplenishmentRequestItem,
@@ -34,6 +35,11 @@ import {
 } from "@/lib/utils/csv";
 import { getBrandCodeName } from "@/lib/brand-utils";
 import { DEFAULT_PAGE_SIZE } from "@/lib/utils/pagination";
+import {
+  formatMarketplace,
+  marketplaceOptions,
+  normalizeMarketplaceValue
+} from "@/lib/constants/marketplaces";
 
 type StatusFilter = FbaRequestStatus | "all";
 
@@ -45,6 +51,7 @@ type CreateRequestFormState = {
 };
 
 type DraftReplenishmentItem = {
+  itemId?: string;
   skuId: string;
   productId: string | null;
   productName: string;
@@ -131,6 +138,15 @@ const initialCreateForm: CreateRequestFormState = {
   targetShipDate: "",
   notes: ""
 };
+
+function getProductKey(productId: string | null | undefined, skuId: string) {
+  return productId || `sku:${skuId}`;
+}
+
+function getDraftSpuCount(items: DraftReplenishmentItem[]) {
+  return new Set(items.map((item) => getProductKey(item.productId, item.skuId)))
+    .size;
+}
 
 const statusOptions: { value: StatusFilter; label: string }[] = [
   { value: "all", label: "全部状态" },
@@ -280,6 +296,14 @@ function parseNotes(notes: string | null) {
   };
 }
 
+function getRequestMarketplaceValue(request: FbaReplenishmentRequest) {
+  return normalizeMarketplaceValue(parseNotes(request.notes).amazonSite);
+}
+
+function getRequestMarketplaceLabel(request: FbaReplenishmentRequest) {
+  return formatMarketplace(parseNotes(request.notes).amazonSite);
+}
+
 function getRequestBrandSummary(request: FbaReplenishmentRequest) {
   const brandLabels = new Set(
     request.items
@@ -370,6 +394,41 @@ function groupRequestItemsByProduct(items: FbaReplenishmentRequestItem[]) {
   return [...groups.values()];
 }
 
+function groupDraftItemsByProduct(items: DraftReplenishmentItem[]) {
+  const groups = new Map<
+    string,
+    {
+      productName: string;
+      productCode: string;
+      brandLabel: string;
+      brandId: string | null;
+      imageUrl: string | null;
+      items: DraftReplenishmentItem[];
+    }
+  >();
+
+  for (const item of items) {
+    const key = getProductKey(item.productId, item.skuId);
+    const current = groups.get(key);
+
+    if (current) {
+      current.items.push(item);
+      continue;
+    }
+
+    groups.set(key, {
+      productName: item.productName,
+      productCode: item.productCode,
+      brandLabel: item.brandLabel,
+      brandId: item.brandId,
+      imageUrl: item.productImageUrl,
+      items: [item]
+    });
+  }
+
+  return [...groups.values()];
+}
+
 function formatToday() {
   const now = new Date();
   const pad = (value: number) => String(value).padStart(2, "0");
@@ -428,6 +487,46 @@ function createDraftItemFromSku(
   };
 }
 
+function createDraftItemFromRequestItem(
+  item: FbaReplenishmentRequestItem,
+  currentStock: number | undefined
+): DraftReplenishmentItem {
+  const product = item.product ?? item.sku?.product ?? null;
+
+  return {
+    itemId: item.id,
+    skuId: item.sku_id,
+    productId: item.product_id ?? item.sku?.product_id ?? null,
+    productName: product?.name ?? "未关联产品",
+    productCode: product?.product_code ?? "-",
+    brandId: product?.brand?.id ?? null,
+    brandLabel: getBrandCodeName(product?.brand),
+    productImageUrl: product?.product_image_url ?? null,
+    skuName: item.sku?.sku_name ?? "-",
+    skuCode: item.sku?.sku_code ?? "-",
+    specs: item.sku?.specs ?? null,
+    currentStock: currentStock ?? 0,
+    quantity: String(item.requested_quantity),
+    remark: item.remark ?? "",
+    hasActiveBom: true
+  };
+}
+
+function mergeQuantityText(first: string, second: string) {
+  const cleanFirst = first.trim();
+  const cleanSecond = second.trim();
+
+  if (!cleanFirst) {
+    return cleanSecond;
+  }
+
+  if (!cleanSecond) {
+    return cleanFirst;
+  }
+
+  return String(Number(cleanFirst || 0) + Number(cleanSecond || 0));
+}
+
 function mergeRemarks(first: string, second: string) {
   const cleanFirst = first.trim();
   const cleanSecond = second.trim();
@@ -468,7 +567,7 @@ function mergeDraftItems(
     existingMergeCount += 1;
     itemBySkuId.set(item.skuId, {
       ...existing,
-      quantity: String(Number(existing.quantity || 0) + Number(item.quantity || 0)),
+      quantity: mergeQuantityText(existing.quantity, item.quantity),
       remark: mergeRemarks(existing.remark, item.remark)
     });
   });
@@ -511,6 +610,10 @@ export default function ReplenishmentPage() {
   const [targetShipDateEnd, setTargetShipDateEnd] = useState("");
   const [selectedRequest, setSelectedRequest] =
     useState<FbaReplenishmentRequest | null>(null);
+  const [detailEditMode, setDetailEditMode] = useState(false);
+  const [detailDraftItems, setDetailDraftItems] = useState<
+    DraftReplenishmentItem[]
+  >([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [createForm, setCreateForm] =
     useState<CreateRequestFormState>(initialCreateForm);
@@ -532,6 +635,7 @@ export default function ReplenishmentPage() {
   const [loading, setLoading] = useState(true);
   const [loadingOptions, setLoadingOptions] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [savingDetail, setSavingDetail] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [createErrorMessage, setCreateErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -570,6 +674,8 @@ export default function ReplenishmentPage() {
         setLoading(true);
         setErrorMessage("");
         setSelectedRequest(null);
+        setDetailEditMode(false);
+        setDetailDraftItems([]);
 
         const data = await getReplenishmentRequestsPage({
           page,
@@ -616,7 +722,7 @@ export default function ReplenishmentPage() {
     let cancelled = false;
     const timer = setTimeout(async () => {
       try {
-        const skuData = await searchFbaReplenishmentSkuOptions(pickerSearch, 20);
+        const skuData = await searchFbaReplenishmentSkuOptions(pickerSearch, 100);
 
         if (!cancelled) {
           setSkuOptions(skuData);
@@ -672,6 +778,7 @@ export default function ReplenishmentPage() {
     return groups;
   }, [skuOptions]);
   const draftSkuCount = draftItems.length;
+  const draftSpuCount = useMemo(() => getDraftSpuCount(draftItems), [draftItems]);
   const draftTotalQuantity = useMemo(
     () =>
       draftItems.reduce((sum, item) => {
@@ -680,6 +787,20 @@ export default function ReplenishmentPage() {
         return Number.isFinite(quantity) && quantity > 0 ? sum + quantity : sum;
       }, 0),
     [draftItems]
+  );
+  const detailSpuCount = useMemo(
+    () => getDraftSpuCount(detailDraftItems),
+    [detailDraftItems]
+  );
+  const detailSkuCount = detailDraftItems.length;
+  const detailTotalQuantity = useMemo(
+    () =>
+      detailDraftItems.reduce((sum, item) => {
+        const quantity = Number(item.quantity);
+
+        return Number.isFinite(quantity) && quantity > 0 ? sum + quantity : sum;
+      }, 0),
+    [detailDraftItems]
   );
   const filteredPickerProducts = useMemo(() => {
     const keyword = pickerSearch.trim().toLowerCase();
@@ -720,6 +841,10 @@ export default function ReplenishmentPage() {
   const activePickerSkus = activePickerProduct
     ? skusByProductId.get(activePickerProduct.id) ?? []
     : [];
+  const selectedPickerSkuCount = useMemo(
+    () => Object.values(pickerSkuState).filter((state) => state.checked).length,
+    [pickerSkuState]
+  );
 
   useEffect(() => {
     setPage(1);
@@ -730,6 +855,8 @@ export default function ReplenishmentPage() {
       setLoading(true);
       setErrorMessage("");
       setSelectedRequest(null);
+      setDetailEditMode(false);
+      setDetailDraftItems([]);
 
       const data = await getReplenishmentRequestsPage({
         page,
@@ -758,6 +885,99 @@ export default function ReplenishmentPage() {
     setCreateErrorMessage("");
     setCreateNoticeMessage("");
     setSuccessMessage("");
+  };
+
+  const openRequestDetail = (request: FbaReplenishmentRequest) => {
+    setSelectedRequest(request);
+    setDetailEditMode(false);
+    setDetailDraftItems(
+      request.items.map((item) =>
+        createDraftItemFromRequestItem(item, skuStockById.get(item.sku_id))
+      )
+    );
+    setCreateErrorMessage("");
+    setSuccessMessage("");
+  };
+
+  const closeRequestDetail = () => {
+    if (savingDetail) {
+      return;
+    }
+
+    setSelectedRequest(null);
+    setDetailEditMode(false);
+    setDetailDraftItems([]);
+  };
+
+  const startDetailEdit = () => {
+    if (!selectedRequest) {
+      return;
+    }
+
+    setDetailDraftItems(
+      selectedRequest.items.map((item) =>
+        createDraftItemFromRequestItem(item, skuStockById.get(item.sku_id))
+      )
+    );
+    setDetailEditMode(true);
+    setCreateErrorMessage("");
+  };
+
+  const cancelDetailEdit = () => {
+    if (!selectedRequest) {
+      return;
+    }
+
+    setDetailDraftItems(
+      selectedRequest.items.map((item) =>
+        createDraftItemFromRequestItem(item, skuStockById.get(item.sku_id))
+      )
+    );
+    setDetailEditMode(false);
+    setCreateErrorMessage("");
+  };
+
+  const saveDetailChanges = async () => {
+    if (!selectedRequest) {
+      return;
+    }
+
+    const invalidItem = detailDraftItems.find(
+      (item) => !isPositiveNumberText(item.quantity)
+    );
+
+    if (detailDraftItems.length === 0) {
+      setCreateErrorMessage("至少要保留一条 SKU 明细。");
+      return;
+    }
+
+    if (invalidItem) {
+      setCreateErrorMessage(`SKU ${invalidItem.skuCode} 的备货数量必须是大于 0 的整数。`);
+      return;
+    }
+
+    try {
+      setSavingDetail(true);
+      setCreateErrorMessage("");
+      await updateFbaReplenishmentDocument({
+        requestId: selectedRequest.id,
+        notes: selectedRequest.notes,
+        items: detailDraftItems.map((item) => ({
+          itemId: item.itemId,
+          productId: item.productId,
+          skuId: item.skuId,
+          requestedQuantity: Number(item.quantity),
+          remark: item.remark
+        }))
+      });
+      setDetailEditMode(false);
+      setSuccessMessage(`保存成功：${selectedRequest.request_no}`);
+      await refreshRequests();
+    } catch (error) {
+      setCreateErrorMessage(getErrorMessage(error));
+    } finally {
+      setSavingDetail(false);
+    }
   };
 
   const updateCreateForm = (field: keyof CreateRequestFormState, value: string) => {
@@ -822,6 +1042,24 @@ export default function ReplenishmentPage() {
     setCreateNoticeMessage("");
   };
 
+  const updateDetailDraftItem = (
+    skuId: string,
+    field: "quantity" | "remark",
+    value: string
+  ) => {
+    setDetailDraftItems((current) =>
+      current.map((item) =>
+        item.skuId === skuId
+          ? {
+              ...item,
+              [field]: value
+            }
+          : item
+      )
+    );
+    setCreateErrorMessage("");
+  };
+
   const clearDraftItems = () => {
     if (draftItems.length === 0) {
       return;
@@ -873,19 +1111,17 @@ export default function ReplenishmentPage() {
       return;
     }
 
-    const invalidRow = selectedRows.find(
-      (row) => !row.sku || !isPositiveNumberText(row.quantity)
-    );
+    const invalidRow = selectedRows.find((row) => !row.sku);
 
     if (invalidRow) {
-      setCreateErrorMessage("勾选的 SKU 备货数量必须是大于 0 的整数。");
+      setCreateErrorMessage("勾选的 SKU 数据已失效，请重新搜索后再添加。");
       return;
     }
 
     const incomingItems = selectedRows.map((row) =>
       createDraftItemFromSku(
         row.sku as FbaReplenishmentSkuOption,
-        Number(row.quantity),
+        row.quantity.trim(),
         row.remark
       )
     );
@@ -1194,13 +1430,23 @@ export default function ReplenishmentPage() {
   };
 
   const platformOptions = useMemo(() => {
-    const platforms = new Set(
-      requests
-        .map((request) => parseNotes(request.notes).amazonSite)
-        .filter((platform) => platform && platform !== "-")
+    const platforms = new Map<string, string>(
+      marketplaceOptions.map((option) => [option.value, option.label])
     );
 
-    return ["all", ...[...platforms].sort((first, second) => first.localeCompare(second))];
+    requests
+      .map(getRequestMarketplaceValue)
+      .filter(Boolean)
+      .forEach((platform) => {
+        if (!platforms.has(platform)) {
+          platforms.set(platform, formatMarketplace(platform));
+        }
+      });
+
+    return [
+      { value: "all", label: "全部平台" },
+      ...[...platforms.entries()].map(([value, label]) => ({ value, label }))
+    ];
   }, [requests]);
   const visibleRequests = useMemo(() => {
     if (platformFilter === "all") {
@@ -1208,21 +1454,26 @@ export default function ReplenishmentPage() {
     }
 
     return requests.filter(
-      (request) => parseNotes(request.notes).amazonSite === platformFilter
+      (request) => getRequestMarketplaceValue(request) === platformFilter
     );
   }, [platformFilter, requests]);
   const skuStockById = useMemo(
     () => new Map(skuOptions.map((sku) => [sku.id, sku.current_stock])),
     [skuOptions]
   );
+  const spuCountByRequest = (request: FbaReplenishmentRequest) =>
+    request.product_count || getDraftSpuCount(
+      request.items.map((item) =>
+        createDraftItemFromRequestItem(item, skuStockById.get(item.sku_id))
+      )
+    );
   const getRequestSummary = (request: FbaReplenishmentRequest) => {
     const items = request.items.slice(0, 2);
     const labels = items.map((item) => {
       const product = item.product ?? item.sku?.product ?? null;
-      const productName = product?.name ?? "未关联产品";
       const skuCode = item.sku?.sku_code ?? "-";
 
-      return `${productName} / ${skuCode}`;
+      return `${product?.name ?? "未关联产品"} / ${skuCode}`;
     });
     const extraCount = Math.max(0, request.items.length - labels.length);
 
@@ -1261,6 +1512,7 @@ export default function ReplenishmentPage() {
       [
         { key: "备货单号", label: "备货单号" },
         { key: "平台", label: "平台" },
+        { key: "SPU数", label: "SPU 数" },
         { key: "SKU数", label: "SKU 数" },
         { key: "总数量", label: "总数量" },
         { key: "运营", label: "运营" },
@@ -1269,7 +1521,8 @@ export default function ReplenishmentPage() {
       ],
       visibleRequests.map((request) => ({
         备货单号: request.request_no,
-        平台: parseNotes(request.notes).amazonSite,
+        平台: getRequestMarketplaceLabel(request),
+        SPU数: String(spuCountByRequest(request)),
         SKU数: String(request.sku_count),
         总数量: String(request.total_requested_quantity),
         运营: request.requested_by_profile?.full_name ?? "",
@@ -1282,12 +1535,13 @@ export default function ReplenishmentPage() {
     {
       key: "request_no",
       title: "备货单号",
-      width: 150,
+      width: 132,
+      mobilePriority: "title",
       render: (request) => (
         <button
           className="linkButton"
           type="button"
-          onClick={() => setSelectedRequest(request)}
+          onClick={() => openRequestDetail(request)}
         >
           {request.request_no}
         </button>
@@ -1296,12 +1550,14 @@ export default function ReplenishmentPage() {
     {
       key: "platform",
       title: "平台",
-      width: 92,
-      render: (request) => parseNotes(request.notes).amazonSite
+      width: 86,
+      mobilePriority: "meta",
+      render: (request) => getRequestMarketplaceLabel(request)
     },
     {
       key: "summary",
       title: "产品/SKU 汇总",
+      mobilePriority: "hidden",
       render: (request) => {
         const summary = getRequestSummary(request);
         const firstItem = request.items[0];
@@ -1318,31 +1574,48 @@ export default function ReplenishmentPage() {
       }
     },
     {
-      key: "quantity",
-      title: "SKU数 / 总数量",
-      width: 130,
-      render: (request) => (
-        <span className="metricText">
-          {request.sku_count} / {formatQuantity(request.total_requested_quantity)}
-        </span>
-      )
+      key: "spu_count",
+      title: "SPU",
+      width: 64,
+      align: "right",
+      mobilePriority: "summary",
+      render: (request) => formatQuantity(spuCountByRequest(request))
+    },
+    {
+      key: "sku_count",
+      title: "SKU",
+      width: 64,
+      align: "right",
+      mobilePriority: "summary",
+      render: (request) => formatQuantity(request.sku_count)
+    },
+    {
+      key: "total_requested_quantity",
+      title: "总数",
+      width: 82,
+      align: "right",
+      mobilePriority: "summary",
+      render: (request) => formatQuantity(request.total_requested_quantity)
     },
     {
       key: "operator",
       title: "运营",
-      width: 92,
+      width: 78,
+      mobilePriority: "hidden",
       render: (request) => request.requested_by_profile?.full_name ?? "-"
     },
     {
       key: "target_ship_date",
       title: "计划发货",
-      width: 112,
+      width: 104,
+      mobilePriority: "meta",
       render: (request) => formatDate(request.target_ship_date)
     },
     {
       key: "status",
       title: "状态",
-      width: 98,
+      width: 90,
+      mobilePriority: "status",
       render: (request) => (
         <StatusBadge status={request.status} label={statusLabels[request.status]} />
       )
@@ -1350,15 +1623,18 @@ export default function ReplenishmentPage() {
     {
       key: "actions",
       title: "操作",
-      width: 150,
+      width: 132,
+      mobilePriority: "action",
       render: (request) => (
         <RowActions
-          onView={() => setSelectedRequest(request)}
+          onView={() => openRequestDetail(request)}
           moreActions={[
             {
               label: "编辑",
-              disabled: true,
-              onClick: () => undefined
+              onClick: () => {
+                openRequestDetail(request);
+                setDetailEditMode(true);
+              }
             },
             {
               label: "生成排产建议",
@@ -1371,7 +1647,6 @@ export default function ReplenishmentPage() {
       )
     }
   ];
-
   return (
     <main className="pageShell">
       <PageHeader
@@ -1436,8 +1711,8 @@ export default function ReplenishmentPage() {
                   disabled={loading}
                 >
                   {platformOptions.map((platform) => (
-                    <option key={platform} value={platform}>
-                      {platform === "all" ? "全部平台" : platform}
+                    <option key={platform.value} value={platform.value}>
+                      {platform.label}
                     </option>
                   ))}
                 </select>
@@ -1521,31 +1796,59 @@ export default function ReplenishmentPage() {
           open={Boolean(selectedRequest)}
           title="备货单详情"
           width="lg"
-          onClose={() => setSelectedRequest(null)}
+          onClose={closeRequestDetail}
           footer={
-            <>
-              <button
-                className="secondaryButton"
-                type="button"
-                onClick={() => setSelectedRequest(null)}
-              >
-                关闭
-              </button>
-              <button className="secondaryButton" type="button" disabled>
-                编辑
-              </button>
-              <button
-                className="primaryButton"
-                type="button"
-                onClick={() => {
-                  window.location.href = "/production/planning";
-                }}
-              >
-                生成排产建议
-              </button>
-            </>
+            detailEditMode ? (
+              <>
+                <button
+                  className="secondaryButton"
+                  type="button"
+                  onClick={cancelDetailEdit}
+                  disabled={savingDetail}
+                >
+                  取消
+                </button>
+                <button
+                  className="primaryButton"
+                  type="button"
+                  onClick={saveDetailChanges}
+                  disabled={savingDetail}
+                >
+                  {savingDetail ? "保存中..." : "保存修改"}
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  className="secondaryButton"
+                  type="button"
+                  onClick={closeRequestDetail}
+                >
+                  关闭
+                </button>
+                <button className="secondaryButton" type="button" onClick={startDetailEdit}>
+                  编辑
+                </button>
+                <button
+                  className="primaryButton"
+                  type="button"
+                  onClick={() => {
+                    window.location.href = "/production/planning";
+                  }}
+                >
+                  生成排产建议
+                </button>
+              </>
+            )
           }
         >
+          {createErrorMessage ? (
+            <div className="debugError">
+              <strong>操作失败</strong>
+              <p>{createErrorMessage}</p>
+            </div>
+          ) : null}
+
           <section className="drawerSection">
             <div className="drawerSectionHeader">
               <h4>基本信息</h4>
@@ -1554,7 +1857,7 @@ export default function ReplenishmentPage() {
               <DetailItem label="备货单号" value={selectedRequest.request_no} />
               <DetailItem
                 label="平台"
-                value={parseNotes(selectedRequest.notes).amazonSite}
+                value={getRequestMarketplaceLabel(selectedRequest)}
               />
               <DetailItem
                 label="运营"
@@ -1582,9 +1885,13 @@ export default function ReplenishmentPage() {
                 }`}
               />
               <DetailItem
-                label="SKU / 数量"
-                value={`${selectedRequest.sku_count} / ${formatQuantity(
-                  selectedRequest.total_requested_quantity
+                label="SPU / SKU / 总数"
+                value={`${detailEditMode ? detailSpuCount : spuCountByRequest(selectedRequest)} / ${
+                  detailEditMode ? detailSkuCount : selectedRequest.sku_count
+                } / ${formatQuantity(
+                  detailEditMode
+                    ? detailTotalQuantity
+                    : selectedRequest.total_requested_quantity
                 )}`}
               />
               <DetailItem
@@ -1597,68 +1904,167 @@ export default function ReplenishmentPage() {
 
           <section className="drawerSection">
             <div className="drawerSectionHeader">
-              <h4>SKU 明细</h4>
-              <span>共 {selectedRequest.items.length} 项</span>
+              <h4>SPU 明细</h4>
+              <span>
+                共 {detailEditMode ? detailSpuCount : spuCountByRequest(selectedRequest)} 个 SPU /{" "}
+                {detailEditMode ? detailSkuCount : selectedRequest.sku_count} 个 SKU
+              </span>
             </div>
-            <div className="tableWrap compactTableWrap noHorizontalScroll">
-              <table className="dataTable compactDataTable drawerDetailTable">
-                <thead>
-                  <tr>
-                    <th>产品信息</th>
-                    <th>SKU</th>
-                    <th>需求数量</th>
-                    <th>当前成品库存</th>
-                    <th>预计可生产</th>
-                    <th>缺口</th>
-                    <th>备注</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {selectedRequest.items.map((item) => {
-                    const stock = getItemStock(item);
-                    const shortage = getItemShortage(item);
-                    const product = item.product ?? item.sku?.product ?? null;
+            <div className="spuDetailGroupList">
+              {detailEditMode
+                ? groupDraftItemsByProduct(detailDraftItems).map((group) => (
+                    <section className="spuDetailGroup" key={group.productCode}>
+                      <ProductHeader
+                        imageUrl={group.imageUrl}
+                        name={group.productName}
+                        code={group.productCode}
+                        brandLabel={group.brandLabel}
+                      />
+                      <div className="tableWrap compactTableWrap noHorizontalScroll">
+                        <table className="dataTable compactDataTable drawerDetailTable">
+                          <thead>
+                            <tr>
+                              <th>SKU</th>
+                              <th>规格/米数</th>
+                              <th>需求数量</th>
+                              <th>当前成品库存</th>
+                              <th>预计可生产</th>
+                              <th>缺口</th>
+                              <th>备注</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {group.items.map((item) => {
+                              const quantity = Number(item.quantity);
+                              const shortage =
+                                Number.isFinite(quantity) && quantity > 0
+                                  ? Math.max(0, quantity - item.currentStock)
+                                  : null;
 
-                    return (
-                      <tr key={item.id}>
-                        <td>
-                          <InfoCell
-                            imageUrl={product?.product_image_url ?? null}
-                            imageAlt={product?.name ?? "产品"}
-                            title={product?.name ?? "未关联产品"}
-                            subtitle={product?.product_code ?? "-"}
-                          />
-                        </td>
-                        <td>
-                          <EllipsisText title={item.sku?.sku_code ?? undefined}>
-                            {item.sku?.sku_code ?? "-"}
-                          </EllipsisText>
-                          <span className="tableSubText">
-                            {item.sku?.sku_name ?? "-"}
-                          </span>
-                        </td>
-                        <td>{formatQuantity(item.requested_quantity)}</td>
-                        <td>
-                          {stock === undefined ? "未加载" : formatQuantity(stock)}
-                        </td>
-                        <td>{stock === undefined ? "待算料" : "排产后计算"}</td>
-                        <td>
-                          {shortage === null || shortage === 0 ? (
-                            <span className="goodText">
-                              {shortage === null ? "-" : "充足"}
-                            </span>
-                          ) : (
-                            <span className="dangerText">
-                              {formatQuantity(shortage)}
-                            </span>
-                          )}
-                        </td>
-                        <td className="notesCell">{item.remark ?? "-"}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                              return (
+                                <tr key={item.skuId}>
+                                  <td>
+                                    <EllipsisText title={item.skuCode}>
+                                      {item.skuCode}
+                                    </EllipsisText>
+                                    <span className="tableSubText">{item.skuName}</span>
+                                  </td>
+                                  <td>{item.specs ?? "-"}</td>
+                                  <td>
+                                    <input
+                                      className="tableNumberInput"
+                                      inputMode="numeric"
+                                      min="1"
+                                      step="1"
+                                      type="number"
+                                      value={item.quantity}
+                                      onChange={(event) =>
+                                        updateDetailDraftItem(
+                                          item.skuId,
+                                          "quantity",
+                                          event.target.value
+                                        )
+                                      }
+                                      disabled={savingDetail}
+                                    />
+                                  </td>
+                                  <td>{formatQuantity(item.currentStock)}</td>
+                                  <td>排产后计算</td>
+                                  <td>
+                                    {shortage === null || shortage === 0 ? (
+                                      <span className="goodText">
+                                        {shortage === null ? "-" : "充足"}
+                                      </span>
+                                    ) : (
+                                      <span className="dangerText">
+                                        {formatQuantity(shortage)}
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td>
+                                    <input
+                                      className="tableTextInput"
+                                      value={item.remark}
+                                      onChange={(event) =>
+                                        updateDetailDraftItem(
+                                          item.skuId,
+                                          "remark",
+                                          event.target.value
+                                        )
+                                      }
+                                      disabled={savingDetail}
+                                    />
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </section>
+                  ))
+                : groupRequestItemsByProduct(selectedRequest.items).map((group) => (
+                    <section className="spuDetailGroup" key={group.productCode}>
+                      <ProductHeader
+                        imageUrl={group.imageUrl}
+                        name={group.productName}
+                        code={group.productCode}
+                        brandLabel={group.brandLabel}
+                      />
+                      <div className="tableWrap compactTableWrap noHorizontalScroll">
+                        <table className="dataTable compactDataTable drawerDetailTable">
+                          <thead>
+                            <tr>
+                              <th>SKU</th>
+                              <th>规格/米数</th>
+                              <th>需求数量</th>
+                              <th>当前成品库存</th>
+                              <th>预计可生产</th>
+                              <th>缺口</th>
+                              <th>备注</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {group.items.map((item) => {
+                              const stock = getItemStock(item);
+                              const shortage = getItemShortage(item);
+
+                              return (
+                                <tr key={item.id}>
+                                  <td>
+                                    <EllipsisText title={item.sku?.sku_code ?? undefined}>
+                                      {item.sku?.sku_code ?? "-"}
+                                    </EllipsisText>
+                                    <span className="tableSubText">
+                                      {item.sku?.sku_name ?? "-"}
+                                    </span>
+                                  </td>
+                                  <td>{item.sku?.specs ?? "-"}</td>
+                                  <td>{formatQuantity(item.requested_quantity)}</td>
+                                  <td>
+                                    {stock === undefined ? "未加载" : formatQuantity(stock)}
+                                  </td>
+                                  <td>{stock === undefined ? "待算料" : "排产后计算"}</td>
+                                  <td>
+                                    {shortage === null || shortage === 0 ? (
+                                      <span className="goodText">
+                                        {shortage === null ? "-" : "充足"}
+                                      </span>
+                                    ) : (
+                                      <span className="dangerText">
+                                        {formatQuantity(shortage)}
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="notesCell">{item.remark ?? "-"}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </section>
+                  ))}
             </div>
           </section>
         </DetailDrawer>
@@ -1732,15 +2138,11 @@ export default function ReplenishmentPage() {
               }
               disabled={submitting}
             >
-              <option value="US">US</option>
-              <option value="CA">CA</option>
-              <option value="MX">MX</option>
-              <option value="UK">UK</option>
-              <option value="DE">DE</option>
-              <option value="FR">FR</option>
-              <option value="IT">IT</option>
-              <option value="ES">ES</option>
-              <option value="JP">JP</option>
+              {marketplaceOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </label>
 
@@ -1830,100 +2232,102 @@ export default function ReplenishmentPage() {
             {draftItems.length === 0 ? (
               <div className="emptyState">暂无备货明细，请先批量导入或添加 SKU。</div>
             ) : (
-              <div className="tableWrap compactTableWrap">
-                <table className="dataTable replenishmentDetailTable">
-                  <thead>
-                    <tr>
-                      <th>产品图片</th>
-                      <th>产品名称/SPU</th>
-                      <th>品牌</th>
-                      <th>SKU 名称</th>
-                      <th>SKU 编码</th>
-                      <th>规格/米数</th>
-                      <th>当前成品库存</th>
-                      <th>本次备货数量</th>
-                      <th>备注</th>
-                      <th>操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {draftItems.map((item) => (
-                      <tr key={item.skuId}>
-                        <td>
-                          <ProductImage
-                            imageUrl={item.productImageUrl}
-                            name={item.productName}
-                          />
-                        </td>
-                        <td>
-                          <strong>{item.productName}</strong>
-                          <span>{item.productCode}</span>
-                        </td>
-                        <td>{item.brandLabel}</td>
-                        <td>{item.skuName}</td>
-                        <td>{item.skuCode}</td>
-                        <td>
-                          <span>{item.specs ?? "-"}</span>
-                          {!item.hasActiveBom ? (
-                            <span className="tableHint dangerText">
-                              未找到启用 BOM
-                            </span>
-                          ) : null}
-                        </td>
-                        <td>{formatQuantity(item.currentStock)}</td>
-                        <td>
-                          <input
-                            className="tableNumberInput"
-                            inputMode="numeric"
-                            min="1"
-                            step="1"
-                            type="number"
-                            value={item.quantity}
-                            onChange={(event) =>
-                              updateDraftItem(
-                                item.skuId,
-                                "quantity",
-                                event.target.value
-                              )
-                            }
-                            disabled={submitting}
-                          />
-                        </td>
-                        <td>
-                          <input
-                            className="tableTextInput"
-                            value={item.remark}
-                            onChange={(event) =>
-                              updateDraftItem(
-                                item.skuId,
-                                "remark",
-                                event.target.value
-                              )
-                            }
-                            disabled={submitting}
-                          />
-                        </td>
-                        <td>
-                          <button
-                            className="secondaryButton"
-                            type="button"
-                            onClick={() => removeDraftItem(item.skuId)}
-                            disabled={submitting}
-                          >
-                            删除
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="spuDetailGroupList">
+                {groupDraftItemsByProduct(draftItems).map((group) => (
+                  <section className="spuDetailGroup" key={group.productCode}>
+                    <ProductHeader
+                      imageUrl={group.imageUrl}
+                      name={group.productName}
+                      code={group.productCode}
+                      brandLabel={group.brandLabel}
+                    />
+                    <div className="tableWrap compactTableWrap">
+                      <table className="dataTable replenishmentDetailTable">
+                        <thead>
+                          <tr>
+                            <th>SKU 编码</th>
+                            <th>SKU 名称</th>
+                            <th>规格/米数</th>
+                            <th>当前库存</th>
+                            <th>需求数量</th>
+                            <th>备注</th>
+                            <th>操作</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {group.items.map((item) => (
+                            <tr key={item.skuId}>
+                              <td>{item.skuCode}</td>
+                              <td>{item.skuName}</td>
+                              <td>
+                                <span>{item.specs ?? "-"}</span>
+                                {!item.hasActiveBom ? (
+                                  <span className="tableHint dangerText">
+                                    未找到启用 BOM
+                                  </span>
+                                ) : null}
+                              </td>
+                              <td>{formatQuantity(item.currentStock)}</td>
+                              <td>
+                                <input
+                                  className="tableNumberInput"
+                                  inputMode="numeric"
+                                  min="1"
+                                  step="1"
+                                  type="number"
+                                  value={item.quantity}
+                                  onChange={(event) =>
+                                    updateDraftItem(
+                                      item.skuId,
+                                      "quantity",
+                                      event.target.value
+                                    )
+                                  }
+                                  disabled={submitting}
+                                />
+                              </td>
+                              <td>
+                                <input
+                                  className="tableTextInput"
+                                  value={item.remark}
+                                  onChange={(event) =>
+                                    updateDraftItem(
+                                      item.skuId,
+                                      "remark",
+                                      event.target.value
+                                    )
+                                  }
+                                  disabled={submitting}
+                                />
+                              </td>
+                              <td>
+                                <button
+                                  className="secondaryButton"
+                                  type="button"
+                                  onClick={() => removeDraftItem(item.skuId)}
+                                  disabled={submitting}
+                                >
+                                  删除
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                ))}
               </div>
             )}
           </div>
 
           <div className="detailSummaryBar fullField">
             <span>
-              SKU 种类数量
+              SPU 数
+              <strong>{draftSpuCount}</strong>
+            </span>
+            <span>
+              SKU 数
               <strong>{draftSkuCount}</strong>
             </span>
             <span>
@@ -2099,7 +2503,7 @@ export default function ReplenishmentPage() {
             />
           </label>
 
-          <div className="skuPickerLayout">
+              <div className="skuPickerLayout skuPickerModalBody">
             <div className="skuPickerProducts">
               {filteredPickerProducts.length === 0 ? (
                 <div className="emptyState">没有匹配的产品。</div>
@@ -2143,7 +2547,6 @@ export default function ReplenishmentPage() {
                         <th>SKU 编码</th>
                         <th>规格/米数</th>
                         <th>当前成品库存</th>
-                        <th>本次备货数量</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2181,23 +2584,6 @@ export default function ReplenishmentPage() {
                               ) : null}
                             </td>
                             <td>{formatQuantity(sku.current_stock)}</td>
-                            <td>
-                              <input
-                                className="tableNumberInput"
-                                inputMode="numeric"
-                                min="1"
-                                step="1"
-                                type="number"
-                                value={state.quantity}
-                                onChange={(event) =>
-                                  updatePickerSku(
-                                    sku.id,
-                                    "quantity",
-                                    event.target.value
-                                  )
-                                }
-                              />
-                            </td>
                           </tr>
                         );
                       })}
@@ -2208,8 +2594,8 @@ export default function ReplenishmentPage() {
             </div>
           </div>
 
-          <div className="modalFooter">
-            <span>勾选 SKU 并填写数量后加入当前备货单。</span>
+          <div className="modalFooter stickyPickerFooter">
+            <span>已选 {selectedPickerSkuCount} 个 SKU，确认后在备货单明细里填写需求数量。</span>
             <div className="rowActions">
               <button type="button" onClick={() => setPickerOpen(false)}>
                 取消

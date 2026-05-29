@@ -9,6 +9,10 @@ import { normalizeCsvValue } from "@/lib/utils/csv";
 import type { BrandSummary } from "@/lib/brand-utils";
 import type { ListPageParams, ListPageResult } from "@/lib/api/page-types";
 import { normalizeRpcPage } from "@/lib/api/page-types";
+import {
+  marketplaceOptions,
+  normalizeMarketplaceValue
+} from "@/lib/constants/marketplaces";
 
 export type FbaRequestStatus =
   | "draft"
@@ -40,6 +44,18 @@ export type CreateFbaReplenishmentDocumentInput = {
   priority: string;
   notes?: string;
   items: Array<{
+    productId: string | null;
+    skuId: string;
+    requestedQuantity: number;
+    remark?: string | null;
+  }>;
+};
+
+export type UpdateFbaReplenishmentDocumentInput = {
+  requestId: string;
+  notes?: string | null;
+  items: Array<{
+    itemId?: string | null;
     productId: string | null;
     skuId: string;
     requestedQuantity: number;
@@ -294,17 +310,9 @@ const importPriorities: FbaRequestPriority[] = [
 
 const finishedSkuTypes = ["finished_good", "finished_product"];
 
-const importAmazonSites = new Set([
-  "US",
-  "CA",
-  "MX",
-  "UK",
-  "DE",
-  "FR",
-  "IT",
-  "ES",
-  "JP"
-]);
+const importAmazonSites = new Set(
+  marketplaceOptions.map((option) => option.value)
+);
 
 const importRowKeys = [
   "sku_code",
@@ -349,26 +357,37 @@ async function withTimeout<T>(promise: PromiseLike<T>, action: string) {
   }
 }
 
-function createRequestNo() {
-  const now = new Date();
-  const pad = (value: number) => String(value).padStart(2, "0");
-  const datePart = [
-    now.getFullYear(),
-    pad(now.getMonth() + 1),
-    pad(now.getDate())
-  ].join("");
-  const timePart = [
-    pad(now.getHours()),
-    pad(now.getMinutes()),
-    pad(now.getSeconds())
-  ].join("");
-  const randomPart = Math.random().toString(36).slice(2, 6).toUpperCase();
+async function createRequestNo(offset = 0) {
+  const supabase = getSupabaseClient();
+  const rows = await fetchAllSupabaseRows<{ request_no: string }>(
+    () =>
+      supabase
+        .from("fba_replenishment_requests")
+        .select("request_no")
+        .like("request_no", "B____")
+        .order("request_no", { ascending: false }),
+    "生成备货单号"
+  );
+  const maxNumber = rows.reduce((max, row) => {
+    const match = row.request_no.match(/^B(\d{4})$/);
 
-  return `FBA-RQ-${datePart}-${timePart}-${randomPart}`;
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, 0);
+  const nextNumber = maxNumber + 1 + offset;
+
+  return `B${String(nextNumber).padStart(4, "0")}`;
+}
+
+function isDuplicateRequestNoError(error: { code?: string; message: string }) {
+  return (
+    error.code === "23505" ||
+    error.message.toLowerCase().includes("duplicate") ||
+    error.message.includes("request_no")
+  );
 }
 
 function buildNotes(amazonSite: string, notes?: string) {
-  const cleanSite = amazonSite.trim() || "US";
+  const cleanSite = normalizeMarketplaceValue(amazonSite) || "US";
   const cleanNotes = notes?.trim();
 
   if (!cleanNotes) {
@@ -446,7 +465,7 @@ function normalizeImportAmazonSite(
   errors: string[],
   notes: string[]
 ) {
-  const amazonSite = normalizeCsvValue(value).toUpperCase();
+  const amazonSite = normalizeMarketplaceValue(normalizeCsvValue(value)).toUpperCase();
 
   if (!amazonSite) {
     notes.push("亚马逊站点为空，默认按 US 处理。");
@@ -454,7 +473,7 @@ function normalizeImportAmazonSite(
   }
 
   if (!importAmazonSites.has(amazonSite)) {
-    errors.push("亚马逊站点只能填写 US、CA、MX、UK、DE、FR、IT、ES 或 JP。");
+    errors.push("亚马逊站点不在系统支持的平台列表里。");
     return null;
   }
 
@@ -574,34 +593,41 @@ export async function createFbaReplenishmentRequest(
   input: CreateFbaReplenishmentInput
 ): Promise<CreatedFbaReplenishment> {
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase
-      .from("fba_replenishment_requests")
-      .insert({
-        request_no: createRequestNo(),
-        requested_by: null,
-        sku_id: input.skuId,
-        target_warehouse_id: input.targetWarehouseId || null,
-        fba_warehouse_code: input.fbaWarehouseCode?.trim() || null,
-        requested_quantity: input.requestedQuantity,
-        target_ship_date: input.targetShipDate || null,
-        priority: input.priority || "normal",
-        status: "submitted",
-        accepted_by: null,
-        accepted_at: null,
-        rejected_reason: null,
-        notes: buildNotes(input.amazonSite, input.notes)
-      })
-      .select("id, request_no")
-      .single(),
-    "创建 FBA 备货需求"
-  );
 
-  if (error) {
-    throw formatSupabaseError("创建 FBA 备货需求", error);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("fba_replenishment_requests")
+        .insert({
+          request_no: await createRequestNo(attempt),
+          requested_by: null,
+          sku_id: input.skuId,
+          target_warehouse_id: input.targetWarehouseId || null,
+          fba_warehouse_code: input.fbaWarehouseCode?.trim() || null,
+          requested_quantity: input.requestedQuantity,
+          target_ship_date: input.targetShipDate || null,
+          priority: input.priority || "normal",
+          status: "submitted",
+          accepted_by: null,
+          accepted_at: null,
+          rejected_reason: null,
+          notes: buildNotes(input.amazonSite, input.notes)
+        })
+        .select("id, request_no")
+        .single(),
+      "创建 FBA 备货需求"
+    );
+
+    if (!error) {
+      return data as CreatedFbaReplenishment;
+    }
+
+    if (!isDuplicateRequestNoError(error) || attempt === 2) {
+      throw formatSupabaseError("创建 FBA 备货需求", error);
+    }
   }
 
-  return data as CreatedFbaReplenishment;
+  throw new Error("创建 FBA 备货需求失败：备货单号生成冲突，请重试。");
 }
 
 export async function createFbaReplenishmentDocument(
@@ -649,34 +675,46 @@ export async function createFbaReplenishmentDocument(
     0
   );
   const supabase = getSupabaseClient();
-  const { data, error } = await withTimeout(
-    supabase
-      .from("fba_replenishment_requests")
-      .insert({
-        request_no: createRequestNo(),
-        requested_by: null,
-        sku_id: firstItem.skuId,
-        target_warehouse_id: input.targetWarehouseId,
-        fba_warehouse_code: input.fbaWarehouseCode?.trim() || null,
-        requested_quantity: totalRequestedQuantity,
-        target_ship_date: input.targetShipDate || null,
-        priority: input.priority || "normal",
-        status: "submitted",
-        accepted_by: null,
-        accepted_at: null,
-        rejected_reason: null,
-        notes: buildNotes(input.amazonSite, input.notes)
-      })
-      .select("id, request_no")
-      .single(),
-    "创建 FBA 备货单主表"
-  );
+  let created: CreatedFbaReplenishment | null = null;
 
-  if (error) {
-    throw formatSupabaseError("创建 FBA 备货单主表", error);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("fba_replenishment_requests")
+        .insert({
+          request_no: await createRequestNo(attempt),
+          requested_by: null,
+          sku_id: firstItem.skuId,
+          target_warehouse_id: input.targetWarehouseId,
+          fba_warehouse_code: input.fbaWarehouseCode?.trim() || null,
+          requested_quantity: totalRequestedQuantity,
+          target_ship_date: input.targetShipDate || null,
+          priority: input.priority || "normal",
+          status: "submitted",
+          accepted_by: null,
+          accepted_at: null,
+          rejected_reason: null,
+          notes: buildNotes(input.amazonSite, input.notes)
+        })
+        .select("id, request_no")
+        .single(),
+      "创建 FBA 备货单主表"
+    );
+
+    if (!error) {
+      created = data as CreatedFbaReplenishment;
+      break;
+    }
+
+    if (!isDuplicateRequestNoError(error) || attempt === 2) {
+      throw formatSupabaseError("创建 FBA 备货单主表", error);
+    }
   }
 
-  const created = data as CreatedFbaReplenishment;
+  if (!created) {
+    throw new Error("创建 FBA 备货单主表失败：备货单号生成冲突，请重试。");
+  }
+
   const itemRows = normalizedItems.map((item) => ({
     request_id: created.id,
     product_id: item.productId,
@@ -705,17 +743,149 @@ export async function createFbaReplenishmentDocument(
   return created;
 }
 
+export async function updateFbaReplenishmentDocument(
+  input: UpdateFbaReplenishmentDocumentInput
+): Promise<void> {
+  const normalizedItems = input.items
+    .map((item) => ({
+      ...item,
+      requestedQuantity: Number(item.requestedQuantity),
+      remark: item.remark?.trim() || null
+    }))
+    .filter((item) => item.requestedQuantity > 0);
+  const duplicateSkuIds = normalizedItems
+    .map((item) => item.skuId)
+    .filter((skuId, index, skuIds) => skuIds.indexOf(skuId) !== index);
+
+  if (!input.requestId) {
+    throw new Error("缺少备货单 ID。");
+  }
+
+  if (normalizedItems.length === 0) {
+    throw new Error("至少要保留一个 SKU 明细。");
+  }
+
+  if (duplicateSkuIds.length > 0) {
+    throw new Error("同一张备货单里不能重复提交相同 SKU。");
+  }
+
+  const invalidQuantityItem = normalizedItems.find(
+    (item) =>
+      !Number.isFinite(item.requestedQuantity) || item.requestedQuantity <= 0
+  );
+
+  if (invalidQuantityItem) {
+    throw new Error("SKU 备货数量必须是大于 0 的数字。");
+  }
+
+  const firstItem = normalizedItems[0];
+  const totalRequestedQuantity = normalizedItems.reduce(
+    (sum, item) => sum + item.requestedQuantity,
+    0
+  );
+  const supabase = getSupabaseClient();
+  const { error: requestError } = await withTimeout(
+    supabase
+      .from("fba_replenishment_requests")
+      .update({
+        sku_id: firstItem.skuId,
+        requested_quantity: totalRequestedQuantity,
+        notes: input.notes ?? null
+      })
+      .eq("id", input.requestId),
+    "保存备货单主表"
+  );
+
+  if (requestError) {
+    throw formatSupabaseError("保存备货单主表", requestError);
+  }
+
+  const updateRows = normalizedItems.filter(
+    (item) => item.itemId && !item.itemId.includes("-legacy-item")
+  );
+  const insertRows = normalizedItems.filter(
+    (item) => !item.itemId || item.itemId.includes("-legacy-item")
+  );
+
+  for (const item of updateRows) {
+    const { error } = await withTimeout(
+      supabase
+        .from("fba_replenishment_request_items")
+        .update({
+          product_id: item.productId,
+          sku_id: item.skuId,
+          requested_quantity: item.requestedQuantity,
+          remark: item.remark
+        })
+        .eq("id", item.itemId)
+        .eq("request_id", input.requestId),
+      "保存备货单明细"
+    );
+
+    if (error) {
+      throw formatSupabaseError("保存备货单明细", error);
+    }
+  }
+
+  if (insertRows.length > 0) {
+    const { error } = await withTimeout(
+      supabase.from("fba_replenishment_request_items").insert(
+        insertRows.map((item) => ({
+          request_id: input.requestId,
+          product_id: item.productId,
+          sku_id: item.skuId,
+          requested_quantity: item.requestedQuantity,
+          remark: item.remark
+        }))
+      ),
+      "补建备货单明细"
+    );
+
+    if (error) {
+      throw formatSupabaseError("补建备货单明细", error);
+    }
+  }
+}
+
 export async function getFbaReplenishmentSkuOptions(): Promise<
   FbaReplenishmentSkuOption[]
 > {
-  return searchFbaReplenishmentSkuOptions();
+  return searchFbaReplenishmentSkuOptions("", 100);
 }
 
 export async function searchFbaReplenishmentSkuOptions(
   keyword = "",
-  limit = 20
+  limit = 100
 ): Promise<FbaReplenishmentSkuOption[]> {
   const supabase = getSupabaseClient();
+  const safeLimit = Math.min(Math.max(limit, 1), 100);
+  const normalizedKeyword = keyword.trim();
+  let matchedProductIds: string[] = [];
+
+  if (normalizedKeyword) {
+    const { data: productData, error: productError } = await withTimeout(
+      supabase
+        .from("products")
+        .select("id")
+        .or(
+          [
+            `product_code.ilike.%${normalizedKeyword}%`,
+            `name.ilike.%${normalizedKeyword}%`
+          ].join(",")
+        )
+        .limit(100),
+      "搜索可备货产品"
+    );
+
+    if (productError) {
+      throw formatSupabaseError("搜索可备货产品", productError);
+    }
+
+    matchedProductIds = ((productData ?? []) as Array<{ id: string }>).map(
+      (product) => product.id
+    );
+  }
+
   let skuQuery = supabase
     .from("skus")
     .select(
@@ -750,20 +920,22 @@ export async function searchFbaReplenishmentSkuOptions(
     .in("sku_type", finishedSkuTypes)
     .eq("status", "active")
     .order("sku_code", { ascending: true })
-    .limit(limit);
-
-  const normalizedKeyword = keyword.trim();
+    .limit(safeLimit);
 
   if (normalizedKeyword) {
-    skuQuery = skuQuery.or(
-      [
-        `sku_code.ilike.%${normalizedKeyword}%`,
-        `sku_name.ilike.%${normalizedKeyword}%`,
-        `amazon_sku.ilike.%${normalizedKeyword}%`,
-        `fnsku.ilike.%${normalizedKeyword}%`,
-        `specs.ilike.%${normalizedKeyword}%`
-      ].join(",")
-    );
+    const skuFilters = [
+      `sku_code.ilike.%${normalizedKeyword}%`,
+      `sku_name.ilike.%${normalizedKeyword}%`,
+      `amazon_sku.ilike.%${normalizedKeyword}%`,
+      `fnsku.ilike.%${normalizedKeyword}%`,
+      `specs.ilike.%${normalizedKeyword}%`
+    ];
+
+    if (matchedProductIds.length > 0) {
+      skuFilters.push(`product_id.in.(${matchedProductIds.join(",")})`);
+    }
+
+    skuQuery = skuQuery.or(skuFilters.join(","));
   }
 
   const { data: skuData, error: skuError } = await withTimeout(

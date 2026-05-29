@@ -17,6 +17,7 @@ function getTone(status: string) {
     [
       "submitted",
       "accepted",
+      "in_production",
       "ordered",
       "in_progress",
       "product_in",
