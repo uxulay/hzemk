@@ -800,12 +800,54 @@ export async function updateFbaReplenishmentDocument(
     throw formatSupabaseError("保存备货单主表", requestError);
   }
 
+  // 读取该备货单在数据库中真实存在的 item id 列表
+  const { data: existingItemData, error: existingItemError } = await withTimeout(
+    supabase
+      .from("fba_replenishment_request_items")
+      .select("id")
+      .eq("request_id", input.requestId),
+    "读取备货单现有明细 id"
+  );
+
+  if (existingItemError) {
+    throw formatSupabaseError("读取备货单现有明细 id", existingItemError);
+  }
+
+  const existingItemIds = ((existingItemData ?? []) as Array<{ id: string }>).map(
+    (row) => row.id
+  );
+
+  // 本次保存后应保留的真实 itemId（排除 legacy 虚拟 id）
   const updateRows = normalizedItems.filter(
     (item) => item.itemId && !item.itemId.includes("-legacy-item")
   );
   const insertRows = normalizedItems.filter(
     (item) => !item.itemId || item.itemId.includes("-legacy-item")
   );
+
+  const keptItemIds = new Set(
+    updateRows
+      .map((item) => item.itemId)
+      .filter((id): id is string => Boolean(id))
+  );
+
+  // 数据库已有 id 中，不在本次保留列表里的，需要删除
+  const idsToDelete = existingItemIds.filter((id) => !keptItemIds.has(id));
+
+  if (idsToDelete.length > 0) {
+    const { error: deleteError } = await withTimeout(
+      supabase
+        .from("fba_replenishment_request_items")
+        .delete()
+        .eq("request_id", input.requestId)
+        .in("id", idsToDelete),
+      "删除多余备货单明细"
+    );
+
+    if (deleteError) {
+      throw formatSupabaseError("删除多余备货单明细", deleteError);
+    }
+  }
 
   for (const item of updateRows) {
     const { error } = await withTimeout(
