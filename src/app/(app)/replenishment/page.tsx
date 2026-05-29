@@ -1801,6 +1801,12 @@ export default function ReplenishmentPage() {
           </div>
         ) : null}
 
+        {platformFilter !== "all" && !loading && !errorMessage ? (
+          <div className="debugNotice" style={{ marginBottom: 16 }}>
+            平台筛选为当前页结果过滤：当前找到 {visibleRequests.length} 条
+          </div>
+        ) : null}
+
         <DataTable
           columns={requestColumns}
           rows={visibleRequests}
@@ -1809,9 +1815,9 @@ export default function ReplenishmentPage() {
           loadingText="正在读取备货需求列表..."
           emptyText="暂无备货需求"
           minWidth={960}
-          page={page}
+          page={platformFilter === "all" ? page : undefined}
           pageSize={DEFAULT_PAGE_SIZE}
-          total={platformFilter === "all" ? totalRequests : visibleRequests.length}
+          total={platformFilter === "all" ? totalRequests : undefined}
           onPageChange={setPage}
         />
       </section>
