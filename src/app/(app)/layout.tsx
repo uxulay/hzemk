@@ -7,17 +7,36 @@ import { Sidebar } from "@/components/layout/sidebar";
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   return (
     <MockRoleProvider>
       <div className={sidebarCollapsed ? "appFrame appFrameCollapsed" : "appFrame"}>
-        <Sidebar collapsed={sidebarCollapsed} />
+        <div className="desktopSidebar">
+          <Sidebar collapsed={sidebarCollapsed} />
+        </div>
         <div className="mainArea">
           <Header
             sidebarCollapsed={sidebarCollapsed}
+            onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
             onToggleSidebar={() => setSidebarCollapsed((current) => !current)}
           />
           {children}
+        </div>
+      </div>
+      <div
+        className="mobileSidebarLayer"
+        data-open={mobileSidebarOpen ? "true" : "false"}
+        aria-hidden={!mobileSidebarOpen}
+      >
+        <button
+          className="mobileSidebarBackdrop"
+          type="button"
+          aria-label="关闭菜单"
+          onClick={() => setMobileSidebarOpen(false)}
+        />
+        <div className="mobileSidebarPanel">
+          <Sidebar onNavigate={() => setMobileSidebarOpen(false)} />
         </div>
       </div>
     </MockRoleProvider>

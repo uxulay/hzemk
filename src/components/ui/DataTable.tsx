@@ -9,6 +9,7 @@ export type DataTableColumn<TRow> = {
   width?: number | string;
   ellipsis?: boolean;
   align?: "left" | "center" | "right";
+  mobilePriority?: "title" | "status" | "summary" | "meta" | "action" | "hidden";
 };
 
 type DataTableProps<TRow> = {
@@ -28,6 +29,10 @@ type DataTableProps<TRow> = {
   onRowClick?: (row: TRow) => void;
   emptyAction?: ReactNode;
 };
+
+function getColumnText(value: ReactNode) {
+  return typeof value === "string" || typeof value === "number" ? String(value) : "";
+}
 
 export function DataTable<TRow>({
   columns,
@@ -66,6 +71,31 @@ export function DataTable<TRow>({
       : 0;
   const safePage =
     page && totalPages ? Math.min(Math.max(page, 1), totalPages) : page ?? 1;
+  const mobileColumns = columns.filter(
+    (column) => column.mobilePriority !== "hidden"
+  );
+  const titleColumn =
+    mobileColumns.find((column) => column.mobilePriority === "title") ??
+    mobileColumns[0];
+  const statusColumn = mobileColumns.find(
+    (column) => column.mobilePriority === "status"
+  ) ?? mobileColumns.find(
+    (column) => column.key.toLowerCase().includes("status") || getColumnText(column.title).includes("状态")
+  );
+  const actionColumns = mobileColumns.filter(
+    (column) =>
+      column.mobilePriority === "action" ||
+      column.key.toLowerCase().includes("action") ||
+      getColumnText(column.title).includes("操作")
+  );
+  const summaryColumns = mobileColumns
+    .filter(
+      (column) =>
+        column.key !== titleColumn?.key &&
+        column.key !== statusColumn?.key &&
+        !actionColumns.some((actionColumn) => actionColumn.key === column.key)
+    )
+    .slice(0, 4);
 
   return (
     <>
@@ -115,6 +145,56 @@ export function DataTable<TRow>({
             ))}
           </tbody>
         </table>
+      </div>
+      <div className="mobileDataList">
+        {rows.map((row) => (
+          <article className="mobileDataCard" key={getRowKey(row)}>
+            {onRowClick ? (
+              <button
+                className="mobileDataCardMain"
+                type="button"
+                onClick={() => onRowClick(row)}
+              >
+                <span className="mobileDataCardTitle">
+                  {titleColumn ? titleColumn.render(row) : getRowKey(row)}
+                </span>
+                {statusColumn ? (
+                  <span className="mobileDataCardStatus">
+                    {statusColumn.render(row)}
+                  </span>
+                ) : null}
+              </button>
+            ) : (
+              <div className="mobileDataCardMain">
+                <span className="mobileDataCardTitle">
+                  {titleColumn ? titleColumn.render(row) : getRowKey(row)}
+                </span>
+                {statusColumn ? (
+                  <span className="mobileDataCardStatus">
+                    {statusColumn.render(row)}
+                  </span>
+                ) : null}
+              </div>
+            )}
+            {summaryColumns.length > 0 ? (
+              <dl className="mobileDataCardMeta">
+                {summaryColumns.map((column) => (
+                  <div key={column.key}>
+                    <dt>{column.title}</dt>
+                    <dd>{column.render(row)}</dd>
+                  </div>
+                ))}
+              </dl>
+            ) : null}
+            {actionColumns.length > 0 ? (
+              <div className="mobileDataCardActions">
+                {actionColumns.map((column) => (
+                  <div key={column.key}>{column.render(row)}</div>
+                ))}
+              </div>
+            ) : null}
+          </article>
+        ))}
       </div>
 
       {page && pageSize && total !== undefined && onPageChange ? (

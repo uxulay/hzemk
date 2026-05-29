@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { GlobalSearch } from "@/components/GlobalSearch";
 import { NotificationDropdown } from "@/components/NotificationDropdown";
 import { useMockRole } from "@/components/auth/mock-role-provider";
-import { ChevronRightIcon, MenuIcon } from "@/components/ui/icons";
+import { ChevronRightIcon, MenuIcon, SearchIcon, XIcon } from "@/components/ui/icons";
 import { getNavigationForRole } from "@/lib/navigation";
 import { roleLabels, type UserRole } from "@/types/roles";
 
@@ -13,13 +13,19 @@ const roleOptions = Object.entries(roleLabels) as Array<[UserRole, string]>;
 
 type HeaderProps = {
   sidebarCollapsed: boolean;
+  onOpenMobileSidebar: () => void;
   onToggleSidebar: () => void;
 };
 
-export function Header({ sidebarCollapsed, onToggleSidebar }: HeaderProps) {
+export function Header({
+  sidebarCollapsed,
+  onOpenMobileSidebar,
+  onToggleSidebar
+}: HeaderProps) {
   const { user, setRole } = useMockRole();
   const pathname = usePathname();
   const [currentUrl, setCurrentUrl] = useState(pathname);
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const groups = useMemo(() => getNavigationForRole(user.role), [user.role]);
 
   useEffect(() => {
@@ -62,10 +68,18 @@ export function Header({ sidebarCollapsed, onToggleSidebar }: HeaderProps) {
     <header className="topHeader">
       <div className="topHeaderLeft">
         <button
-          className="iconButton headerMenuButton"
+          className="iconButton headerMenuButton desktopSidebarToggle"
           type="button"
           aria-label={sidebarCollapsed ? "展开菜单" : "折叠菜单"}
           onClick={onToggleSidebar}
+        >
+          <MenuIcon size={18} />
+        </button>
+        <button
+          className="iconButton headerMenuButton mobileSidebarToggle"
+          type="button"
+          aria-label="打开菜单"
+          onClick={onOpenMobileSidebar}
         >
           <MenuIcon size={18} />
         </button>
@@ -80,7 +94,24 @@ export function Header({ sidebarCollapsed, onToggleSidebar }: HeaderProps) {
         </nav>
       </div>
       <div className="topHeaderActions">
-        <GlobalSearch />
+        <div className="desktopGlobalSearch">
+          <GlobalSearch />
+        </div>
+        <div className="mobileGlobalSearch">
+          <button
+            className="iconButton"
+            type="button"
+            aria-label={mobileSearchOpen ? "关闭搜索" : "打开搜索"}
+            onClick={() => setMobileSearchOpen((current) => !current)}
+          >
+            {mobileSearchOpen ? <XIcon size={18} /> : <SearchIcon size={18} />}
+          </button>
+          {mobileSearchOpen ? (
+            <div className="mobileSearchOverlay">
+              <GlobalSearch />
+            </div>
+          ) : null}
+        </div>
         <NotificationDropdown />
 
         <label className="roleSwitch">

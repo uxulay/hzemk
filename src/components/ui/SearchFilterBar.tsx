@@ -1,4 +1,7 @@
-import type { ReactNode } from "react";
+"use client";
+
+import { useState, type ReactNode } from "react";
+import { XIcon } from "@/components/ui/icons";
 
 type SearchFilterBarProps = {
   searchLabel?: string;
@@ -23,27 +26,88 @@ export function SearchFilterBar({
   children,
   onReset
 }: SearchFilterBarProps) {
-  return (
-    <div className="searchFilterBar">
-      {onSearchChange ? (
-        <label className="searchFilterSearch">
-          {searchLabel}
-          <input
-            value={searchValue ?? ""}
-            onChange={(event) => onSearchChange(event.target.value)}
-            placeholder={searchPlaceholder}
-          />
-        </label>
-      ) : null}
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const renderFilterFields = () => (
+    <>
       {filters}
       {dateFilters}
       {children}
+    </>
+  );
+  const desktopFilterContent = (
+    <>
+      {renderFilterFields()}
       {onReset ? (
         <button className="secondaryButton" type="button" onClick={onReset}>
           重置
         </button>
       ) : null}
-      {rightActions ? <div className="searchFilterRightActions">{rightActions}</div> : null}
-    </div>
+    </>
+  );
+
+  return (
+    <>
+      <div className="searchFilterBar">
+        {onSearchChange ? (
+          <label className="searchFilterSearch">
+            {searchLabel}
+            <input
+              value={searchValue ?? ""}
+              onChange={(event) => onSearchChange(event.target.value)}
+              placeholder={searchPlaceholder}
+            />
+          </label>
+        ) : null}
+        <div className="searchFilterDesktopFilters">{desktopFilterContent}</div>
+        {filters || dateFilters || children || onReset ? (
+          <button
+            className="secondaryButton searchFilterMobileButton"
+            type="button"
+            onClick={() => setFiltersOpen(true)}
+          >
+            筛选
+          </button>
+        ) : null}
+        {rightActions ? <div className="searchFilterRightActions">{rightActions}</div> : null}
+      </div>
+
+      {filtersOpen ? (
+        <div className="filterSheetBackdrop" role="presentation">
+          <section
+            className="filterSheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="filter-sheet-title"
+          >
+            <div className="filterSheetHeader">
+              <h3 id="filter-sheet-title">筛选</h3>
+              <button
+                className="iconButton"
+                type="button"
+                onClick={() => setFiltersOpen(false)}
+                aria-label="关闭筛选"
+              >
+                <XIcon size={18} />
+              </button>
+            </div>
+            <div className="filterSheetBody">{renderFilterFields()}</div>
+            <div className="filterSheetFooter">
+              {onReset ? (
+                <button className="secondaryButton" type="button" onClick={onReset}>
+                  重置
+                </button>
+              ) : null}
+              <button
+                className="primaryButton"
+                type="button"
+                onClick={() => setFiltersOpen(false)}
+              >
+                确认
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+    </>
   );
 }

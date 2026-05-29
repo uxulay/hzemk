@@ -10,7 +10,6 @@ import {
   DashboardIcon,
   DatabaseIcon,
   FactoryIcon,
-  SearchIcon,
   SettingsIcon,
   WarehouseIcon
 } from "@/components/ui/icons";
@@ -49,12 +48,18 @@ function findActiveHref(currentUrl: string, pathname: string, groups: Navigation
   );
 }
 
-function getGroupIcon(label: string) {
+function getNavIcon(label: string) {
   if (label.includes("工作台")) {
     return <DashboardIcon size={18} />;
   }
-  if (label.includes("数据") || label.includes("AI")) {
-    return <SearchIcon size={18} />;
+  if (label.includes("业务")) {
+    return <BoxIcon size={18} />;
+  }
+  if (label.includes("基础")) {
+    return <DatabaseIcon size={18} />;
+  }
+  if (label.includes("系统")) {
+    return <SettingsIcon size={18} />;
   }
   if (label.includes("备货")) {
     return <BoxIcon size={18} />;
@@ -80,9 +85,10 @@ function getGroupIcon(label: string) {
 
 type SidebarProps = {
   collapsed?: boolean;
+  onNavigate?: () => void;
 };
 
-export function Sidebar({ collapsed = false }: SidebarProps) {
+export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
   const pathname = usePathname();
   const [currentUrl, setCurrentUrl] = useState(pathname);
   const { user } = useMockRole();
@@ -104,49 +110,10 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
       )?.label ?? null
     );
   }, [activeHref, groups]);
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
-    () => new Set(activeGroupLabel ? [activeGroupLabel] : [])
-  );
 
   useEffect(() => {
     setCurrentUrl(`${window.location.pathname}${window.location.search}`);
   }, [pathname]);
-
-  useEffect(() => {
-    if (!activeGroupLabel) {
-      return;
-    }
-
-    const activeGroup = groups.find((group) => group.label === activeGroupLabel);
-
-    if (!activeGroup?.items.length) {
-      return;
-    }
-
-    setExpandedGroups((current) => {
-      if (current.has(activeGroupLabel)) {
-        return current;
-      }
-
-      const next = new Set(current);
-      next.add(activeGroupLabel);
-      return next;
-    });
-  }, [activeGroupLabel, groups]);
-
-  const toggleGroup = (label: string) => {
-    setExpandedGroups((current) => {
-      const next = new Set(current);
-
-      if (next.has(label)) {
-        next.delete(label);
-      } else {
-        next.add(label);
-      }
-
-      return next;
-    });
-  };
 
   return (
     <aside className={classNames("sidebar", collapsed && "sidebarCollapsed")}>
@@ -180,41 +147,22 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
                     groupIsActive && "active"
                   )}
                   href={group.href}
+                  onClick={onNavigate}
                   title={collapsed ? group.label : undefined}
                 >
-                  <span className="navIcon">{getGroupIcon(group.label)}</span>
+                  <span className="navIcon">{getNavIcon(group.label)}</span>
                   <span className="navGroupText">{group.label}</span>
                 </Link>
               </div>
             );
           }
 
-          const isExpanded = expandedGroups.has(group.label);
           const panelId = `nav-group-${index}`;
 
           return (
             <section className="navGroup" key={`${group.section}-${group.label}`}>
               {showSection ? <p className="navSectionLabel">{group.section}</p> : null}
-              <button
-                aria-controls={panelId}
-                aria-expanded={isExpanded}
-                aria-label={collapsed ? group.label : undefined}
-                className={classNames(
-                  "navGroupButton",
-                  isExpanded && "expanded"
-                )}
-                onClick={() => toggleGroup(group.label)}
-                title={collapsed ? group.label : undefined}
-                type="button"
-              >
-                <span className="navIcon">{getGroupIcon(group.label)}</span>
-                <span className="navGroupText">{group.label}</span>
-                <span className="navGroupMeta">
-                  <span className="navChevron" aria-hidden="true" />
-                </span>
-              </button>
-
-              <div className="navChildren" hidden={collapsed || !isExpanded} id={panelId}>
+              <div className="navChildren navChildrenFlat" id={panelId}>
                 {group.items.map((item) => {
                   const isActive = activeHref === item.href;
                   const itemKey = `${group.label}-${item.label}-${item.href}`;
@@ -225,9 +173,13 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
                       className={classNames("navItem", isActive && "active")}
                       href={item.href}
                       key={itemKey}
+                      onClick={onNavigate}
+                      title={collapsed ? item.label : undefined}
                     >
-                      <span className="navChildDot" aria-hidden="true" />
-                      {item.label}
+                      <span className="navIcon navItemIcon" aria-hidden="true">
+                        {getNavIcon(item.label)}
+                      </span>
+                      <span className="navItemText">{item.label}</span>
                     </Link>
                   );
                 })}

@@ -1653,11 +1653,338 @@ async function getDashboardWorkbench(counts: Awaited<ReturnType<typeof getCounts
   } satisfies DashboardWorkbenchData;
 }
 
+function dashboardKpi(
+  id: string,
+  title: string,
+  value: number,
+  unit: string,
+  hint: string,
+  href: string,
+  tone: DashboardTone = "neutral"
+): DashboardKpiCard {
+  return { id, title, value, unit, hint, href, tone };
+}
+
+function findPipelineItem(
+  workbench: DashboardWorkbenchData,
+  id: string
+): DashboardPipelineItem | null {
+  return (
+    workbench.pipelines
+      .flatMap((pipeline) => pipeline.items)
+      .find((item) => item.id === id) ?? null
+  );
+}
+
+function pipelineItem(
+  workbench: DashboardWorkbenchData,
+  sourceId: string,
+  overrides: Partial<DashboardPipelineItem>
+): DashboardPipelineItem {
+  const source = findPipelineItem(workbench, sourceId);
+
+  return {
+    id: overrides.id ?? source?.id ?? sourceId,
+    label: overrides.label ?? source?.label ?? "-",
+    count: overrides.count ?? source?.count ?? 0,
+    href: overrides.href ?? source?.href ?? "/dashboard",
+    tone: overrides.tone ?? source?.tone ?? "neutral",
+    items: overrides.items ?? source?.items ?? [],
+    emptyText: overrides.emptyText ?? source?.emptyText ?? "暂无数据"
+  };
+}
+
+function recentSection(
+  workbench: DashboardWorkbenchData,
+  sourceId: string,
+  overrides: Partial<DashboardRecentSection>
+): DashboardRecentSection {
+  const source =
+    workbench.recentSections.find((sectionItem) => sectionItem.id === sourceId) ??
+    null;
+
+  return {
+    id: overrides.id ?? source?.id ?? sourceId,
+    title: overrides.title ?? source?.title ?? "-",
+    href: overrides.href ?? source?.href ?? "/dashboard",
+    rows: overrides.rows ?? source?.rows ?? []
+  };
+}
+
+function filterDashboardWorkbenchByRole(
+  role: UserRole,
+  workbench: DashboardWorkbenchData,
+  counts: Awaited<ReturnType<typeof getCounts>>
+): DashboardWorkbenchData {
+  const stockWarningCount = counts.lowStockMaterials + counts.abnormalFinishedStock;
+  const inboundCount = counts.purchaseOrdered + counts.pendingProductionInbound;
+  const outboundItem = pipelineItem(workbench, "replenishment-outbound", {
+    label: "备货出库",
+    href: "/inventory/fba-outbound",
+    emptyText: "暂无待出库备货单"
+  });
+
+  if (role === "operations") {
+    return {
+      ...workbench,
+      kpiCards: [
+        dashboardKpi("operation-draft", "待提交", counts.fbaAccepted, "单", "待推进的备货需求", "/replenishment", "neutral"),
+        dashboardKpi("operation-planning", "待排产", counts.fbaSubmitted, "单", "已提交待排产", "/production/planning", "info"),
+        dashboardKpi("operation-producing", "生产中", counts.fbaInProduction, "单", "正在生产的备货单", "/replenishment", "warning"),
+        dashboardKpi("operation-outbound", "待出库", counts.fbaCompleted, "单", "生产完成待备货出库", "/inventory/fba-outbound", "success")
+      ],
+      pipelines: [
+        {
+          id: "operations",
+          title: "运营工作台",
+          items: [
+            pipelineItem(workbench, "confirm-replenishment", {
+              id: "my-replenishment",
+              label: "我的备货需求",
+              href: "/replenishment"
+            }),
+            pipelineItem(workbench, "confirm-replenishment", {
+              id: "confirm-replenishment",
+              label: "待确认备货单"
+            }),
+            pipelineItem(workbench, "active-production", {
+              id: "production-progress",
+              label: "生产进度跟踪",
+              href: "/production/orders"
+            }),
+            { ...outboundItem, id: "outbound-progress", label: "出库进度" }
+          ]
+        }
+      ],
+      recentSections: [
+        recentSection(workbench, "recent-fba", { title: "最近备货单" }),
+        recentSection(workbench, "recent-fba", {
+          id: "recent-outbound",
+          title: "最近出库单",
+          href: "/inventory/fba-outbound",
+          rows: outboundItem.items
+        }),
+        recentSection(workbench, "recent-production", { title: "生产进度" })
+      ]
+    };
+  }
+
+  if (role === "plant_manager") {
+    return {
+      ...workbench,
+      kpiCards: [
+        dashboardKpi("plant-planning", "待排产", counts.fbaSubmitted + counts.fbaAccepted, "单", "待接单或待建生产任务", "/production/planning", "info"),
+        dashboardKpi("plant-shortage", "缺料单", counts.shortageMaterials, "项", "需要优先处理的缺料", "/materials/requirements", "danger"),
+        dashboardKpi("plant-producing", "生产中", counts.productionInProgress, "单", "正在生产的任务", "/production/orders", "warning"),
+        dashboardKpi("plant-inbound", "今日入库", counts.pendingProductionInbound, "单", "待生产入库任务", "/inventory/inbound?tab=production", "success")
+      ],
+      pipelines: [
+        {
+          id: "plant-manager",
+          title: "厂长工作台",
+          items: [
+            pipelineItem(workbench, "pending-production-plan", {
+              id: "planning-pool",
+              label: "待排产池",
+              href: "/production/planning"
+            }),
+            pipelineItem(workbench, "shortage-production", {
+              id: "shortage-alert",
+              label: "缺料提醒",
+              href: "/materials/requirements"
+            }),
+            pipelineItem(workbench, "active-production", {
+              id: "active-production",
+              label: "生产中任务",
+              href: "/production/orders"
+            }),
+            pipelineItem(workbench, "production-inbound", {
+              id: "pending-production-inbound",
+              label: "待生产入库",
+              href: "/inventory/inbound?tab=production"
+            })
+          ]
+        }
+      ],
+      recentSections: [
+        recentSection(workbench, "recent-production", { title: "最近生产任务" }),
+        recentSection(workbench, "recent-fba", {
+          id: "recent-planning-fba",
+          title: "待排产备货单",
+          href: "/production/planning",
+          rows: pipelineItem(workbench, "pending-production-plan", {}).items
+        }),
+        recentSection(workbench, "recent-fba", {
+          id: "recent-shortage-materials",
+          title: "缺料物料",
+          href: "/materials/requirements",
+          rows: pipelineItem(workbench, "shortage-production", {}).items
+        })
+      ]
+    };
+  }
+
+  if (role === "procurement") {
+    return {
+      ...workbench,
+      kpiCards: [
+        dashboardKpi("procurement-pending", "待采购", counts.shortageMaterials + counts.purchaseDraft, "项", "缺料与未下单采购", "/materials/requirements", "danger"),
+        dashboardKpi("procurement-ordered", "已下单", counts.purchaseOrdered, "单", "已下单待到货", "/purchase/orders", "info"),
+        dashboardKpi("procurement-inbound", "待入库", counts.purchaseOrdered, "单", "待采购入库", "/inventory/inbound?tab=purchase", "warning"),
+        dashboardKpi("procurement-overdue", "采购延期", counts.overduePurchase, "单", "超过预计到货日期", "/purchase/orders", "danger")
+      ],
+      pipelines: [
+        {
+          id: "procurement",
+          title: "采购工作台",
+          items: [
+            pipelineItem(workbench, "pending-material-order", {
+              id: "pending-materials",
+              label: "待采购物料",
+              href: "/materials/requirements"
+            }),
+            pipelineItem(workbench, "ordered-not-arrived", {
+              id: "purchase-tracking",
+              label: "采购单跟踪",
+              href: "/purchase/orders"
+            }),
+            pipelineItem(workbench, "purchase-overdue", {
+              id: "arrival-reminder",
+              label: "到货提醒",
+              href: "/purchase/orders"
+            }),
+            pipelineItem(workbench, "purchase-inbound", {
+              id: "purchase-inbound",
+              label: "采购入库",
+              href: "/inventory/inbound?tab=purchase"
+            })
+          ]
+        }
+      ],
+      recentSections: [
+        recentSection(workbench, "recent-purchase", { title: "最近采购单" }),
+        recentSection(workbench, "recent-purchase", {
+          id: "recent-purchase-inbound",
+          title: "待入库采购单",
+          href: "/inventory/inbound?tab=purchase",
+          rows: pipelineItem(workbench, "purchase-inbound", {}).items
+        }),
+        recentSection(workbench, "recent-fba", {
+          id: "recent-shortage-demand",
+          title: "缺料需求",
+          href: "/materials/requirements",
+          rows: pipelineItem(workbench, "pending-material-order", {}).items
+        })
+      ]
+    };
+  }
+
+  if (role === "warehouse") {
+    return {
+      ...workbench,
+      kpiCards: [
+        dashboardKpi("warehouse-purchase-inbound", "待采购入库", counts.purchaseOrdered, "单", "已下单待入库采购", "/inventory/inbound?tab=purchase", "info"),
+        dashboardKpi("warehouse-production-inbound", "待生产入库", counts.pendingProductionInbound, "单", "生产完成待入库", "/inventory/inbound?tab=production", "warning"),
+        dashboardKpi("warehouse-outbound", "待出库", counts.fbaCompleted, "单", "待备货出库", "/inventory/fba-outbound", "success"),
+        dashboardKpi("warehouse-warning", "库存预警", stockWarningCount, "条", "低库存和异常库存", "/inventory/warnings", "danger")
+      ],
+      pipelines: [
+        {
+          id: "warehouse",
+          title: "仓库工作台",
+          items: [
+            pipelineItem(workbench, "purchase-inbound", {
+              label: "采购入库",
+              href: "/inventory/inbound?tab=purchase"
+            }),
+            pipelineItem(workbench, "production-inbound", {
+              label: "生产入库",
+              href: "/inventory/inbound?tab=production"
+            }),
+            outboundItem,
+            pipelineItem(workbench, "low-stock-suggestion", {
+              id: "stock-warning",
+              label: "库存预警",
+              count: stockWarningCount,
+              href: "/inventory/warnings",
+              tone: "danger"
+            })
+          ]
+        }
+      ],
+      recentSections: [
+        recentSection(workbench, "recent-fba", {
+          id: "recent-inventory-transactions",
+          title: "最近库存流水",
+          href: "/inventory/transactions",
+          rows: pipelineItem(workbench, "adjustment-review", {}).items
+        }),
+        recentSection(workbench, "recent-purchase", {
+          id: "recent-inbound",
+          title: "待入库单",
+          href: "/inventory/inbound",
+          rows: [
+            ...pipelineItem(workbench, "purchase-inbound", {}).items,
+            ...pipelineItem(workbench, "production-inbound", {}).items
+          ].slice(0, 5)
+        }),
+        recentSection(workbench, "recent-fba", {
+          id: "recent-outbound",
+          title: "待出库单",
+          href: "/inventory/fba-outbound",
+          rows: outboundItem.items
+        })
+      ]
+    };
+  }
+
+  return {
+    ...workbench,
+    kpiCards: [
+      dashboardKpi("admin-planning", "待排产", counts.fbaSubmitted + counts.fbaAccepted, "单", "待接单或待建生产任务", "/production/planning", "info"),
+      dashboardKpi("admin-producing", "生产中", counts.productionInProgress, "单", "正在生产的任务", "/production/orders", "warning"),
+      dashboardKpi("admin-purchase", "待采购", counts.shortageMaterials + counts.purchaseDraft, "项", "缺料与未下单", "/purchase/orders", "danger"),
+      dashboardKpi("admin-stock-warning", "库存预警", stockWarningCount, "条", "低库存和异常库存", "/inventory/warnings", "warning")
+    ],
+    pipelines: workbench.pipelines.map((pipeline) => ({
+      ...pipeline,
+      title:
+        pipeline.id === "operations"
+          ? "运营待办"
+          : pipeline.id === "production"
+            ? "厂长排产"
+            : pipeline.id === "purchase"
+              ? "采购跟踪"
+              : pipeline.id === "warehouse"
+                ? "仓库收发"
+                : pipeline.title
+    })),
+    recentSections: [
+      recentSection(workbench, "recent-fba", { title: "最近备货单" }),
+      recentSection(workbench, "recent-production", { title: "最近生产任务" }),
+      recentSection(workbench, "recent-purchase", { title: "最近采购单" })
+    ],
+    alertSummary: {
+      total: stockWarningCount + counts.overdueFba + counts.overdueProduction + counts.overduePurchase + inboundCount,
+      parts: [
+        { label: "库存预警", count: stockWarningCount },
+        { label: "交期延误", count: counts.overdueFba + counts.overdueProduction },
+        { label: "采购延期", count: counts.overduePurchase },
+        { label: "待入库", count: inboundCount }
+      ]
+    }
+  };
+}
+
 export async function getRoleDashboard(
   role: UserRole
 ): Promise<RoleDashboardData> {
   const counts = await getCounts();
-  const workbench = await getDashboardWorkbench(counts);
+  const workbench = filterDashboardWorkbenchByRole(
+    role,
+    await getDashboardWorkbench(counts),
+    counts
+  );
 
   if (role === "operations") {
     const [

@@ -33,43 +33,19 @@ export const navigationGroups: NavigationGroup[] = [
     items: []
   },
   {
-    label: "数据驾驶舱",
-    section: "核心",
-    href: "/data-dashboard",
-    roles: allRoles,
-    items: []
-  },
-  {
-    label: "AI 助手",
-    section: "核心",
-    href: "/ai-assistant",
-    roles: allRoles,
-    items: []
-  },
-  {
-    label: "备货管理",
-    section: "业务",
-    items: []
-  },
-  {
-    label: "备货管理",
+    label: "业务",
     section: "业务",
     items: [
       {
         label: "备货需求",
         href: "/replenishment",
         roles: ["operations", "plant_manager", "admin"]
-      },
-      {
-        label: "备货出库",
-        href: "/inventory/fba-outbound",
-        roles: ["warehouse", "operations", "admin"]
       }
     ]
   },
   {
-    label: "生产管理",
-    section: "业务",
+    label: "生产",
+    section: "生产",
     items: [
       {
         label: "厂长排产",
@@ -89,8 +65,8 @@ export const navigationGroups: NavigationGroup[] = [
     ]
   },
   {
-    label: "采购管理",
-    section: "业务",
+    label: "采购",
+    section: "采购",
     items: [
       {
         label: "采购单",
@@ -105,9 +81,14 @@ export const navigationGroups: NavigationGroup[] = [
     ]
   },
   {
-    label: "库存管理",
-    section: "业务",
+    label: "仓库",
+    section: "仓库",
     items: [
+      {
+        label: "备货出库",
+        href: "/inventory/fba-outbound",
+        roles: ["warehouse", "operations", "admin"]
+      },
       {
         label: "原材料库存",
         href: "/inventory/materials",
@@ -150,6 +131,11 @@ export const navigationGroups: NavigationGroup[] = [
         label: "原材料管理",
         href: "/admin/materials",
         roles: ["admin", "procurement", "warehouse"]
+      },
+      {
+        label: "品牌管理",
+        href: "/admin/brands",
+        roles: ["admin"]
       },
       {
         label: "供应商管理",
