@@ -634,6 +634,8 @@ export default function ReplenishmentPage() {
   const [totalRequests, setTotalRequests] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadingOptions, setLoadingOptions] = useState(true);
+  const [pickerSkuOptions, setPickerSkuOptions] = useState<FbaReplenishmentSkuOption[]>([]);
+  const [pickerProducts, setPickerProducts] = useState<Product[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [savingDetail, setSavingDetail] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -725,8 +727,8 @@ export default function ReplenishmentPage() {
         const skuData = await searchFbaReplenishmentSkuOptions(pickerSearch, 100);
 
         if (!cancelled) {
-          setSkuOptions(skuData);
-          setProducts(getProductsFromSkuOptions(skuData));
+          setPickerSkuOptions(skuData);
+          setPickerProducts(getProductsFromSkuOptions(skuData));
         }
       } catch (error) {
         if (!cancelled) {
@@ -777,6 +779,25 @@ export default function ReplenishmentPage() {
 
     return groups;
   }, [skuOptions]);
+  const pickerSkusByProductId = useMemo(() => {
+    const groups = new Map<string, FbaReplenishmentSkuOption[]>();
+
+    pickerSkuOptions.forEach((sku) => {
+      if (!sku.product_id) {
+        return;
+      }
+
+      const current = groups.get(sku.product_id) ?? [];
+      current.push(sku);
+      groups.set(sku.product_id, current);
+    });
+
+    return groups;
+  }, [pickerSkuOptions]);
+  const pickerSkuById = useMemo(
+    () => new Map(pickerSkuOptions.map((sku) => [sku.id, sku])),
+    [pickerSkuOptions]
+  );
   const draftSkuCount = draftItems.length;
   const draftSpuCount = useMemo(() => getDraftSpuCount(draftItems), [draftItems]);
   const draftTotalQuantity = useMemo(
@@ -805,8 +826,8 @@ export default function ReplenishmentPage() {
   const filteredPickerProducts = useMemo(() => {
     const keyword = pickerSearch.trim().toLowerCase();
 
-    return products.filter((product) => {
-      const productSkus = skusByProductId.get(product.id) ?? [];
+    return pickerProducts.filter((product) => {
+      const productSkus = pickerSkusByProductId.get(product.id) ?? [];
 
       if (productSkus.length === 0) {
         return false;
@@ -833,13 +854,13 @@ export default function ReplenishmentPage() {
 
       return productText.includes(keyword) || skuText.includes(keyword);
     });
-  }, [pickerSearch, products, skusByProductId]);
+  }, [pickerSearch, pickerProducts, pickerSkusByProductId]);
   const activePickerProduct =
     filteredPickerProducts.find((product) => product.id === activePickerProductId) ??
     filteredPickerProducts[0] ??
     null;
   const activePickerSkus = activePickerProduct
-    ? skusByProductId.get(activePickerProduct.id) ?? []
+    ? pickerSkusByProductId.get(activePickerProduct.id) ?? []
     : [];
   const selectedPickerSkuCount = useMemo(
     () => Object.values(pickerSkuState).filter((state) => state.checked).length,
@@ -1004,6 +1025,10 @@ export default function ReplenishmentPage() {
   };
 
   const openPickerModal = () => {
+    // Initialize picker with global SKU data so list shows immediately on open
+    setPickerSkuOptions(skuOptions);
+    setPickerProducts(products);
+
     const firstProductWithSku = products.find(
       (product) => (skusByProductId.get(product.id) ?? []).length > 0
     );
@@ -1101,7 +1126,7 @@ export default function ReplenishmentPage() {
     const selectedRows = Object.entries(pickerSkuState)
       .filter(([, state]) => state.checked)
       .map(([skuId, state]) => ({
-        sku: skuById.get(skuId),
+        sku: pickerSkuById.get(skuId),
         quantity: state.quantity,
         remark: state.remark
       }));
