@@ -3,14 +3,24 @@
 import { useEffect, useMemo, useState } from "react";
 import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { Modal } from "@/components/Modal";
+import { PageHeader } from "@/components/ui/PageHeader";
 import {
   adjustInventoryByWarehouseSku,
   bulkAdjustInventory,
+  bulkCreateOtherInbound,
+  bulkCreateOtherOutbound,
+  createOtherInbound,
+  createOtherOutbound,
   getInventoryForAdjustment,
+  getInventoryTransactions,
   getRecentAdjustmentTransactions,
   getSkuOptionsForInventory,
   getWarehousesForFilter,
   inventoryAdjustmentImportFields,
+  otherInboundImportFields,
+  otherOutboundImportFields,
+  validateOtherInboundImportRows,
+  validateOtherOutboundImportRows,
   validateInventoryAdjustmentImportRows,
   type InventorySkuOption,
   type InventoryAdjustmentMode,
@@ -19,8 +29,12 @@ import {
   type InventoryAdjustmentRow,
   type InventoryAdjustmentSkuTypeFilter,
   type InventoryTransactionRow,
-  type InventoryTransactionWarehouse
+  type InventoryTransactionWarehouse,
+  type OtherInventoryMovementValidationRow
 } from "@/lib/api/inventory";
+
+type InventoryMovementTab = "other_in" | "other_out" | "adjustment" | "records";
+type OtherMovementKind = "inbound" | "outbound";
 
 const skuTypeOptions: Array<{
   value: InventoryAdjustmentSkuTypeFilter;
@@ -58,6 +72,16 @@ const skuTypeLabels: Record<string, string> = {
   finished_good: "成品",
   finished_product: "成品"
 };
+
+const movementTabs: Array<{
+  value: InventoryMovementTab;
+  label: string;
+}> = [
+  { value: "other_in", label: "其他入库" },
+  { value: "other_out", label: "其他出库" },
+  { value: "adjustment", label: "库存调整" },
+  { value: "records", label: "收发记录" }
+];
 
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) {
@@ -124,6 +148,16 @@ function parseAdjustmentRemark(notes: string | null) {
   return remark;
 }
 
+function parseOtherMovementReason(notes: string | null) {
+  const match = notes?.match(/[入出]库原因：(.+?)(?:\n|$)/);
+
+  return match?.[1]?.trim() || "-";
+}
+
+function parseOtherMovementRemark(notes: string | null) {
+  return parseAdjustmentRemark(notes);
+}
+
 function getAdjustmentSignedQuantity(transaction: InventoryTransactionRow) {
   const match = transaction.notes?.match(/调整差异：\s*([+-]?\d+(?:\.\d+)?)/);
 
@@ -148,6 +182,80 @@ function formatAdjustmentQuantity(transaction: InventoryTransactionRow) {
   return formatQuantity(signedQuantity);
 }
 
+function getTransactionSignedQuantity(transaction: InventoryTransactionRow) {
+  if (transaction.transaction_type === "adjustment") {
+    return getAdjustmentSignedQuantity(transaction);
+  }
+
+  const quantity = Number(transaction.quantity);
+
+  if (
+    transaction.transaction_type === "material_out" ||
+    transaction.transaction_type === "product_out"
+  ) {
+    return -Math.abs(quantity);
+  }
+
+  return Math.abs(quantity);
+}
+
+function formatMovementQuantity(transaction: InventoryTransactionRow) {
+  const signedQuantity = getTransactionSignedQuantity(transaction);
+
+  if (signedQuantity > 0) {
+    return `+${formatQuantity(signedQuantity)}`;
+  }
+
+  if (signedQuantity < 0) {
+    return `-${formatQuantity(Math.abs(signedQuantity))}`;
+  }
+
+  return formatQuantity(signedQuantity);
+}
+
+function getTransactionItemCode(transaction: InventoryTransactionRow) {
+  return (
+    transaction.material?.material_code ??
+    transaction.product_sku?.sku_code ??
+    transaction.sku?.sku_code ??
+    "-"
+  );
+}
+
+function getTransactionItemName(transaction: InventoryTransactionRow) {
+  return (
+    transaction.material?.material_name ??
+    transaction.product_sku?.sku_name ??
+    transaction.sku?.sku_name ??
+    "-"
+  );
+}
+
+function getTransactionItemSubtitle(transaction: InventoryTransactionRow) {
+  return (
+    transaction.material?.specs ??
+    transaction.product_sku?.product?.name ??
+    transaction.sku?.product?.name ??
+    "-"
+  );
+}
+
+function getTransactionTypeLabel(transaction: InventoryTransactionRow) {
+  if (transaction.transaction_type === "adjustment") {
+    return "库存调整";
+  }
+
+  const isInbound =
+    transaction.transaction_type === "material_in" ||
+    transaction.transaction_type === "product_in";
+
+  return isInbound ? "其他入库" : "其他出库";
+}
+
+function getMovementSkuTypeLabel(sku: InventorySkuOption) {
+  return getSkuTypeLabel(sku.sku_type);
+}
+
 function getOperatorLabel(transaction: InventoryTransactionRow) {
   return (
     transaction.operator?.full_name ||
@@ -158,10 +266,14 @@ function getOperatorLabel(transaction: InventoryTransactionRow) {
 }
 
 export default function InventoryAdjustmentsPage() {
+  const [activeTab, setActiveTab] = useState<InventoryMovementTab>("other_in");
   const [inventoryItems, setInventoryItems] = useState<InventoryAdjustmentRow[]>(
     []
   );
   const [recentAdjustments, setRecentAdjustments] = useState<
+    InventoryTransactionRow[]
+  >([]);
+  const [movementRecords, setMovementRecords] = useState<
     InventoryTransactionRow[]
   >([]);
   const [warehouses, setWarehouses] = useState<InventoryTransactionWarehouse[]>(
@@ -177,6 +289,16 @@ export default function InventoryAdjustmentsPage() {
   const [newAdjustmentSkuKeyword, setNewAdjustmentSkuKeyword] = useState("");
   const [adjustmentPickerOpen, setAdjustmentPickerOpen] = useState(false);
   const [adjustmentImportOpen, setAdjustmentImportOpen] = useState(false);
+  const [otherMovementOpen, setOtherMovementOpen] = useState(false);
+  const [otherMovementImportOpen, setOtherMovementImportOpen] = useState(false);
+  const [otherMovementKind, setOtherMovementKind] =
+    useState<OtherMovementKind>("inbound");
+  const [otherMovementWarehouseId, setOtherMovementWarehouseId] = useState("");
+  const [otherMovementSkuId, setOtherMovementSkuId] = useState("");
+  const [otherMovementSkuKeyword, setOtherMovementSkuKeyword] = useState("");
+  const [otherMovementQuantity, setOtherMovementQuantity] = useState("");
+  const [otherMovementReason, setOtherMovementReason] = useState("");
+  const [otherMovementNotes, setOtherMovementNotes] = useState("");
   const [selectedItem, setSelectedItem] =
     useState<InventoryAdjustmentRow | null>(null);
   const [adjustmentMode, setAdjustmentMode] =
@@ -218,6 +340,52 @@ export default function InventoryAdjustmentsPage() {
         .some((value) => value?.toLowerCase().includes(keyword));
     });
   }, [newAdjustmentSkuKeyword, skuOptions, skuType]);
+
+  const filteredOtherMovementSkuOptions = useMemo(() => {
+    const keyword = otherMovementSkuKeyword.trim().toLowerCase();
+
+    if (!keyword) {
+      return skuOptions;
+    }
+
+    return skuOptions.filter((sku) =>
+      [sku.sku_code, sku.sku_name, sku.product?.name, sku.material?.material_name]
+        .filter(Boolean)
+        .some((value) => value?.toLowerCase().includes(keyword))
+    );
+  }, [otherMovementSkuKeyword, skuOptions]);
+
+  const selectedOtherMovementSku = useMemo(
+    () => skuOptions.find((sku) => sku.id === otherMovementSkuId) ?? null,
+    [otherMovementSkuId, skuOptions]
+  );
+
+  const filteredMovementRecords = useMemo(() => {
+    const keyword = skuKeyword.trim().toLowerCase();
+
+    return movementRecords.filter((transaction) => {
+      const matchesKeyword =
+        !keyword ||
+        [
+          transaction.transaction_no,
+          getTransactionItemCode(transaction),
+          getTransactionItemName(transaction),
+          getTransactionItemSubtitle(transaction),
+          transaction.notes ?? ""
+        ]
+          .join(" / ")
+          .toLowerCase()
+          .includes(keyword);
+      const matchesWarehouse =
+        !warehouseId || transaction.warehouse_id === warehouseId;
+      const matchesSkuType =
+        skuType === "all" ||
+        (skuType === "material" && transaction.material) ||
+        (skuType === "finished_good" && !transaction.material);
+
+      return matchesKeyword && matchesWarehouse && matchesSkuType;
+    });
+  }, [movementRecords, skuKeyword, skuType, warehouseId]);
 
   const adjustmentPreview = useMemo(() => {
     if (!selectedItem) {
@@ -284,23 +452,54 @@ export default function InventoryAdjustmentsPage() {
       setLoading(true);
       setErrorMessage("");
 
-      const [inventoryData, warehouseData, adjustmentData, skuData] =
+      const [
+        inventoryData,
+        warehouseData,
+        adjustmentData,
+        inboundTransactionData,
+        outboundTransactionData,
+        skuData
+      ] =
         await Promise.all([
-        getInventoryForAdjustment(filters),
-        getWarehousesForFilter(),
-        getRecentAdjustmentTransactions(),
-        getSkuOptionsForInventory()
+          getInventoryForAdjustment(filters),
+          getWarehousesForFilter(),
+          getRecentAdjustmentTransactions(),
+          getInventoryTransactions({ transactionType: "material_in" }),
+          getInventoryTransactions({ transactionType: "material_out" }),
+          getSkuOptionsForInventory()
+        ]);
+      const [productInboundData, productOutboundData] = await Promise.all([
+        getInventoryTransactions({ transactionType: "product_in" }),
+        getInventoryTransactions({ transactionType: "product_out" })
       ]);
+      const otherInboundRecords = [...inboundTransactionData, ...productInboundData]
+        .filter(
+          (transaction) =>
+            !transaction.purchase_order_id &&
+            !transaction.production_order_id &&
+            !transaction.replenishment_request_id
+        );
+      const otherOutboundRecords = [...outboundTransactionData, ...productOutboundData]
+        .filter((transaction) => !transaction.replenishment_request_id);
 
       setInventoryItems(inventoryData);
       setWarehouses(warehouseData);
       setRecentAdjustments(adjustmentData);
+      setMovementRecords(
+        [...otherInboundRecords, ...otherOutboundRecords, ...adjustmentData].sort(
+          (first, second) =>
+            new Date(second.occurred_at).getTime() -
+            new Date(first.occurred_at).getTime()
+        )
+      );
       setSkuOptions(skuData.filter((sku) => sku.status === "active"));
       setNewAdjustmentWarehouseId((current) => current || warehouseData[0]?.id || "");
+      setOtherMovementWarehouseId((current) => current || warehouseData[0]?.id || "");
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setInventoryItems([]);
       setRecentAdjustments([]);
+      setMovementRecords([]);
       setSkuOptions([]);
     } finally {
       setLoading(false);
@@ -315,6 +514,7 @@ export default function InventoryAdjustmentsPage() {
     if (initialWarehouseId) {
       setWarehouseId(initialWarehouseId);
       setNewAdjustmentWarehouseId(initialWarehouseId);
+      setOtherMovementWarehouseId(initialWarehouseId);
     }
 
     if (initialSkuKeyword) {
@@ -350,7 +550,10 @@ export default function InventoryAdjustmentsPage() {
   useEffect(() => {
     const timeoutId = window.setTimeout(async () => {
       try {
-        const skuData = await getSkuOptionsForInventory(newAdjustmentSkuKeyword, 20);
+        const skuData = await getSkuOptionsForInventory(
+          newAdjustmentSkuKeyword || otherMovementSkuKeyword,
+          20
+        );
         setSkuOptions(skuData.filter((sku) => sku.status === "active"));
       } catch (error) {
         setErrorMessage(getErrorMessage(error));
@@ -358,7 +561,7 @@ export default function InventoryAdjustmentsPage() {
     }, 300);
 
     return () => window.clearTimeout(timeoutId);
-  }, [newAdjustmentSkuKeyword]);
+  }, [newAdjustmentSkuKeyword, otherMovementSkuKeyword]);
 
   const submitFilters = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -409,6 +612,84 @@ export default function InventoryAdjustmentsPage() {
     setAdjustmentNotes("");
     setErrorMessage("");
     setSuccessMessage("");
+  };
+
+  const openOtherMovementForm = (kind: OtherMovementKind) => {
+    setOtherMovementKind(kind);
+    setOtherMovementOpen(true);
+    setOtherMovementWarehouseId(
+      otherMovementWarehouseId || warehouseId || warehouses[0]?.id || ""
+    );
+    setOtherMovementSkuKeyword(skuKeyword);
+    setOtherMovementSkuId("");
+    setOtherMovementQuantity("");
+    setOtherMovementReason("");
+    setOtherMovementNotes("");
+    setErrorMessage("");
+    setSuccessMessage("");
+  };
+
+  const openOtherMovementImport = (kind: OtherMovementKind) => {
+    setOtherMovementKind(kind);
+    setOtherMovementOpen(false);
+    setOtherMovementImportOpen(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+  };
+
+  const submitOtherMovement = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    try {
+      setSubmitting(true);
+      setErrorMessage("");
+      setSuccessMessage("");
+
+      const input = {
+        warehouseId: otherMovementWarehouseId,
+        skuId: otherMovementSkuId,
+        quantity: Number(otherMovementQuantity),
+        reason: otherMovementReason,
+        notes: otherMovementNotes
+      };
+
+      if (otherMovementKind === "inbound") {
+        await createOtherInbound(input);
+      } else {
+        await createOtherOutbound(input);
+      }
+
+      setSuccessMessage(
+        `${selectedOtherMovementSku?.sku_code ?? "该 SKU"} ${
+          otherMovementKind === "inbound" ? "其他入库" : "其他出库"
+        }成功。`
+      );
+      setOtherMovementOpen(false);
+      await loadPageData();
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const importOtherMovementRows = async (
+    rows: OtherInventoryMovementValidationRow[]
+  ) => {
+    const validRows = rows.flatMap((row) => (row.data ? [row.data] : []));
+    const result =
+      otherMovementKind === "inbound"
+        ? await bulkCreateOtherInbound(validRows)
+        : await bulkCreateOtherOutbound(validRows);
+
+    setSuccessMessage(
+      `批量${otherMovementKind === "inbound" ? "其他入库" : "其他出库"}完成：成功 ${
+        result.successCount
+      } 条，失败 ${result.failedCount} 条。`
+    );
+    await loadPageData();
+
+    return result;
   };
 
   const openWarehouseSkuAdjustmentForm = () => {
@@ -554,16 +835,39 @@ export default function InventoryAdjustmentsPage() {
 
   return (
     <main className="pageShell">
-      <section className="pageHero">
-        <div>
-          <p className="eyebrow">仓库管理</p>
-          <h2>库存调整</h2>
-          <p>
-            主要用于系统上线期初库存录入，以及后续盘点时把账面库存修正到真实数量。
-          </p>
-        </div>
-        <span className="statusPill">Supabase 数据</span>
-      </section>
+      <PageHeader
+        title="库存收发"
+        primaryAction={
+          activeTab === "other_in" || activeTab === "other_out" ? (
+            <button
+              className="primaryButton"
+              type="button"
+              onClick={() =>
+                openOtherMovementForm(
+                  activeTab === "other_in" ? "inbound" : "outbound"
+                )
+              }
+              disabled={loading}
+            >
+              {activeTab === "other_in" ? "新建其他入库" : "新建其他出库"}
+            </button>
+          ) : activeTab === "adjustment" ? (
+            <button
+              className="primaryButton"
+              type="button"
+              onClick={openAdjustmentPicker}
+              disabled={loading}
+            >
+              新建调整单
+            </button>
+          ) : undefined
+        }
+        secondaryActions={
+          <button type="button" onClick={() => loadPageData()} disabled={loading}>
+            {loading ? "正在刷新..." : "刷新"}
+          </button>
+        }
+      />
 
       {successMessage ? (
         <div className="successNotice">
@@ -580,6 +884,80 @@ export default function InventoryAdjustmentsPage() {
       ) : null}
 
       <section className="listPanel">
+        <div className="tabBar" role="tablist" aria-label="库存收发类型">
+          {movementTabs.map((tab) => (
+            <button
+              className={activeTab === tab.value ? "tabButton active" : "tabButton"}
+              key={tab.value}
+              type="button"
+              onClick={() => setActiveTab(tab.value)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {activeTab === "other_in" || activeTab === "other_out" ? (
+          <>
+            <div className="sectionHeader">
+              <div>
+                <p className="eyebrow">非采购 / 非生产 / 非备货</p>
+                <h3>{activeTab === "other_in" ? "其他入库" : "其他出库"}</h3>
+              </div>
+              <div className="rowActions">
+                <button
+                  className="primaryButton"
+                  type="button"
+                  onClick={() =>
+                    openOtherMovementForm(
+                      activeTab === "other_in" ? "inbound" : "outbound"
+                    )
+                  }
+                  disabled={loading}
+                >
+                  {activeTab === "other_in" ? "新建其他入库" : "新建其他出库"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    openOtherMovementImport(
+                      activeTab === "other_in" ? "inbound" : "outbound"
+                    )
+                  }
+                  disabled={loading}
+                >
+                  批量上传
+                </button>
+              </div>
+            </div>
+
+            <div className="detailGrid">
+              <div className="detailItem">
+                <span>适用场景</span>
+                <strong>
+                  {activeTab === "other_in"
+                    ? "样品入库、退货入库、手工补录、其他原因入库"
+                    : "报废出库、领料出库、样品出库、其他原因出库"}
+                </strong>
+              </div>
+              <div className="detailItem">
+                <span>必填信息</span>
+                <strong>仓库、物料/产品、数量和原因</strong>
+              </div>
+              <div className="detailItem">
+                <span>库存流水</span>
+                <strong>
+                  {activeTab === "other_in"
+                    ? "写入 material_in / product_in"
+                    : "写入 material_out / product_out，校验库存不为负"}
+                </strong>
+              </div>
+            </div>
+          </>
+        ) : null}
+
+        {activeTab === "adjustment" ? (
+          <>
         <div className="sectionHeader">
           <div>
             <p className="eyebrow">当前库存</p>
@@ -746,62 +1124,145 @@ export default function InventoryAdjustmentsPage() {
             </table>
           </div>
         ) : null}
-      </section>
-
-      <section className="listPanel">
-        <div className="sectionHeader">
-          <div>
-            <p className="eyebrow">最近流水</p>
-            <h3>最近库存调整记录</h3>
-          </div>
-        </div>
-
-        {loading ? (
-          <div className="debugNotice">正在读取最近库存调整记录...</div>
+          </>
         ) : null}
 
-        {!loading && recentAdjustments.length === 0 ? (
-          <div className="emptyState">暂无库存调整流水</div>
-        ) : null}
+        {activeTab === "records" ? (
+          <>
+            <div className="sectionHeader">
+              <div>
+                <p className="eyebrow">收发记录</p>
+                <h3>库存收发记录</h3>
+              </div>
+            </div>
 
-        {!loading && recentAdjustments.length > 0 ? (
-          <div className="tableWrap">
-            <table className="dataTable adjustmentTransactionsTable">
-              <thead>
-                <tr>
-                  <th>操作时间</th>
-                  <th>SKU 编码</th>
-                  <th>SKU 名称</th>
-                  <th>仓库</th>
-                  <th>调整数量</th>
-                  <th>调整原因</th>
-                  <th>备注</th>
-                  <th>操作人</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recentAdjustments.map((transaction) => (
-                  <tr key={transaction.id}>
-                    <td>{formatDateTime(transaction.occurred_at)}</td>
-                    <td>{transaction.sku?.sku_code ?? "-"}</td>
-                    <td>{transaction.sku?.sku_name ?? "-"}</td>
-                    <td>
-                      <strong>{transaction.warehouse?.name ?? "-"}</strong>
-                      <span>{transaction.warehouse?.warehouse_code ?? "-"}</span>
-                    </td>
-                    <td className="quantityCell">
-                      {formatAdjustmentQuantity(transaction)}
-                    </td>
-                    <td>{parseAdjustmentReason(transaction.notes)}</td>
-                    <td className="notesCell">
-                      {parseAdjustmentRemark(transaction.notes)}
-                    </td>
-                    <td>{getOperatorLabel(transaction)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+            <form
+              className="listToolbar adjustmentToolbar"
+              onSubmit={submitFilters}
+            >
+              <label>
+                仓库
+                <select
+                  value={warehouseId}
+                  onChange={(event) => setWarehouseId(event.target.value)}
+                  disabled={loading}
+                >
+                  <option value="">全部仓库</option>
+                  {warehouses.map((warehouse) => (
+                    <option key={warehouse.id} value={warehouse.id}>
+                      {warehouse.warehouse_code} / {warehouse.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                SKU 类型
+                <select
+                  value={skuType}
+                  onChange={(event) =>
+                    setSkuType(
+                      event.target.value as InventoryAdjustmentSkuTypeFilter
+                    )
+                  }
+                  disabled={loading}
+                >
+                  {skuTypeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                搜索
+                <input
+                  value={skuKeyword}
+                  onChange={(event) => setSkuKeyword(event.target.value)}
+                  placeholder="流水号 / SKU / 物料 / 产品 / 原因"
+                  disabled={loading}
+                />
+              </label>
+
+              <div className="rowActions">
+                <button type="submit" disabled={loading}>
+                  {loading ? "查询中..." : "查询"}
+                </button>
+                <button type="button" onClick={resetFilters} disabled={loading}>
+                  重置
+                </button>
+              </div>
+            </form>
+
+            {loading ? (
+              <div className="debugNotice">正在读取库存收发记录...</div>
+            ) : null}
+
+            {!loading && filteredMovementRecords.length === 0 ? (
+              <div className="emptyState">暂无库存收发记录</div>
+            ) : null}
+
+            {!loading && filteredMovementRecords.length > 0 ? (
+              <div className="tableWrap">
+                <table className="dataTable adjustmentTransactionsTable">
+                  <thead>
+                    <tr>
+                      <th>流水号</th>
+                      <th>类型</th>
+                      <th>物料/产品</th>
+                      <th>仓库</th>
+                      <th>数量</th>
+                      <th>原因</th>
+                      <th>备注</th>
+                      <th>操作时间</th>
+                      <th>操作人</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredMovementRecords.map((transaction) => (
+                      <tr key={transaction.id}>
+                        <td>{transaction.transaction_no}</td>
+                        <td>
+                          <span
+                            className={`tablePill movement-type-${transaction.transaction_type}`}
+                          >
+                            {getTransactionTypeLabel(transaction)}
+                          </span>
+                        </td>
+                        <td>
+                          <strong>{getTransactionItemCode(transaction)}</strong>
+                          <span>
+                            {getTransactionItemName(transaction)} /{" "}
+                            {getTransactionItemSubtitle(transaction)}
+                          </span>
+                        </td>
+                        <td>
+                          <strong>{transaction.warehouse?.name ?? "-"}</strong>
+                          <span>{transaction.warehouse?.warehouse_code ?? "-"}</span>
+                        </td>
+                        <td className="quantityCell">
+                          {formatMovementQuantity(transaction)}
+                        </td>
+                        <td>
+                          {transaction.transaction_type === "adjustment"
+                            ? parseAdjustmentReason(transaction.notes)
+                            : parseOtherMovementReason(transaction.notes)}
+                        </td>
+                        <td className="notesCell">
+                          {transaction.transaction_type === "adjustment"
+                            ? parseAdjustmentRemark(transaction.notes)
+                            : parseOtherMovementRemark(transaction.notes)}
+                        </td>
+                        <td>{formatDateTime(transaction.occurred_at)}</td>
+                        <td>{getOperatorLabel(transaction)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+          </>
         ) : null}
       </section>
 
@@ -1178,6 +1639,219 @@ export default function InventoryAdjustmentsPage() {
             <div className="debugNotice">
               预览通过 {validRows.length} 行：直接修正 {setToRows} 行，增加库存{" "}
               {increaseRows} 行，减少库存 {decreaseRows} 行。
+            </div>
+          );
+        }}
+      />
+
+      {otherMovementOpen ? (
+        <Modal
+          open={otherMovementOpen}
+          eyebrow={otherMovementKind === "inbound" ? "其他入库" : "其他出库"}
+          title={
+            otherMovementKind === "inbound"
+              ? "新建其他入库单"
+              : "新建其他出库单"
+          }
+          maxWidth="xl"
+          onClose={() => {
+            if (!submitting) {
+              setOtherMovementOpen(false);
+            }
+          }}
+        >
+          <form className="dataForm inboundForm" onSubmit={submitOtherMovement}>
+            <label>
+              {otherMovementKind === "inbound" ? "入库仓库" : "出库仓库"}
+              <select
+                value={otherMovementWarehouseId}
+                onChange={(event) => setOtherMovementWarehouseId(event.target.value)}
+                disabled={submitting}
+                required
+              >
+                <option value="">请选择仓库</option>
+                {warehouses.map((warehouse) => (
+                  <option key={warehouse.id} value={warehouse.id}>
+                    {warehouse.warehouse_code} / {warehouse.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              搜索 SKU
+              <input
+                value={otherMovementSkuKeyword}
+                onChange={(event) => {
+                  setOtherMovementSkuKeyword(event.target.value);
+                  setOtherMovementSkuId("");
+                }}
+                placeholder="输入 SKU 编码 / 名称 / 产品名称"
+                disabled={submitting}
+              />
+            </label>
+
+            <label>
+              物料 / 产品
+              <select
+                value={otherMovementSkuId}
+                onChange={(event) => setOtherMovementSkuId(event.target.value)}
+                disabled={submitting}
+                required
+              >
+                <option value="">请选择物料 / 产品</option>
+                {filteredOtherMovementSkuOptions.map((sku) => (
+                  <option key={sku.id} value={sku.id}>
+                    {sku.sku_code} / {sku.sku_name} / {getMovementSkuTypeLabel(sku)} /{" "}
+                    {sku.unit}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              {otherMovementKind === "inbound" ? "入库数量" : "出库数量"}
+              <input
+                min="0.0001"
+                step="0.0001"
+                type="number"
+                value={otherMovementQuantity}
+                onChange={(event) => setOtherMovementQuantity(event.target.value)}
+                disabled={submitting}
+                required
+              />
+            </label>
+
+            <label>
+              {otherMovementKind === "inbound" ? "入库原因" : "出库原因"}
+              <input
+                value={otherMovementReason}
+                onChange={(event) => setOtherMovementReason(event.target.value)}
+                placeholder={
+                  otherMovementKind === "inbound"
+                    ? "例如样品入库、退货入库、手工补录"
+                    : "例如报废出库、领料出库、样品出库"
+                }
+                disabled={submitting}
+                required
+              />
+            </label>
+
+            <label className="fullField">
+              备注
+              <textarea
+                value={otherMovementNotes}
+                onChange={(event) => setOtherMovementNotes(event.target.value)}
+                placeholder="可填写来源、用途或盘点说明"
+                disabled={submitting}
+              />
+            </label>
+
+            <div className="fullField adjustmentPreviewBox">
+              <span>库存影响</span>
+              <strong>
+                {otherMovementKind === "inbound"
+                  ? "提交后会增加库存，并写入库存流水。"
+                  : "提交前会校验可用库存，不能导致库存为负。"}
+              </strong>
+              <div className="rowActions">
+                <button
+                  type="button"
+                  onClick={() => openOtherMovementImport(otherMovementKind)}
+                  disabled={submitting}
+                >
+                  打开批量上传
+                </button>
+              </div>
+            </div>
+
+            <div className="modalFooter fullField">
+              <span>原因、仓库、物料/产品和数量为必填。</span>
+              <div className="rowActions">
+                <button
+                  type="button"
+                  onClick={() => setOtherMovementOpen(false)}
+                  disabled={submitting}
+                >
+                  取消
+                </button>
+                <button
+                  className="primaryButton"
+                  type="submit"
+                  disabled={
+                    submitting ||
+                    !otherMovementWarehouseId ||
+                    !otherMovementSkuId ||
+                    Number(otherMovementQuantity) <= 0 ||
+                    !otherMovementReason.trim()
+                  }
+                >
+                  {submitting
+                    ? "正在提交..."
+                    : otherMovementKind === "inbound"
+                      ? "确认其他入库"
+                      : "确认其他出库"}
+                </button>
+              </div>
+            </div>
+          </form>
+        </Modal>
+      ) : null}
+
+      <BulkImportDialog
+        open={otherMovementImportOpen}
+        title={
+          otherMovementKind === "inbound"
+            ? "批量导入其他入库"
+            : "批量导入其他出库"
+        }
+        description="上传后先预览和校验，不会直接写入数据库。确认导入后会批量更新库存并写入库存流水。"
+        templateFileName={
+          otherMovementKind === "inbound"
+            ? "other-inbound-template.csv"
+            : "other-outbound-template.csv"
+        }
+        fields={
+          otherMovementKind === "inbound"
+            ? otherInboundImportFields
+            : otherOutboundImportFields
+        }
+        sampleRows={[
+          otherMovementKind === "inbound"
+            ? {
+                仓库编码: "WH-FIN-001",
+                "SKU 编码": "SKU-001",
+                入库数量: "100",
+                入库原因: "样品入库",
+                备注: "手工补录"
+              }
+            : {
+                仓库编码: "WH-FIN-001",
+                "SKU 编码": "SKU-001",
+                出库数量: "10",
+                出库原因: "样品出库",
+                备注: "业务样品"
+              }
+        ]}
+        validateRows={
+          otherMovementKind === "inbound"
+            ? validateOtherInboundImportRows
+            : validateOtherOutboundImportRows
+        }
+        onImport={importOtherMovementRows}
+        onClose={() => setOtherMovementImportOpen(false)}
+        renderPreviewSummary={(rows) => {
+          const validRows = rows.filter((row) => row.errors.length === 0);
+          const totalQuantity = validRows.reduce(
+            (sum, row) => sum + Number(row.data?.quantity ?? 0),
+            0
+          );
+
+          return (
+            <div className="debugNotice">
+              预览通过 {validRows.length} 行，合计
+              {otherMovementKind === "inbound" ? "入库" : "出库"}{" "}
+              {formatQuantity(totalQuantity)} 件。
             </div>
           );
         }}

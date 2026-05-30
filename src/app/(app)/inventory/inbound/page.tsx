@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { Modal } from "@/components/Modal";
 import { DataTable, type DataTableColumn } from "@/components/ui/DataTable";
 import { InfoCell } from "@/components/ui/info-cell";
@@ -11,22 +10,18 @@ import { SearchFilterBar } from "@/components/ui/SearchFilterBar";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { searchWarehouseOptions, type WarehouseRow as Warehouse } from "@/lib/api/warehouses";
 import {
-  bulkCreateOtherInbound,
-  createOtherInbound,
+  getInventoryTransactions,
   getReceivableProductionOrders,
   getReceivablePurchaseOrders,
-  getSkuOptionsForInventory,
-  otherInboundImportFields,
   receiveProductionOrder,
   receivePurchaseOrderItems,
-  validateOtherInboundImportRows,
-  type InventorySkuOption,
-  type OtherInventoryMovementValidationRow,
+  type InventoryTransactionRow,
   type ReceivableProductionOrder,
   type ReceivablePurchaseOrder
 } from "@/lib/api/inventory";
 
-type InboundTab = "purchase" | "production" | "other";
+type InboundTab = "purchase" | "production";
+type InboundWorkTab = "pending" | "records";
 
 const productionStatusLabels: Record<string, string> = {
   planned: "已计划",
@@ -96,14 +91,20 @@ function getDefaultWarehouseId(warehouses: Warehouse[], warehouseType: string) {
 
 export default function InventoryInboundPage() {
   const [activeTab, setActiveTab] = useState<InboundTab>("purchase");
+  const [workTab, setWorkTab] = useState<InboundWorkTab>("pending");
   const [purchaseOrders, setPurchaseOrders] = useState<ReceivablePurchaseOrder[]>(
     []
   );
   const [productionOrders, setProductionOrders] = useState<
     ReceivableProductionOrder[]
   >([]);
+  const [purchaseInboundRecords, setPurchaseInboundRecords] = useState<
+    InventoryTransactionRow[]
+  >([]);
+  const [productionInboundRecords, setProductionInboundRecords] = useState<
+    InventoryTransactionRow[]
+  >([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
-  const [skuOptions, setSkuOptions] = useState<InventorySkuOption[]>([]);
   const [selectedPurchaseOrderId, setSelectedPurchaseOrderId] = useState("");
   const [selectedProductionOrderId, setSelectedProductionOrderId] = useState("");
   const [inboundKeyword, setInboundKeyword] = useState("");
@@ -112,14 +113,6 @@ export default function InventoryInboundPage() {
   const [inboundDate, setInboundDate] = useState("");
   const [purchaseWarehouseId, setPurchaseWarehouseId] = useState("");
   const [productionWarehouseId, setProductionWarehouseId] = useState("");
-  const [otherInboundOpen, setOtherInboundOpen] = useState(false);
-  const [otherImportOpen, setOtherImportOpen] = useState(false);
-  const [otherWarehouseId, setOtherWarehouseId] = useState("");
-  const [otherSkuId, setOtherSkuId] = useState("");
-  const [otherSkuKeyword, setOtherSkuKeyword] = useState("");
-  const [otherQuantity, setOtherQuantity] = useState("");
-  const [otherReason, setOtherReason] = useState("");
-  const [otherNotes, setOtherNotes] = useState("");
   const [purchaseQuantities, setPurchaseQuantities] = useState<
     Record<string, string>
   >({});
@@ -162,30 +155,6 @@ export default function InventoryInboundPage() {
     [warehouses]
   );
 
-  const activeWarehouses = useMemo(
-    () => warehouses.filter((warehouse) => warehouse.status === "active"),
-    [warehouses]
-  );
-
-  const filteredSkuOptions = useMemo(() => {
-    const keyword = otherSkuKeyword.trim().toLowerCase();
-
-    if (!keyword) {
-      return skuOptions;
-    }
-
-    return skuOptions.filter((sku) =>
-      [sku.sku_code, sku.sku_name, sku.product?.name]
-        .filter(Boolean)
-        .some((value) => value?.toLowerCase().includes(keyword))
-    );
-  }, [otherSkuKeyword, skuOptions]);
-
-  const selectedOtherSku = useMemo(
-    () => skuOptions.find((sku) => sku.id === otherSkuId) ?? null,
-    [otherSkuId, skuOptions]
-  );
-
   const filteredPurchaseOrders = useMemo(() => {
     const keyword = inboundKeyword.trim().toLowerCase();
 
@@ -210,22 +179,18 @@ export default function InventoryInboundPage() {
           .toLowerCase()
           .includes(keyword);
       const matchesStatus = inboundStatus === "all" || order.status === inboundStatus;
-      const matchesWarehouse =
-        !inboundWarehouseFilter || purchaseWarehouseId === inboundWarehouseFilter;
       const matchesDate =
         !inboundDate ||
         order.received_at?.slice(0, 10) === inboundDate ||
         order.expected_arrival_date === inboundDate;
 
-      return matchesKeyword && matchesStatus && matchesWarehouse && matchesDate && remainingTotal > 0;
+      return matchesKeyword && matchesStatus && matchesDate && remainingTotal > 0;
     });
   }, [
     inboundDate,
     inboundKeyword,
     inboundStatus,
-    inboundWarehouseFilter,
-    purchaseOrders,
-    purchaseWarehouseId
+    purchaseOrders
   ]);
 
   const filteredProductionOrders = useMemo(() => {
@@ -248,22 +213,81 @@ export default function InventoryInboundPage() {
           .toLowerCase()
           .includes(keyword);
       const matchesStatus = inboundStatus === "all" || order.status === inboundStatus;
-      const matchesWarehouse =
-        !inboundWarehouseFilter || productionWarehouseId === inboundWarehouseFilter;
       const matchesDate =
         !inboundDate ||
         order.planned_start_date === inboundDate ||
         order.planned_end_date === inboundDate;
 
-      return matchesKeyword && matchesStatus && matchesWarehouse && matchesDate && pendingQuantity > 0;
+      return matchesKeyword && matchesStatus && matchesDate && pendingQuantity > 0;
     });
   }, [
     inboundDate,
     inboundKeyword,
     inboundStatus,
+    productionOrders
+  ]);
+
+  const filteredPurchaseInboundRecords = useMemo(() => {
+    const keyword = inboundKeyword.trim().toLowerCase();
+
+    return purchaseInboundRecords.filter((transaction) => {
+      const matchesKeyword =
+        !keyword ||
+        [
+          transaction.transaction_no,
+          transaction.purchase_order?.purchase_order_no ?? "",
+          transaction.material?.material_code ?? transaction.sku?.sku_code ?? "",
+          transaction.material?.material_name ?? transaction.sku?.sku_name ?? ""
+        ]
+          .join(" / ")
+          .toLowerCase()
+          .includes(keyword);
+      const matchesWarehouse =
+        !inboundWarehouseFilter ||
+        transaction.warehouse_id === inboundWarehouseFilter;
+      const matchesDate =
+        !inboundDate || transaction.occurred_at.slice(0, 10) === inboundDate;
+
+      return matchesKeyword && matchesWarehouse && matchesDate;
+    });
+  }, [
+    inboundDate,
+    inboundKeyword,
     inboundWarehouseFilter,
-    productionOrders,
-    productionWarehouseId
+    purchaseInboundRecords
+  ]);
+
+  const filteredProductionInboundRecords = useMemo(() => {
+    const keyword = inboundKeyword.trim().toLowerCase();
+
+    return productionInboundRecords.filter((transaction) => {
+      const matchesKeyword =
+        !keyword ||
+        [
+          transaction.transaction_no,
+          transaction.production_order?.production_order_no ?? "",
+          transaction.product_sku?.sku_code ?? transaction.sku?.sku_code ?? "",
+          transaction.product_sku?.sku_name ?? transaction.sku?.sku_name ?? "",
+          transaction.product_sku?.product?.name ??
+            transaction.sku?.product?.name ??
+            ""
+        ]
+          .join(" / ")
+          .toLowerCase()
+          .includes(keyword);
+      const matchesWarehouse =
+        !inboundWarehouseFilter ||
+        transaction.warehouse_id === inboundWarehouseFilter;
+      const matchesDate =
+        !inboundDate || transaction.occurred_at.slice(0, 10) === inboundDate;
+
+      return matchesKeyword && matchesWarehouse && matchesDate;
+    });
+  }, [
+    inboundDate,
+    inboundKeyword,
+    inboundWarehouseFilter,
+    productionInboundRecords
   ]);
 
   const purchaseInboundTotal = Object.values(purchaseQuantities).reduce(
@@ -295,18 +319,30 @@ export default function InventoryInboundPage() {
       setLoading(true);
       setErrorMessage("");
 
-      const [purchaseData, productionData, warehouseData, skuData] =
+      const [
+        purchaseData,
+        productionData,
+        purchaseRecordData,
+        productionRecordData,
+        warehouseData
+      ] =
         await Promise.all([
-        getReceivablePurchaseOrders(),
-        getReceivableProductionOrders(),
-        searchWarehouseOptions("", 20),
-        getSkuOptionsForInventory()
-      ]);
+          getReceivablePurchaseOrders(),
+          getReceivableProductionOrders(),
+          getInventoryTransactions({ transactionType: "material_in" }),
+          getInventoryTransactions({ transactionType: "product_in" }),
+          searchWarehouseOptions("", 20)
+        ]);
 
       setPurchaseOrders(purchaseData);
       setProductionOrders(productionData);
+      setPurchaseInboundRecords(
+        purchaseRecordData.filter((transaction) => Boolean(transaction.purchase_order_id))
+      );
+      setProductionInboundRecords(
+        productionRecordData.filter((transaction) => Boolean(transaction.production_order_id))
+      );
       setWarehouses(warehouseData);
-      setSkuOptions(skuData.filter((sku) => sku.status === "active"));
 
       setSelectedPurchaseOrderId((current) =>
         purchaseData.some((order) => order.id === current)
@@ -324,17 +360,13 @@ export default function InventoryInboundPage() {
       setProductionWarehouseId((current) =>
         current || getDefaultWarehouseId(warehouseData, "finished_product")
       );
-      setOtherWarehouseId((current) =>
-        current ||
-        preferredOtherWarehouseId ||
-        getDefaultWarehouseId(warehouseData, "finished_product")
-      );
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setPurchaseOrders([]);
       setProductionOrders([]);
+      setPurchaseInboundRecords([]);
+      setProductionInboundRecords([]);
       setWarehouses([]);
-      setSkuOptions([]);
     } finally {
       setLoading(false);
     }
@@ -346,56 +378,19 @@ export default function InventoryInboundPage() {
     const initialWarehouseId = params.get("warehouseId") ?? "";
     const initialSkuKeyword = params.get("skuKeyword") ?? "";
 
-    if (initialTab === "other") {
-      setActiveTab("other");
-      setOtherInboundOpen(true);
-    } else if (initialTab === "production") {
+    if (initialTab === "production") {
       setActiveTab("production");
     } else if (initialTab === "purchase") {
       setActiveTab("purchase");
+    } else if (initialTab === "other") {
+      setActiveTab("purchase");
     }
 
-    if (initialWarehouseId) {
-      setOtherWarehouseId(initialWarehouseId);
-    }
-
-    if (initialSkuKeyword) {
-      setOtherSkuKeyword(initialSkuKeyword);
-    }
+    setInboundWarehouseFilter(initialWarehouseId);
+    setInboundKeyword(initialSkuKeyword);
 
     loadPageData(initialWarehouseId);
   }, []);
-
-  useEffect(() => {
-    const keyword = otherSkuKeyword.trim().toLowerCase();
-
-    if (!keyword || otherSkuId) {
-      return;
-    }
-
-    const matchedSku = filteredSkuOptions.find(
-      (sku) =>
-        sku.sku_code.toLowerCase() === keyword ||
-        sku.sku_name.toLowerCase() === keyword
-    ) ?? filteredSkuOptions[0];
-
-    if (matchedSku) {
-      setOtherSkuId(matchedSku.id);
-    }
-  }, [filteredSkuOptions, otherSkuId, otherSkuKeyword]);
-
-  useEffect(() => {
-    const timeoutId = window.setTimeout(async () => {
-      try {
-        const skuData = await getSkuOptionsForInventory(otherSkuKeyword, 20);
-        setSkuOptions(skuData.filter((sku) => sku.status === "active"));
-      } catch (error) {
-        setErrorMessage(getErrorMessage(error));
-      }
-    }, 300);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [otherSkuKeyword]);
 
   useEffect(() => {
     if (!selectedPurchaseOrder) {
@@ -516,69 +511,6 @@ export default function InventoryInboundPage() {
     setSuccessMessage("");
   };
 
-  const openOtherInbound = () => {
-    setActiveTab("other");
-    setOtherInboundOpen(true);
-    setOtherWarehouseId(
-      otherWarehouseId || getDefaultWarehouseId(warehouses, "finished_product")
-    );
-    setOtherSkuId("");
-    setOtherSkuKeyword("");
-    setOtherQuantity("");
-    setOtherReason("");
-    setOtherNotes("");
-    setErrorMessage("");
-    setSuccessMessage("");
-  };
-
-  const openOtherInboundImport = () => {
-    setActiveTab("other");
-    setOtherInboundOpen(false);
-    setOtherImportOpen(true);
-  };
-
-  const submitOtherInbound = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
-    try {
-      setSubmitting(true);
-      setErrorMessage("");
-      setSuccessMessage("");
-
-      await createOtherInbound({
-        warehouseId: otherWarehouseId,
-        skuId: otherSkuId,
-        quantity: Number(otherQuantity),
-        reason: otherReason,
-        notes: otherNotes
-      });
-
-      setSuccessMessage(
-        `${selectedOtherSku?.sku_code ?? "该 SKU"} 其他入库成功，库存已增加。`
-      );
-      setOtherInboundOpen(false);
-      await loadPageData();
-    } catch (error) {
-      setErrorMessage(getErrorMessage(error));
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const importOtherInboundRows = async (
-    rows: OtherInventoryMovementValidationRow[]
-  ) => {
-    const result = await bulkCreateOtherInbound(
-      rows.flatMap((row) => (row.data ? [row.data] : []))
-    );
-
-    setSuccessMessage(
-      `批量其他入库完成：成功 ${result.successCount} 条，失败 ${result.failedCount} 条。`
-    );
-
-    return result;
-  };
-
   const resetInboundFilters = () => {
     setInboundKeyword("");
     setInboundStatus("all");
@@ -589,34 +521,105 @@ export default function InventoryInboundPage() {
   const exportInboundRows = () => {
     const rows =
       activeTab === "purchase"
-        ? filteredPurchaseOrders.map((order) => [
-            `IN-${order.purchase_order_no.replace(/^PUR-?/, "")}`,
-            order.purchase_order_no,
-            order.supplier?.name ?? "",
-            order.items.reduce(
-              (sum, item) =>
-                sum +
-                getRemainingPurchaseQuantity(
-                  item.ordered_quantity,
-                  item.received_quantity
-                ),
-              0
-            ),
-            purchaseStatusLabels[order.status] ?? order.status,
-            formatDate(order.expected_arrival_date)
-          ])
-        : filteredProductionOrders.map((order) => [
-            `IN-${order.production_order_no.replace(/^PROD-?/, "")}`,
-            order.production_order_no,
-            order.sku?.sku_code ?? "",
-            Math.max(0, Number(order.planned_quantity) - Number(order.completed_quantity)),
-            productionStatusLabels[order.status] ?? order.status,
-            formatDate(order.planned_end_date)
-          ]);
+        ? workTab === "pending"
+          ? filteredPurchaseOrders.map((order) => [
+              order.purchase_order_no,
+              order.supplier?.name ?? "",
+              order.items.length,
+              order.items.reduce((sum, item) => sum + Number(item.ordered_quantity), 0),
+              order.items.reduce((sum, item) => sum + Number(item.received_quantity), 0),
+              order.items.reduce(
+                (sum, item) =>
+                  sum +
+                  getRemainingPurchaseQuantity(
+                    item.ordered_quantity,
+                    item.received_quantity
+                  ),
+                0
+              ),
+              purchaseStatusLabels[order.status] ?? order.status,
+              formatDate(order.expected_arrival_date)
+            ])
+          : filteredPurchaseInboundRecords.map((transaction) => [
+              transaction.transaction_no,
+              transaction.purchase_order?.purchase_order_no ?? "-",
+              transaction.material?.material_name ??
+                transaction.sku?.sku_name ??
+                "-",
+              transaction.quantity,
+              transaction.warehouse?.name ?? "-",
+              formatDate(transaction.occurred_at),
+              transaction.operator?.full_name ?? "-"
+            ])
+        : workTab === "pending"
+          ? filteredProductionOrders.map((order) => [
+              order.production_order_no,
+              order.sku?.sku_code ?? "",
+              order.sku?.product?.name ?? order.sku?.sku_name ?? "",
+              order.planned_quantity,
+              order.completed_quantity,
+              Math.max(
+                0,
+                Number(order.planned_quantity) - Number(order.completed_quantity)
+              ),
+              productionStatusLabels[order.status] ?? order.status
+            ])
+          : filteredProductionInboundRecords.map((transaction) => [
+              transaction.transaction_no,
+              transaction.production_order?.production_order_no ?? "-",
+              transaction.product_sku?.sku_code ?? transaction.sku?.sku_code ?? "-",
+              transaction.product_sku?.product?.name ??
+                transaction.sku?.product?.name ??
+                transaction.product_sku?.sku_name ??
+                transaction.sku?.sku_name ??
+                "-",
+              transaction.quantity,
+              transaction.warehouse?.name ?? "-",
+              formatDate(transaction.occurred_at),
+              transaction.operator?.full_name ?? "-"
+            ]);
     const headers =
       activeTab === "purchase"
-        ? ["入库单号", "采购单号", "供应商", "待入库数量", "状态", "交期"]
-        : ["入库单号", "生产任务", "成品 SKU", "待入库数量", "状态", "计划完成"];
+        ? workTab === "pending"
+          ? [
+              "采购单号",
+              "供应商",
+              "物料数量",
+              "采购数量",
+              "已入库数量",
+              "待入库数量",
+              "采购状态",
+              "交期"
+            ]
+          : [
+              "入库流水号",
+              "关联采购单",
+              "物料信息",
+              "入库数量",
+              "入库仓库",
+              "入库时间",
+              "操作人"
+            ]
+        : workTab === "pending"
+          ? [
+              "生产任务单号",
+              "成品 SKU",
+              "产品名称",
+              "计划生产数量",
+              "已入库数量",
+              "待入库数量",
+              "生产状态"
+            ]
+          : [
+              "入库流水号",
+              "关联生产任务",
+              "成品 SKU",
+              "产品名称",
+              "入库数量",
+              "入库仓库",
+              "入库时间",
+              "操作人"
+            ];
     const csv = [headers, ...rows]
       .map((row) => row.map(escapeCsvCell).join(","))
       .join("\n");
@@ -636,21 +639,16 @@ export default function InventoryInboundPage() {
 
   const purchaseInboundColumns: DataTableColumn<ReceivablePurchaseOrder>[] = [
     {
-      key: "no",
-      title: "入库单号",
-      width: 150,
-      render: (order) => `IN-${order.purchase_order_no.replace(/^PUR-?/, "")}`
-    },
-    {
-      key: "purchase",
-      title: "关联采购单",
-      width: 160,
+      key: "purchase_order_no",
+      title: "采购单号",
+      width: 145,
+      mobilePriority: "title",
       render: (order) => order.purchase_order_no
     },
     {
       key: "supplier",
       title: "供应商",
-      width: 180,
+      width: 150,
       render: (order) => (
         <InfoCell
           title={order.supplier?.name ?? "-"}
@@ -659,9 +657,36 @@ export default function InventoryInboundPage() {
       )
     },
     {
-      key: "quantity",
-      title: "入库数量",
-      width: 120,
+      key: "material_count",
+      title: "物料数量",
+      width: 90,
+      align: "right",
+      render: (order) => formatQuantity(order.items.length)
+    },
+    {
+      key: "ordered_quantity",
+      title: "采购数量",
+      width: 100,
+      align: "right",
+      render: (order) =>
+        formatQuantity(
+          order.items.reduce((sum, item) => sum + Number(item.ordered_quantity), 0)
+        )
+    },
+    {
+      key: "received_quantity",
+      title: "已入库数量",
+      width: 105,
+      align: "right",
+      render: (order) =>
+        formatQuantity(
+          order.items.reduce((sum, item) => sum + Number(item.received_quantity), 0)
+        )
+    },
+    {
+      key: "pending_quantity",
+      title: "待入库数量",
+      width: 105,
       align: "right",
       render: (order) =>
         formatQuantity(
@@ -677,46 +702,300 @@ export default function InventoryInboundPage() {
         )
     },
     {
-      key: "warehouse",
-      title: "入库仓库",
-      width: 160,
-      render: () =>
-        materialWarehouses.find((warehouse) => warehouse.id === purchaseWarehouseId)
-          ?.name ?? "待选择"
+      key: "arrival_date",
+      title: "交期 / 到货日期",
+      width: 120,
+      render: (order) => formatDate(order.received_at ?? order.expected_arrival_date)
     },
     {
       key: "status",
-      title: "状态",
-      width: 110,
+      title: "采购状态",
+      width: 100,
+      align: "center",
+      mobilePriority: "status",
       render: (order) => (
         <StatusBadge status={order.status} label={purchaseStatusLabels[order.status]} />
       )
     },
     {
-      key: "time",
-      title: "入库时间",
-      width: 120,
-      render: (order) => formatDate(order.received_at ?? order.expected_arrival_date)
+      key: "actions",
+      title: "操作",
+      width: 110,
+      mobilePriority: "action",
+      render: (order) => {
+        const pendingQuantity = order.items.reduce(
+          (sum, item) =>
+            sum +
+            getRemainingPurchaseQuantity(
+              item.ordered_quantity,
+              item.received_quantity
+            ),
+          0
+        );
+
+        return pendingQuantity > 0 ? (
+          <RowActions viewLabel="办理入库" onView={() => openPurchaseInbound(order)} />
+        ) : (
+          <button type="button" disabled>
+            已完成
+          </button>
+        );
+      }
+    }
+  ];
+
+  const productionInboundColumns: DataTableColumn<ReceivableProductionOrder>[] = [
+    {
+      key: "production_order_no",
+      title: "生产任务单号",
+      width: 150,
+      mobilePriority: "title",
+      render: (order) => order.production_order_no
+    },
+    {
+      key: "sku",
+      title: "成品 SKU",
+      width: 150,
+      render: (order) => (
+        <InfoCell
+          title={order.sku?.sku_code ?? "-"}
+          subtitle={order.sku?.sku_name ?? "-"}
+        />
+      )
+    },
+    {
+      key: "product",
+      title: "产品名称",
+      width: 160,
+      ellipsis: true,
+      render: (order) => order.sku?.product?.name ?? "-"
+    },
+    {
+      key: "planned_quantity",
+      title: "计划生产数量",
+      width: 105,
+      align: "right",
+      render: (order) => formatQuantity(order.planned_quantity)
+    },
+    {
+      key: "completed_quantity",
+      title: "已入库数量",
+      width: 105,
+      align: "right",
+      render: (order) => formatQuantity(order.completed_quantity)
+    },
+    {
+      key: "pending_quantity",
+      title: "待入库数量",
+      width: 105,
+      align: "right",
+      render: (order) =>
+        formatQuantity(
+          Math.max(
+            0,
+            Number(order.planned_quantity) - Number(order.completed_quantity)
+          )
+        )
+    },
+    {
+      key: "status",
+      title: "生产状态",
+      width: 100,
+      align: "center",
+      mobilePriority: "status",
+      render: (order) => (
+        <StatusBadge
+          status={order.status}
+          label={productionStatusLabels[order.status] ?? order.status}
+        />
+      )
     },
     {
       key: "actions",
       title: "操作",
+      width: 110,
+      mobilePriority: "action",
+      render: (order) => {
+        const pendingQuantity = Math.max(
+          0,
+          Number(order.planned_quantity) - Number(order.completed_quantity)
+        );
+
+        return pendingQuantity > 0 ? (
+          <RowActions viewLabel="办理入库" onView={() => openProductionInbound(order)} />
+        ) : (
+          <button type="button" disabled>
+            已完成
+          </button>
+        );
+      }
+    }
+  ];
+
+  const purchaseInboundRecordColumns: DataTableColumn<InventoryTransactionRow>[] = [
+    {
+      key: "transaction_no",
+      title: "入库流水号",
+      width: 145,
+      mobilePriority: "title",
+      render: (transaction) => transaction.transaction_no
+    },
+    {
+      key: "purchase_order",
+      title: "关联采购单",
+      width: 135,
+      render: (transaction) => transaction.purchase_order?.purchase_order_no ?? "-"
+    },
+    {
+      key: "supplier",
+      title: "供应商",
       width: 120,
-      render: (order) => (
-        <RowActions
-          viewLabel="办理"
-          onView={() => openPurchaseInbound(order)}
+      render: () => "-"
+    },
+    {
+      key: "material",
+      title: "物料信息",
+      width: 180,
+      render: (transaction) => (
+        <InfoCell
+          title={transaction.material?.material_name ?? transaction.sku?.sku_name ?? "-"}
+          subtitle={
+            transaction.material?.material_code ?? transaction.sku?.sku_code ?? "-"
+          }
         />
       )
+    },
+    {
+      key: "quantity",
+      title: "入库数量",
+      width: 95,
+      align: "right",
+      render: (transaction) => formatQuantity(transaction.quantity)
+    },
+    {
+      key: "warehouse",
+      title: "入库仓库",
+      width: 135,
+      render: (transaction) => (
+        <InfoCell
+          title={transaction.warehouse?.name ?? "-"}
+          subtitle={transaction.warehouse?.warehouse_code ?? "-"}
+        />
+      )
+    },
+    {
+      key: "time",
+      title: "入库时间",
+      width: 140,
+      render: (transaction) => formatDate(transaction.occurred_at)
+    },
+    {
+      key: "operator",
+      title: "操作人",
+      width: 100,
+      render: (transaction) => transaction.operator?.full_name ?? "-"
+    },
+    {
+      key: "actions",
+      title: "操作",
+      width: 90,
+      mobilePriority: "action",
+      render: () => "-"
+    }
+  ];
+
+  const productionInboundRecordColumns: DataTableColumn<InventoryTransactionRow>[] = [
+    {
+      key: "transaction_no",
+      title: "入库流水号",
+      width: 145,
+      mobilePriority: "title",
+      render: (transaction) => transaction.transaction_no
+    },
+    {
+      key: "production_order",
+      title: "关联生产任务",
+      width: 145,
+      render: (transaction) =>
+        transaction.production_order?.production_order_no ?? "-"
+    },
+    {
+      key: "sku",
+      title: "成品 SKU",
+      width: 140,
+      render: (transaction) =>
+        transaction.product_sku?.sku_code ?? transaction.sku?.sku_code ?? "-"
+    },
+    {
+      key: "product",
+      title: "产品名称",
+      width: 160,
+      ellipsis: true,
+      render: (transaction) =>
+        transaction.product_sku?.product?.name ??
+        transaction.sku?.product?.name ??
+        transaction.product_sku?.sku_name ??
+        transaction.sku?.sku_name ??
+        "-"
+    },
+    {
+      key: "quantity",
+      title: "入库数量",
+      width: 95,
+      align: "right",
+      render: (transaction) => formatQuantity(transaction.quantity)
+    },
+    {
+      key: "warehouse",
+      title: "入库仓库",
+      width: 135,
+      render: (transaction) => (
+        <InfoCell
+          title={transaction.warehouse?.name ?? "-"}
+          subtitle={transaction.warehouse?.warehouse_code ?? "-"}
+        />
+      )
+    },
+    {
+      key: "time",
+      title: "入库时间",
+      width: 140,
+      render: (transaction) => formatDate(transaction.occurred_at)
+    },
+    {
+      key: "operator",
+      title: "操作人",
+      width: 100,
+      render: (transaction) => transaction.operator?.full_name ?? "-"
+    },
+    {
+      key: "actions",
+      title: "操作",
+      width: 90,
+      mobilePriority: "action",
+      render: () => "-"
     }
   ];
 
   return (
     <main className="pageShell">
       <PageHeader
-        title={activeTab === "purchase" ? "采购入库" : activeTab === "production" ? "生产入库" : "入库管理"}
+        title={activeTab === "purchase" ? "采购入库" : "生产入库"}
         secondaryActions={
-          <button type="button" onClick={exportInboundRows} disabled={loading}>
+          <button
+            type="button"
+            onClick={exportInboundRows}
+            disabled={
+              loading ||
+              (activeTab === "purchase"
+                ? workTab === "pending"
+                  ? filteredPurchaseOrders.length === 0
+                  : filteredPurchaseInboundRecords.length === 0
+                : workTab === "pending"
+                  ? filteredProductionOrders.length === 0
+                  : filteredProductionInboundRecords.length === 0)
+            }
+          >
             导出
           </button>
         }
@@ -724,10 +1003,10 @@ export default function InventoryInboundPage() {
           <button
             className="primaryButton"
             type="button"
-            onClick={activeTab === "other" ? openOtherInbound : () => loadPageData()}
+            onClick={() => loadPageData()}
             disabled={submitting}
           >
-            新增入库
+            刷新
           </button>
         }
       />
@@ -747,29 +1026,20 @@ export default function InventoryInboundPage() {
       ) : null}
 
       <section className="listPanel">
-        <div className="tabBar" role="tablist" aria-label="入库类型">
+        <div className="tabBar" role="tablist" aria-label="入库页面">
           <button
-            className={activeTab === "purchase" ? "tabButton active" : "tabButton"}
+            className={workTab === "pending" ? "tabButton active" : "tabButton"}
             type="button"
-            onClick={() => setActiveTab("purchase")}
+            onClick={() => setWorkTab("pending")}
           >
-            采购入库
+            {activeTab === "purchase" ? "待入库采购单" : "待入库任务"}
           </button>
           <button
-            className={
-              activeTab === "production" ? "tabButton active" : "tabButton"
-            }
+            className={workTab === "records" ? "tabButton active" : "tabButton"}
             type="button"
-            onClick={() => setActiveTab("production")}
+            onClick={() => setWorkTab("records")}
           >
-            生产入库
-          </button>
-          <button
-            className={activeTab === "other" ? "tabButton active" : "tabButton"}
-            type="button"
-            onClick={openOtherInbound}
-          >
-            其他入库
+            入库记录
           </button>
         </div>
 
@@ -780,54 +1050,67 @@ export default function InventoryInboundPage() {
         <SearchFilterBar
           searchLabel="搜索"
           searchValue={inboundKeyword}
-          searchPlaceholder="入库单号 / 采购单号 / 供应商"
+          searchPlaceholder={
+            activeTab === "purchase"
+              ? "采购单号 / 供应商 / 物料"
+              : "生产任务单号 / 成品 SKU / 产品"
+          }
           onSearchChange={setInboundKeyword}
           onReset={resetInboundFilters}
           filters={
             <>
-              <label>
-                状态
-                <select
-                  value={inboundStatus}
-                  onChange={(event) => setInboundStatus(event.target.value)}
-                  disabled={loading}
-                >
-                  <option value="all">全部状态</option>
-                  {activeTab === "purchase" ? (
-                    <>
-                      <option value="ordered">已下单</option>
-                      <option value="partially_received">部分到货</option>
-                      <option value="received">已到货</option>
-                    </>
-                  ) : (
-                    <>
-                      <option value="planned">已计划</option>
-                      <option value="in_progress">生产中</option>
-                      <option value="completed">已完成</option>
-                    </>
-                  )}
-                </select>
-              </label>
-              <label>
-                仓库
-                <select
-                  value={inboundWarehouseFilter}
-                  onChange={(event) => setInboundWarehouseFilter(event.target.value)}
-                  disabled={loading}
-                >
-                  <option value="">全部仓库</option>
-                  {warehouses.map((warehouse) => (
-                    <option key={warehouse.id} value={warehouse.id}>
-                      {warehouse.warehouse_code} / {warehouse.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              {workTab === "pending" ? (
+                <label>
+                  状态
+                  <select
+                    value={inboundStatus}
+                    onChange={(event) => setInboundStatus(event.target.value)}
+                    disabled={loading}
+                  >
+                    <option value="all">全部状态</option>
+                    {activeTab === "purchase" ? (
+                      <>
+                        <option value="ordered">已下单</option>
+                        <option value="partially_received">部分到货</option>
+                        <option value="received">已到货</option>
+                      </>
+                    ) : (
+                      <>
+                        <option value="planned">已计划</option>
+                        <option value="material_pending">待物料</option>
+                        <option value="in_progress">生产中</option>
+                        <option value="completed">已完成</option>
+                      </>
+                    )}
+                  </select>
+                </label>
+              ) : null}
+              {workTab === "records" ? (
+                <label>
+                  仓库
+                  <select
+                    value={inboundWarehouseFilter}
+                    onChange={(event) => setInboundWarehouseFilter(event.target.value)}
+                    disabled={loading}
+                  >
+                    <option value="">全部仓库</option>
+                    {warehouses.map((warehouse) => (
+                      <option key={warehouse.id} value={warehouse.id}>
+                        {warehouse.warehouse_code} / {warehouse.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
             </>
           }
           dateFilters={
             <label>
-              入库日期
+              {workTab === "pending"
+                ? activeTab === "purchase"
+                  ? "交期 / 到货日期"
+                  : "计划日期"
+                : "入库日期"}
               <input
                 type="date"
                 value={inboundDate}
@@ -838,7 +1121,7 @@ export default function InventoryInboundPage() {
           }
         />
 
-        {!loading && activeTab === "purchase" ? (
+        {!loading && activeTab === "purchase" && workTab === "pending" ? (
           <>
             <div className="sectionHeader">
               <div>
@@ -857,17 +1140,41 @@ export default function InventoryInboundPage() {
               rows={filteredPurchaseOrders}
               getRowKey={(order) => order.id}
               emptyText="暂无可入库采购单"
-              minWidth={980}
+              minWidth={1040}
             />
           </>
         ) : null}
 
-        {!loading && activeTab === "production" ? (
+        {!loading && activeTab === "purchase" && workTab === "records" ? (
+          <>
+            <div className="sectionHeader">
+              <div>
+                <p className="eyebrow">采购入库</p>
+                <h3>入库记录</h3>
+              </div>
+              <div className="rowActions">
+                <button type="button" onClick={() => loadPageData()} disabled={loading}>
+                  刷新
+                </button>
+              </div>
+            </div>
+
+            <DataTable
+              columns={purchaseInboundRecordColumns}
+              rows={filteredPurchaseInboundRecords}
+              getRowKey={(transaction) => transaction.id}
+              emptyText="暂无采购入库记录"
+              minWidth={1100}
+            />
+          </>
+        ) : null}
+
+        {!loading && activeTab === "production" && workTab === "pending" ? (
           <>
             <div className="sectionHeader">
               <div>
                 <p className="eyebrow">生产完成</p>
-                <h3>待入库生产任务</h3>
+                <h3>待入库任务</h3>
               </div>
               <div className="rowActions">
                 <button type="button" onClick={() => loadPageData()} disabled={loading}>
@@ -876,111 +1183,37 @@ export default function InventoryInboundPage() {
               </div>
             </div>
 
-            {productionOrders.length === 0 ? (
-              <div className="emptyState">暂无可入库生产任务</div>
-            ) : (
-              <div className="tableWrap">
-                <table className="dataTable">
-                  <thead>
-                    <tr>
-                      <th>生产任务单号</th>
-                      <th>成品 SKU</th>
-                      <th>产品名称</th>
-                      <th>生产状态</th>
-                      <th>计划生产数量</th>
-                      <th>已入库数量</th>
-                      <th>待入库数量</th>
-                      <th>操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {productionOrders.map((order) => {
-                      const pendingQuantity = Math.max(
-                        0,
-                        Number(order.planned_quantity) -
-                          Number(order.completed_quantity)
-                      );
-
-                      return (
-                        <tr key={order.id}>
-                          <td>{order.production_order_no}</td>
-                          <td>
-                            <strong>{order.sku?.sku_code ?? "-"}</strong>
-                            <span>{order.sku?.sku_name ?? "-"}</span>
-                          </td>
-                          <td>{order.sku?.product?.name ?? "-"}</td>
-                          <td>
-                            <span className={`tablePill production-status-${order.status}`}>
-                              {productionStatusLabels[order.status] ?? order.status}
-                            </span>
-                          </td>
-                          <td>{formatQuantity(order.planned_quantity)}</td>
-                          <td>{formatQuantity(order.completed_quantity)}</td>
-                          <td>{formatQuantity(pendingQuantity)}</td>
-                          <td>
-                            <div className="rowActions">
-                              <button
-                                type="button"
-                                onClick={() => openProductionInbound(order)}
-                                disabled={submitting || pendingQuantity <= 0}
-                              >
-                                办理入库
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            <DataTable
+              columns={productionInboundColumns}
+              rows={filteredProductionOrders}
+              getRowKey={(order) => order.id}
+              emptyText="暂无可入库生产任务"
+              minWidth={1020}
+            />
           </>
         ) : null}
 
-        {!loading && activeTab === "other" ? (
+        {!loading && activeTab === "production" && workTab === "records" ? (
           <>
             <div className="sectionHeader">
               <div>
-                <p className="eyebrow">非采购 / 非生产</p>
-                <h3>其他入库单</h3>
+                <p className="eyebrow">生产入库</p>
+                <h3>入库记录</h3>
               </div>
               <div className="rowActions">
-                <button
-                  className="primaryButton"
-                  type="button"
-                  onClick={openOtherInbound}
-                  disabled={submitting}
-                >
-                  新建其他入库单
-                </button>
-                <button
-                  type="button"
-                  onClick={openOtherInboundImport}
-                  disabled={submitting}
-                >
-                  批量上传
-                </button>
                 <button type="button" onClick={() => loadPageData()} disabled={loading}>
                   刷新
                 </button>
               </div>
             </div>
 
-            <div className="detailGrid">
-              <div className="detailItem">
-                <span>适用场景</span>
-                <strong>初始库存、盘点补录、退货入库</strong>
-              </div>
-              <div className="detailItem">
-                <span>支持 SKU</span>
-                <strong>成品 SKU 和辅料 SKU</strong>
-              </div>
-              <div className="detailItem">
-                <span>库存流水</span>
-                <strong>自动写入 material_in / product_in</strong>
-              </div>
-            </div>
+            <DataTable
+              columns={productionInboundRecordColumns}
+              rows={filteredProductionInboundRecords}
+              getRowKey={(transaction) => transaction.id}
+              emptyText="暂无生产入库记录"
+              minWidth={1040}
+            />
           </>
         ) : null}
       </section>
@@ -1250,178 +1483,6 @@ export default function InventoryInboundPage() {
         </Modal>
       ) : null}
 
-      {otherInboundOpen ? (
-        <Modal
-          open={otherInboundOpen}
-          eyebrow="其他入库"
-          title="新建其他入库单"
-          maxWidth="xl"
-          onClose={() => {
-            if (!submitting) {
-              setOtherInboundOpen(false);
-            }
-          }}
-        >
-          <form className="dataForm inboundForm" onSubmit={submitOtherInbound}>
-            <label>
-              入库仓库
-              <select
-                value={otherWarehouseId}
-                onChange={(event) => setOtherWarehouseId(event.target.value)}
-                disabled={submitting}
-                required
-              >
-                <option value="">请选择仓库</option>
-                {(activeWarehouses.length > 0 ? activeWarehouses : warehouses).map(
-                  (warehouse) => (
-                    <option key={warehouse.id} value={warehouse.id}>
-                      {warehouse.warehouse_code} / {warehouse.name}
-                    </option>
-                  )
-                )}
-              </select>
-            </label>
-
-            <label>
-              搜索 SKU
-              <input
-                value={otherSkuKeyword}
-                onChange={(event) => {
-                  setOtherSkuKeyword(event.target.value);
-                  setOtherSkuId("");
-                }}
-                placeholder="输入 SKU 编码 / SKU 名称"
-                disabled={submitting}
-              />
-            </label>
-
-            <label>
-              SKU
-              <select
-                value={otherSkuId}
-                onChange={(event) => setOtherSkuId(event.target.value)}
-                disabled={submitting}
-                required
-              >
-                <option value="">请选择 SKU</option>
-                {filteredSkuOptions.map((sku) => (
-                  <option key={sku.id} value={sku.id}>
-                    {sku.sku_code} / {sku.sku_name} / {sku.unit}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label>
-              入库数量
-              <input
-                min="0.0001"
-                step="0.0001"
-                type="number"
-                value={otherQuantity}
-                onChange={(event) => setOtherQuantity(event.target.value)}
-                disabled={submitting}
-                required
-              />
-            </label>
-
-            <label>
-              入库原因
-              <input
-                value={otherReason}
-                onChange={(event) => setOtherReason(event.target.value)}
-                placeholder="例如初始库存导入、盘点补录、退货入库"
-                disabled={submitting}
-                required
-              />
-            </label>
-
-            <label className="fullField">
-              备注
-              <textarea
-                value={otherNotes}
-                onChange={(event) => setOtherNotes(event.target.value)}
-                placeholder="可填写来源说明或盘点说明"
-                disabled={submitting}
-              />
-            </label>
-
-            <div className="fullField adjustmentPreviewBox">
-              <span>批量上传</span>
-              <strong>适合期初库存、盘点补录、退货入库等多 SKU 场景</strong>
-              <div className="rowActions">
-                <button
-                  type="button"
-                  onClick={openOtherInboundImport}
-                  disabled={submitting}
-                >
-                  打开批量上传
-                </button>
-              </div>
-            </div>
-
-            <div className="modalFooter fullField">
-              <span>提交后会增加库存，并写入库存流水。</span>
-              <div className="rowActions">
-                <button
-                  type="button"
-                  onClick={() => setOtherInboundOpen(false)}
-                  disabled={submitting}
-                >
-                  取消
-                </button>
-                <button
-                  className="primaryButton"
-                  type="submit"
-                  disabled={
-                    submitting ||
-                    !otherWarehouseId ||
-                    !otherSkuId ||
-                    Number(otherQuantity) <= 0 ||
-                    !otherReason.trim()
-                  }
-                >
-                  {submitting ? "正在入库..." : "确认其他入库"}
-                </button>
-              </div>
-            </div>
-          </form>
-        </Modal>
-      ) : null}
-
-      <BulkImportDialog
-        open={otherImportOpen}
-        title="批量导入初始库存 / 其他入库"
-        description="上传后先预览和校验，不会直接写入数据库。确认导入后会一次性批量增加库存并写入库存流水。"
-        templateFileName="other-inbound-template.csv"
-        fields={otherInboundImportFields}
-        sampleRows={[
-          {
-            仓库编码: "WH-FIN-001",
-            "SKU 编码": "SKU-001",
-            入库数量: "100",
-            入库原因: "初始库存导入",
-            备注: "期初盘点录入"
-          }
-        ]}
-        validateRows={validateOtherInboundImportRows}
-        onImport={importOtherInboundRows}
-        onClose={() => setOtherImportOpen(false)}
-        renderPreviewSummary={(rows) => {
-          const validRows = rows.filter((row) => row.errors.length === 0);
-          const totalQuantity = validRows.reduce(
-            (sum, row) => sum + Number(row.data?.quantity ?? 0),
-            0
-          );
-
-          return (
-            <div className="debugNotice">
-              预览通过 {validRows.length} 行，合计入库{" "}
-              {formatQuantity(totalQuantity)} 件。
-            </div>
-          );
-        }}
-      />
     </main>
   );
 }

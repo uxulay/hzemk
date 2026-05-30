@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useState, type ReactNode, Suspense } from "react";
 import { MockRoleProvider } from "@/components/auth/mock-role-provider";
 import { Header } from "@/components/layout/header";
 import { Sidebar } from "@/components/layout/sidebar";
@@ -13,7 +13,9 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     <MockRoleProvider>
       <div className={sidebarCollapsed ? "appFrame appFrameCollapsed" : "appFrame"}>
         <div className="desktopSidebar">
-          <Sidebar collapsed={sidebarCollapsed} />
+          <Suspense fallback={null}>
+            <Sidebar collapsed={sidebarCollapsed} />
+          </Suspense>
         </div>
         <div className="mainArea">
           <Header
@@ -36,7 +38,9 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           onClick={() => setMobileSidebarOpen(false)}
         />
         <div className="mobileSidebarPanel">
-          <Sidebar onNavigate={() => setMobileSidebarOpen(false)} />
+          <Suspense fallback={null}>
+            <Sidebar onNavigate={() => setMobileSidebarOpen(false)} />
+          </Suspense>
         </div>
       </div>
     </MockRoleProvider>

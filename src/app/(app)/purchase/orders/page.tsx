@@ -1,7 +1,7 @@
 "use client";
 
 import { toBlob, toPng } from "html-to-image";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, Suspense } from "react";
 import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { Modal } from "@/components/Modal";
 import { Pagination } from "@/components/Pagination";
@@ -598,7 +598,7 @@ function getDraftItem(requirement: ShortageMaterialRequirement): DraftItem {
   };
 }
 
-export default function PurchaseOrdersPage() {
+function PurchaseOrdersPageContent() {
   const purchaseOrderImageRef = useRef<HTMLDivElement | null>(null);
   const [shortages, setShortages] = useState<ShortageMaterialRequirement[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
@@ -2732,5 +2732,13 @@ export default function PurchaseOrdersPage() {
         </Modal>
       ) : null}
     </main>
+  );
+}
+
+export default function PurchaseOrdersPage() {
+  return (
+    <Suspense fallback={<div className="pageLoading">正在加载采购单...</div>}>
+      <PurchaseOrdersPageContent />
+    </Suspense>
   );
 }

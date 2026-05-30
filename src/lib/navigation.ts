@@ -40,6 +40,11 @@ export const navigationGroups: NavigationGroup[] = [
         label: "备货需求",
         href: "/replenishment",
         roles: ["operations", "plant_manager", "admin"]
+      },
+      {
+        label: "备货出库",
+        href: "/inventory/fba-outbound",
+        roles: ["warehouse", "operations", "admin"]
       }
     ]
   },
@@ -74,6 +79,11 @@ export const navigationGroups: NavigationGroup[] = [
         roles: ["procurement", "admin"]
       },
       {
+        label: "委外订单",
+        href: "/purchase/outsourcing",
+        roles: ["procurement", "admin"]
+      },
+      {
         label: "物料需求",
         href: "/materials/requirements",
         roles: ["procurement", "admin"]
@@ -90,9 +100,9 @@ export const navigationGroups: NavigationGroup[] = [
     section: "仓库",
     items: [
       {
-        label: "备货出库",
-        href: "/inventory/fba-outbound",
-        roles: ["warehouse", "operations", "admin"]
+        label: "库存预警",
+        href: "/inventory/warnings",
+        roles: ["warehouse", "procurement", "operations", "plant_manager", "admin"]
       },
       {
         label: "原材料库存",
@@ -105,18 +115,13 @@ export const navigationGroups: NavigationGroup[] = [
         roles: ["warehouse", "operations", "plant_manager", "admin"]
       },
       {
-        label: "库存流水",
-        href: "/inventory/transactions",
+        label: "库存收发",
+        href: "/inventory/adjustments",
         roles: ["warehouse", "plant_manager", "procurement", "admin"]
       },
       {
-        label: "库存预警",
-        href: "/inventory/warnings",
-        roles: ["warehouse", "procurement", "operations", "plant_manager", "admin"]
-      },
-      {
-        label: "库存调整",
-        href: "/inventory/adjustments",
+        label: "库存流水",
+        href: "/inventory/transactions",
         roles: ["warehouse", "plant_manager", "procurement", "admin"]
       }
     ]
@@ -128,14 +133,14 @@ export const navigationGroups: NavigationGroup[] = [
       { label: "产品管理", href: "/admin/products", roles: ["admin"] },
       { label: "SKU 管理", href: "/admin/skus", roles: ["admin"] },
       {
-        label: "BOM 管理",
-        href: "/bom",
-        roles: ["plant_manager", "procurement", "admin"]
-      },
-      {
         label: "原材料管理",
         href: "/admin/materials",
         roles: ["admin", "procurement", "warehouse"]
+      },
+      {
+        label: "BOM 管理",
+        href: "/bom",
+        roles: ["plant_manager", "procurement", "admin"]
       },
       {
         label: "品牌管理",

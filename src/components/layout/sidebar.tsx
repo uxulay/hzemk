@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
+import { useMemo } from "react";
 import { useMockRole } from "@/components/auth/mock-role-provider";
 import {
   BoxIcon,
@@ -28,7 +28,17 @@ function stripQuery(href: string) {
 
 function isRouteMatch(currentUrl: string, pathname: string, href: string) {
   if (href.includes("?")) {
-    return currentUrl === href;
+    const [hrefPath, hrefQuery = ""] = href.split("?");
+    const currentParams = new URLSearchParams(currentUrl.split("?")[1] ?? "");
+    const hrefParams = new URLSearchParams(hrefQuery);
+
+    if (pathname !== hrefPath) {
+      return false;
+    }
+
+    return Array.from(hrefParams.entries()).every(
+      ([key, value]) => currentParams.get(key) === value
+    );
   }
 
   const hrefPath = stripQuery(href);
@@ -90,7 +100,12 @@ type SidebarProps = {
 
 export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
   const pathname = usePathname();
-  const [currentUrl, setCurrentUrl] = useState(pathname);
+  const searchParams = useSearchParams();
+  const currentUrl = useMemo(() => {
+    const query = searchParams.toString();
+
+    return query ? `${pathname}?${query}` : pathname;
+  }, [pathname, searchParams]);
   const { user } = useMockRole();
   const groups = useMemo(() => getNavigationForRole(user.role), [user.role]);
   const activeHref = useMemo(
@@ -110,10 +125,6 @@ export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
       )?.label ?? null
     );
   }, [activeHref, groups]);
-
-  useEffect(() => {
-    setCurrentUrl(`${window.location.pathname}${window.location.search}`);
-  }, [pathname]);
 
   return (
     <aside className={classNames("sidebar", collapsed && "sidebarCollapsed")}>
