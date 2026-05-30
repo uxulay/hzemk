@@ -9,6 +9,8 @@ type ModalProps = {
   children: ReactNode;
   footer?: ReactNode;
   maxWidth?: "md" | "lg" | "xl";
+  panelClassName?: string;
+  placement?: "top" | "center";
   onClose: () => void;
 };
 
@@ -19,6 +21,8 @@ export function Modal({
   children,
   footer,
   maxWidth = "lg",
+  panelClassName,
+  placement = "top",
   onClose
 }: ModalProps) {
   if (!open) {
@@ -27,7 +31,7 @@ export function Modal({
 
   return (
     <div
-      className="modalBackdrop"
+      className={`modalBackdrop modalBackdrop-${placement}`}
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) {
@@ -36,7 +40,9 @@ export function Modal({
       }}
     >
       <section
-        className={`modalPanel appModal appModal-${maxWidth}`}
+        className={`modalPanel appModal appModal-${maxWidth} ${
+          panelClassName ?? ""
+        }`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="app-modal-title"

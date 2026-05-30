@@ -193,6 +193,51 @@ function getRequirementMaterialLabel(
   return `${code} / ${name}`;
 }
 
+function getProductionItemsSummary(order: ProductionOrderTrackingRow) {
+  const groups = groupProductionItemsByProduct(order);
+
+  if (groups.length === 0) {
+    return order.sku ? `${order.sku.sku_code} / ${order.sku.sku_name}` : "-";
+  }
+
+  return groups
+    .map((group) => `${group.productName}（${group.items.length} 个 SKU）`)
+    .join("、");
+}
+
+function getMaterialRequirementStatusLabel(
+  requirement: ProductionOrderTrackingRow["material_requirements"][number]
+) {
+  if (requirement.status === "purchased") {
+    return "已采购";
+  }
+
+  if (requirement.status === "received") {
+    return "已到货";
+  }
+
+  if (requirement.status === "pending") {
+    return "待处理";
+  }
+
+  if (requirement.status === "reserved") {
+    return "已预留";
+  }
+
+  if (
+    requirement.status === "shortage" ||
+    Number(requirement.shortage_quantity) > 0
+  ) {
+    return "缺料";
+  }
+
+  if (["enough", "ready"].includes(requirement.status)) {
+    return "齐料";
+  }
+
+  return requirement.status;
+}
+
 export default function ProductionOrdersPage() {
   const [orders, setOrders] = useState<ProductionOrderTrackingRow[]>([]);
   const [statusFilter, setStatusFilter] =
@@ -203,12 +248,16 @@ export default function ProductionOrdersPage() {
   const [skuKeyword, setSkuKeyword] = useState("");
   const [selectedDetail, setSelectedDetail] =
     useState<ProductionOrderTrackingRow | null>(null);
+  const [selectedMaterialRequirementsOrder, setSelectedMaterialRequirementsOrder] =
+    useState<ProductionOrderTrackingRow | null>(null);
   const [issuePreview, setIssuePreview] =
     useState<ProductionOrderIssueMaterialsPreview | null>(null);
   const [page, setPage] = useState(1);
   const [totalOrders, setTotalOrders] = useState(0);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [materialRequirementsLoadingId, setMaterialRequirementsLoadingId] =
+    useState("");
   const [issuePreviewLoadingId, setIssuePreviewLoadingId] = useState("");
   const [issuingOrderId, setIssuingOrderId] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
@@ -306,6 +355,25 @@ export default function ProductionOrdersPage() {
       setErrorMessage(getErrorMessage(error));
     } finally {
       setIssuePreviewLoadingId("");
+    }
+  };
+
+  const openMaterialRequirements = async (order: ProductionOrderTrackingRow) => {
+    try {
+      setMaterialRequirementsLoadingId(order.id);
+      setErrorMessage("");
+      setSuccessMessage("");
+
+      const latestOrder = await getProductionOrderDetail(order.id);
+      setSelectedMaterialRequirementsOrder(latestOrder);
+
+      if (selectedDetail?.id === latestOrder.id) {
+        setSelectedDetail(latestOrder);
+      }
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setMaterialRequirementsLoadingId("");
     }
   };
 
@@ -509,15 +577,22 @@ export default function ProductionOrdersPage() {
                     <td>
                       <div className="rowActions">
                         <button
+                          className="secondaryButton"
+                          type="button"
+                          onClick={() => openMaterialRequirements(order)}
+                          disabled={materialRequirementsLoadingId === order.id}
+                        >
+                          {materialRequirementsLoadingId === order.id
+                            ? "读取中..."
+                            : "查看物料需求"}
+                        </button>
+                        <button
                           type="button"
                           onClick={() => viewDetail(order.id)}
                           disabled={detailLoading}
                         >
                           查看详情
                         </button>
-                        <Link className="secondaryButton" href="/materials/requirements">
-                          查看物料需求
-                        </Link>
                         <Link className="secondaryButton" href="/inventory/inbound">
                           去入库
                         </Link>
@@ -561,6 +636,16 @@ export default function ProductionOrdersPage() {
           onClose={() => setSelectedDetail(null)}
         >
           <div className="rowActions">
+              <button
+                className="secondaryButton"
+                type="button"
+                onClick={() => openMaterialRequirements(selectedDetail)}
+                disabled={materialRequirementsLoadingId === selectedDetail.id}
+              >
+                {materialRequirementsLoadingId === selectedDetail.id
+                  ? "读取中..."
+                  : "查看物料需求"}
+              </button>
               <button
                 type="button"
                 onClick={() => openIssuePreview(selectedDetail)}
@@ -753,6 +838,118 @@ export default function ProductionOrdersPage() {
               )}
             </section>
           </div>
+        </Modal>
+      ) : null}
+
+      {selectedMaterialRequirementsOrder ? (
+        <Modal
+          open={Boolean(selectedMaterialRequirementsOrder)}
+          eyebrow={`生产单 ${selectedMaterialRequirementsOrder.production_order_no}`}
+          title="物料需求"
+          maxWidth="lg"
+          panelClassName="materialRequirementsModal"
+          placement="center"
+          footer={
+            <div className="rowActions modalFooterActions">
+              <button
+                className="primaryButton"
+                type="button"
+                onClick={() => setSelectedMaterialRequirementsOrder(null)}
+              >
+                关闭
+              </button>
+            </div>
+          }
+          onClose={() => setSelectedMaterialRequirementsOrder(null)}
+        >
+          <div className="detailGrid materialRequirementsSummary">
+            <div className="detailItem">
+              <span>生产单号</span>
+              <strong>{selectedMaterialRequirementsOrder.production_order_no}</strong>
+            </div>
+            <div className="detailItem">
+              <span>来源备货单</span>
+              <strong>
+                {selectedMaterialRequirementsOrder.replenishment_request
+                  ?.request_no ?? "-"}
+              </strong>
+            </div>
+            <div className="detailItem detailItemWide">
+              <span>产品/SKU 汇总</span>
+              <strong>{getProductionItemsSummary(selectedMaterialRequirementsOrder)}</strong>
+            </div>
+            <div className="detailItem">
+              <span>计划数量</span>
+              <strong>
+                {formatQuantity(
+                  selectedMaterialRequirementsOrder.total_planned_quantity
+                )}
+              </strong>
+            </div>
+            <div className="detailItem">
+              <span>状态</span>
+              <strong>
+                {productionStatusLabels[selectedMaterialRequirementsOrder.status] ??
+                  selectedMaterialRequirementsOrder.status}
+              </strong>
+            </div>
+          </div>
+
+          {selectedMaterialRequirementsOrder.material_requirements.length === 0 ? (
+            <div className="emptyState">当前生产任务暂无物料需求</div>
+          ) : (
+            <div className="tableWrap materialRequirementsTableWrap">
+              <table className="dataTable materialRequirementsTable">
+                <thead>
+                  <tr>
+                    <th>物料编码</th>
+                    <th>物料名称</th>
+                    <th>规格</th>
+                    <th>需求数量</th>
+                    <th>当前库存</th>
+                    <th>缺口数量</th>
+                    <th>单位</th>
+                    <th>状态 / 采购状态</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedMaterialRequirementsOrder.material_requirements.map(
+                    (requirement) => {
+                      const isShortage =
+                        requirement.status === "shortage" ||
+                        Number(requirement.shortage_quantity) > 0;
+                      const statusLabel =
+                        getMaterialRequirementStatusLabel(requirement);
+
+                      return (
+                        <tr
+                          className={isShortage ? "shortageRow" : undefined}
+                          key={requirement.id}
+                        >
+                          <td>{requirement.material?.material_code ?? "-"}</td>
+                          <td>{requirement.material?.material_name ?? "-"}</td>
+                          <td>{requirement.material?.specs ?? "-"}</td>
+                          <td>{formatQuantity(requirement.required_quantity)}</td>
+                          <td>{formatQuantity(requirement.available_quantity)}</td>
+                          <td>{formatQuantity(requirement.shortage_quantity)}</td>
+                          <td>{requirement.unit}</td>
+                          <td>
+                            <span
+                              className={`tablePill material-status-${
+                                isShortage ? "shortage" : requirement.status
+                              }`}
+                            >
+                              {statusLabel}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    }
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
         </Modal>
       ) : null}
 

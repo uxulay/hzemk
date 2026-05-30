@@ -1995,6 +1995,10 @@ button:disabled {
   z-index: 20;
 }
 
+.modalBackdrop-center {
+  align-items: center;
+}
+
 .modalPanel {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -2027,6 +2031,29 @@ button:disabled {
   min-height: 0;
   overflow-y: auto;
   padding-right: 2px;
+}
+
+.materialRequirementsModal {
+  max-height: 80vh;
+  max-width: 960px;
+}
+
+.materialRequirementsSummary {
+  margin-bottom: 18px;
+}
+
+.materialRequirementsTableWrap {
+  max-height: calc(80vh - 300px);
+  overflow: auto;
+}
+
+.materialRequirementsTable {
+  min-width: 900px;
+}
+
+.modalFooterActions {
+  justify-content: flex-end;
+  width: 100%;
 }
 
 .paginationBar {

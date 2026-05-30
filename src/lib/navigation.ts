@@ -74,6 +74,11 @@ export const navigationGroups: NavigationGroup[] = [
         roles: ["procurement", "admin"]
       },
       {
+        label: "物料需求",
+        href: "/materials/requirements",
+        roles: ["procurement", "admin"]
+      },
+      {
         label: "采购入库",
         href: "/inventory/inbound?tab=purchase",
         roles: ["warehouse", "procurement", "admin"]
