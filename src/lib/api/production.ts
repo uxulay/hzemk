@@ -1017,17 +1017,10 @@ function getProductionOrderSelect() {
   `;
 }
 
-function createProductionOrderNo() {
-  const now = new Date();
-  const pad = (value: number) => String(value).padStart(2, "0");
-  const datePart = [
-    now.getFullYear(),
-    pad(now.getMonth() + 1),
-    pad(now.getDate())
-  ].join("");
-  const randomPart = Math.random().toString(36).slice(2, 8).toUpperCase();
+import { generateDailySequenceCode } from "@/lib/utils/document-number";
 
-  return `PO-${datePart}-${randomPart}`;
+async function createProductionOrderNo() {
+  return generateDailySequenceCode("production_orders", "production_order_no", "SC", 0);
 }
 
 function roundQuantity(value: number) {
@@ -2523,7 +2516,7 @@ export async function createProductionOrder(
     supabase
       .from("production_orders")
       .insert({
-        production_order_no: createProductionOrderNo(),
+        production_order_no: await createProductionOrderNo(),
         replenishment_request_id: input.replenishmentRequestId,
         sku_id: firstItem.skuId,
         bom_header_id: firstBomHeader.id,
@@ -2719,7 +2712,7 @@ export async function createMergedProductionOrder(
     supabase
       .from("production_orders")
       .insert({
-        production_order_no: createProductionOrderNo(),
+        production_order_no: await createProductionOrderNo(),
         replenishment_request_id: replenishmentRequestIds[0],
         sku_id: firstItem.skuId,
         bom_header_id: firstBomHeader.id,

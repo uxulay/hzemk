@@ -317,17 +317,10 @@ function roundMoney(value: number) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
-export function createPurchaseOrderNo() {
-  const now = new Date();
-  const pad = (value: number) => String(value).padStart(2, "0");
-  const datePart = [
-    now.getFullYear(),
-    pad(now.getMonth() + 1),
-    pad(now.getDate())
-  ].join("");
-  const randomPart = String(Math.floor(Math.random() * 10000)).padStart(4, "0");
+import { generateSequentialCode } from "@/lib/utils/document-number";
 
-  return `PUR-${datePart}-${randomPart}`;
+export async function createPurchaseOrderNo() {
+  return generateSequentialCode("purchase_orders", "purchase_order_no", "CG", 0);
 }
 
 function getSourceFromOrder(notes: string | null, items: PurchaseOrderItem[]) {
@@ -748,7 +741,7 @@ export async function createPurchaseOrder(
   }
 
   const supabase = getSupabaseClient();
-  const purchaseOrderNo = createPurchaseOrderNo();
+  const purchaseOrderNo = await createPurchaseOrderNo();
 
   const { data: order, error: orderError } = await withTimeout(
     supabase
@@ -841,7 +834,7 @@ export async function createManualPurchaseOrder(
   validateManualPurchaseItems(input.items);
 
   const supabase = getSupabaseClient();
-  const purchaseOrderNo = input.purchaseOrderNo?.trim() || createPurchaseOrderNo();
+  const purchaseOrderNo = input.purchaseOrderNo?.trim() || await createPurchaseOrderNo();
   const sourcePrefix = input.source === "bulk_import" ? "[批量导入]" : "[手动创建]";
   const notes = [sourcePrefix, input.notes?.trim()].filter(Boolean).join(" ");
 

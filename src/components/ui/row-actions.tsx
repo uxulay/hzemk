@@ -14,17 +14,27 @@ type RowActionsProps = {
   onView?: () => void;
   onEdit?: () => void;
   moreActions?: RowAction[];
+  maxInlineActions?: number;
+  inlineAll?: boolean;
   viewLabel?: string;
   editLabel?: string;
+  moreLabel?: string;
   children?: ReactNode;
 };
+
+function shouldKeepInMore(action: RowAction) {
+  return action.danger || /删除|导出|取消/.test(action.label);
+}
 
 export function RowActions({
   onView,
   onEdit,
   moreActions = [],
+  maxInlineActions = 3,
+  inlineAll = false,
   viewLabel = "查看",
   editLabel = "编辑",
+  moreLabel,
   children
 }: RowActionsProps) {
   const [open, setOpen] = useState(false);
@@ -41,6 +51,14 @@ export function RowActions({
     return () => document.removeEventListener("mousedown", close);
   }, []);
 
+  const inlineActions = moreActions.filter((action) => inlineAll || !shouldKeepInMore(action));
+  const menuActions = moreActions.filter((action) => !inlineActions.includes(action));
+  const visibleInlineActions = inlineAll
+    ? inlineActions
+    : inlineActions.slice(0, Math.max(0, maxInlineActions));
+  const overflowActions = inlineAll ? [] : inlineActions.slice(visibleInlineActions.length);
+  const finalMoreActions = [...overflowActions, ...menuActions];
+
   return (
     <div className="rowActions rowActionsCompact" ref={wrapperRef}>
       {onView ? (
@@ -56,7 +74,18 @@ export function RowActions({
         </button>
       ) : null}
       {children}
-      {moreActions.length > 0 ? (
+      {visibleInlineActions.map((action) => (
+        <button
+          className={action.danger ? "dangerButton" : undefined}
+          disabled={action.disabled}
+          key={action.label}
+          type="button"
+          onClick={action.onClick}
+        >
+          {action.label}
+        </button>
+      ))}
+      {finalMoreActions.length > 0 ? (
         <div className="rowMoreWrap">
           <button
             type="button"
@@ -66,10 +95,11 @@ export function RowActions({
             onClick={() => setOpen((current) => !current)}
           >
             <MoreHorizontalIcon size={16} />
+            {moreLabel ? <span>{moreLabel}</span> : null}
           </button>
           {open ? (
             <div className="rowMoreMenu" role="menu">
-              {moreActions.map((action) => (
+              {finalMoreActions.map((action) => (
                 <button
                   className={action.danger ? "dangerTextButton" : undefined}
                   disabled={action.disabled}

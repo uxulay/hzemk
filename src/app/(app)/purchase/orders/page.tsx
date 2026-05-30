@@ -1453,7 +1453,7 @@ export default function PurchaseOrdersPage() {
     for (const [groupKey, groupRows] of groups) {
       try {
         const firstRow = groupRows[0];
-        const orderNo = firstRow.purchaseOrderNo || createPurchaseOrderNo();
+        const orderNo = firstRow.purchaseOrderNo || await createPurchaseOrderNo();
         const remarks = groupRows
           .map((row) => row.remark)
           .filter(Boolean)

@@ -652,17 +652,10 @@ function roundQuantity(value: number) {
   return Math.round((value + Number.EPSILON) * 10000) / 10000;
 }
 
-function createInventoryTransactionNo() {
-  const now = new Date();
-  const pad = (value: number) => String(value).padStart(2, "0");
-  const datePart = [
-    now.getFullYear(),
-    pad(now.getMonth() + 1),
-    pad(now.getDate())
-  ].join("");
-  const randomPart = Math.random().toString(36).slice(2, 8).toUpperCase();
+import { generateDailySequenceCode } from "@/lib/utils/document-number";
 
-  return `INV-${datePart}-${randomPart}`;
+async function createInventoryTransactionNo() {
+  return generateDailySequenceCode("inventory_transactions", "transaction_no", "LS", 0);
 }
 
 const inventoryAdjustmentModeLabels: Record<InventoryAdjustmentMode, string> = {
@@ -2194,7 +2187,7 @@ export async function createInventoryTransaction(input: {
   });
   const { error } = await withTimeout(
     supabase.from("inventory_transactions").insert({
-      transaction_no: createInventoryTransactionNo(),
+      transaction_no: await createInventoryTransactionNo(),
       warehouse_id: input.warehouseId,
       sku_id: identity.skuId,
       product_sku_id: identity.productSkuId,

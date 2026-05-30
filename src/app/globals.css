@@ -464,14 +464,23 @@ button:disabled {
 }
 
 .statusPill {
+  align-items: center;
   background: #eef7f1;
   border: 1px solid #cce7d5;
   border-radius: 999px;
+  box-sizing: border-box;
   color: var(--success);
+  display: inline-flex;
   flex: 0 0 auto;
   font-size: 13px;
   font-weight: 700;
-  padding: 8px 12px;
+  height: 24px;
+  justify-content: center;
+  line-height: 1;
+  min-height: 24px;
+  padding: 0 8px;
+  vertical-align: middle;
+  white-space: nowrap;
 }
 
 .contentGrid {
@@ -927,7 +936,7 @@ button:disabled {
   display: block;
 }
 
-.dashboardTodoTable td span:not(.tablePill) {
+.dashboardTodoTable td span:not(.tablePill):not(.statusBadge) {
   color: var(--muted);
   display: block;
   font-size: 12px;
@@ -1495,11 +1504,11 @@ button:disabled {
 }
 
 .dataTable td strong,
-.dataTable td span {
+.dataTable td span:not(.tablePill):not(.statusBadge) {
   display: block;
 }
 
-.dataTable td span {
+.dataTable td span:not(.tablePill):not(.statusBadge) {
   color: var(--muted);
   font-size: 12px;
   margin-top: 4px;
@@ -1527,11 +1536,19 @@ button:disabled {
 }
 
 .tablePill {
+  align-items: center;
   border-radius: 999px;
+  box-sizing: border-box;
   display: inline-flex;
   font-size: 12px;
   font-weight: 700;
-  padding: 6px 10px;
+  height: 24px;
+  justify-content: center;
+  line-height: 1;
+  min-height: 24px;
+  padding: 0 8px;
+  text-align: center;
+  vertical-align: middle;
   white-space: nowrap;
 }
 
@@ -1678,8 +1695,13 @@ button:disabled {
 }
 
 .dataTable td .tablePill {
+  align-items: center;
   display: inline-flex;
+  height: 24px;
+  justify-content: center;
+  line-height: 1;
   margin-top: 0;
+  min-height: 24px;
 }
 
 .tableInput {
@@ -3337,12 +3359,17 @@ button:disabled {
 .statusBadge {
   align-items: center;
   border-radius: 999px;
+  box-sizing: border-box;
   display: inline-flex;
   font-size: 12px;
   font-weight: 800;
+  height: 24px;
   justify-content: center;
-  min-height: 26px;
-  padding: 0 10px;
+  line-height: 1;
+  min-height: 24px;
+  padding: 0 8px;
+  text-align: center;
+  vertical-align: middle;
   white-space: nowrap;
 }
 
@@ -4469,18 +4496,29 @@ button:disabled {
   border: 1px solid transparent;
   border-radius: 999px;
   align-items: center;
+  box-sizing: border-box;
   display: inline-flex;
   font-size: 12px;
   font-weight: 700;
+  height: 24px;
   justify-content: center;
   line-height: 1;
   min-height: 24px;
-  padding: 0 10px;
+  padding: 0 8px;
   text-align: center;
   vertical-align: middle;
   white-space: nowrap;
 }
 
+.dataTable td .statusBadge {
+  display: inline-flex;
+  margin-top: 0;
+}
+
+.tablePill svg,
+.statusBadge svg {
+  flex: 0 0 auto;
+}
 .statusBadge-success,
 .statusBadge-green {
   background: #f0fdf4;
@@ -4514,6 +4552,55 @@ button:disabled {
   background: #f8fafc;
   border-color: #e2e8f0;
   color: #475569;
+}
+
+.statusBadge-draft {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  color: #475569;
+}
+
+.statusBadge-submitted {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+
+.statusBadge-accepted {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+  color: #047857;
+}
+
+.statusBadge-production {
+  background: #fff7ed;
+  border-color: #fed7aa;
+  color: #c2410c;
+}
+
+.statusBadge-pending_outbound {
+  background: #f0f9ff;
+  border-color: #bae6fd;
+  color: #0369a1;
+}
+
+.statusBadge-shipped,
+.statusBadge-completed {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+  color: #166534;
+}
+
+.statusBadge-cancelled {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #64748b;
+}
+
+.statusBadge-rejected {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #991b1b;
 }
 
 .quantityPositive {
@@ -4561,6 +4648,33 @@ button:disabled {
 .rowActionsCompact button {
   min-height: 30px;
   padding: 0 8px;
+}
+
+.rowActionsCompact button span {
+  color: inherit;
+  display: inline;
+  font-size: inherit;
+  margin-top: 0;
+}
+
+.planningInlineActions .rowActionsCompact {
+  gap: 3px;
+}
+
+.planningInlineActions .rowActionsCompact button {
+  font-size: 12px;
+  min-height: 28px;
+  padding: 0 6px;
+}
+
+.planningInlineActions .rowActionsCompact button svg {
+  flex: 0 0 auto;
+}
+
+.planningInlineActions .planningShortageAction {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #991b1b;
 }
 
 .rowMoreWrap {
@@ -5630,4 +5744,46 @@ button:disabled {
   .rowActions button {
     min-height: 38px;
   }
+}
+.skuPickerSearchWrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.searchIcon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+}
+.skuPickerSearch input {
+  padding-left: 40px !important;
+}
+.searchingText {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--primary);
+  font-size: 13px;
+  margin-left: 12px;
+  white-space: nowrap;
+}
+.spinner {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.pickerInitState, .pickerLoadingState, .pickerEmptyState {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  color: var(--muted);
+  padding: 40px;
 }
