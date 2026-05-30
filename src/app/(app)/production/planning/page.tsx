@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useMockRole } from "@/components/auth/mock-role-provider";
 import { DataTable, type DataTableColumn } from "@/components/ui/DataTable";
 import { DetailDrawer } from "@/components/ui/detail-drawer";
 import { DrawerForm } from "@/components/ui/DrawerForm";
@@ -80,6 +81,13 @@ function formatQuantity(value: number) {
   });
 }
 
+function formatToday() {
+  const now = new Date();
+  const pad = (value: number) => String(value).padStart(2, "0");
+
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
 function estimateCompletionDate(startDate: string, hours: number) {
   if (!startDate || hours <= 0) {
     return "-";
@@ -132,12 +140,13 @@ function parseNotes(notes: string | null) {
 }
 
 function buildInitialProductionForm(
-  request: PlanningFbaReplenishmentRequest
+  request: PlanningFbaReplenishmentRequest,
+  defaults: { plannedStartDate: string; assignedTo: string }
 ): ProductionFormState {
   return {
-    plannedStartDate: "",
+    plannedStartDate: defaults.plannedStartDate,
     plannedEndDate: request.target_ship_date ?? "",
-    assignedTo: "",
+    assignedTo: defaults.assignedTo,
     priority: request.priority === "urgent" || request.priority === "high" ? "high" : "medium",
     notes: "",
     itemQuantities: Object.fromEntries(
@@ -151,7 +160,8 @@ function buildInitialProductionForm(
 }
 
 function buildInitialMergedProductionForm(
-  requests: PlanningFbaReplenishmentRequest[]
+  requests: PlanningFbaReplenishmentRequest[],
+  defaults: { plannedStartDate: string; assignedTo: string }
 ): ProductionFormState {
   const targetDates = requests
     .map((request) => request.target_ship_date)
@@ -162,9 +172,9 @@ function buildInitialMergedProductionForm(
   );
 
   return {
-    plannedStartDate: "",
+    plannedStartDate: defaults.plannedStartDate,
     plannedEndDate: targetDates[0] ?? "",
-    assignedTo: "",
+    assignedTo: defaults.assignedTo,
     priority: hasHighPriority ? "high" : "medium",
     notes: "",
     itemQuantities: Object.fromEntries(
@@ -241,6 +251,7 @@ function getPlanningRequestBrandSummary(request: PlanningFbaReplenishmentRequest
 }
 
 export default function ProductionPlanningPage() {
+  const { user } = useMockRole();
   const [requests, setRequests] = useState<PlanningFbaReplenishmentRequest[]>(
     []
   );
@@ -277,6 +288,24 @@ export default function ProductionPlanningPage() {
   const activeAssignees = useMemo(
     () => assignees.filter((assignee) => assignee.status === "active"),
     [assignees]
+  );
+  const currentAssigneeId = useMemo(() => {
+    if (!user?.id) {
+      return "";
+    }
+
+    const currentProfile = activeAssignees.find(
+      (assignee) => assignee.id === user.id || assignee.email === user.email
+    );
+
+    return currentProfile?.id ?? "";
+  }, [activeAssignees, user?.email, user?.id]);
+  const productionFormDefaults = useMemo(
+    () => ({
+      plannedStartDate: formatToday(),
+      assignedTo: currentAssigneeId
+    }),
+    [currentAssigneeId]
   );
   const brandOptions = useMemo(() => {
     const brandById = new Map<
@@ -409,7 +438,7 @@ export default function ProductionPlanningPage() {
     setSelectedRequest(request);
     setProductionFormRequests([request]);
     setSelectedRequestIds([request.id]);
-    setForm(buildInitialProductionForm(request));
+    setForm(buildInitialProductionForm(request, productionFormDefaults));
     setErrorMessage("");
     setSuccessMessage("");
   };
@@ -425,7 +454,7 @@ export default function ProductionPlanningPage() {
     setSelectedRequest(sourceRequests[0]);
     setProductionFormRequests(sourceRequests);
     setSelectedRequestIds(sourceRequests.map((request) => request.id));
-    setForm(buildInitialMergedProductionForm(sourceRequests));
+    setForm(buildInitialMergedProductionForm(sourceRequests, productionFormDefaults));
     setErrorMessage("");
     setSuccessMessage("");
   };
@@ -481,10 +510,6 @@ export default function ProductionPlanningPage() {
 
     if (!form.plannedStartDate) {
       return "计划开始日期必填。";
-    }
-
-    if (!form.assignedTo) {
-      return "负责人必填。";
     }
 
     const allItems = productionFormRequests.flatMap((request) => request.items);
@@ -822,32 +847,50 @@ export default function ProductionPlanningPage() {
     {
       key: "actions",
       title: "操作",
-      width: 96,
+      width: 268,
       render: (request) => {
         const isActing = actingRequestId === request.id;
+        const hasShortage = materialPreviews[request.id]?.status === "shortage";
 
         return (
-          <RowActions
-            onView={() => setDetailRequest(request)}
-            moreActions={[
-              {
-                label: request.status === "submitted" ? "接单" : "已接单",
-                disabled: loading || isActing || request.status !== "submitted",
-                onClick: () => handleAccept(request.id)
-              },
-              {
-                label: "拒绝",
-                danger: true,
-                disabled: loading || isActing,
-                onClick: () => handleReject(request.id)
-              },
-              {
-                label: "单独生成",
-                disabled: loading || isActing,
-                onClick: () => openProductionForm(request)
-              }
-            ]}
-          />
+          <div className="planningInlineActions">
+            <RowActions
+              onView={() => setDetailRequest(request)}
+            >
+              <button
+                type="button"
+                onClick={() => handleAccept(request.id)}
+                disabled={loading || isActing || request.status !== "submitted"}
+              >
+                {request.status === "submitted" ? "接单" : "已接单"}
+              </button>
+              <button
+                className="primaryButton"
+                type="button"
+                onClick={() => openProductionForm(request)}
+                disabled={loading || isActing}
+              >
+                生成任务
+              </button>
+              {hasShortage ? (
+                <button
+                  className="dangerButton planningShortageAction"
+                  type="button"
+                  onClick={() => setDetailRequest(request)}
+                >
+                  缺料
+                </button>
+              ) : null}
+              <button
+                className="dangerButton"
+                type="button"
+                onClick={() => handleReject(request.id)}
+                disabled={loading || isActing}
+              >
+                拒绝
+              </button>
+            </RowActions>
+          </div>
         );
       }
     }
@@ -1108,14 +1151,13 @@ export default function ProductionPlanningPage() {
             </label>
 
             <label>
-              负责人 *
+              负责人
               <select
                 value={form.assignedTo}
                 onChange={(event) => updateForm("assignedTo", event.target.value)}
                 disabled={submittingProduction}
-                required
               >
-                <option value="">请选择负责人</option>
+                <option value="">不指定负责人</option>
                 {activeAssignees.map((assignee) => (
                   <option key={assignee.id} value={assignee.id}>
                     {assignee.full_name} / {assignee.email}

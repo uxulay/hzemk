@@ -21,7 +21,8 @@ export type FbaRequestStatus =
   | "rejected"
   | "in_production"
   | "completed"
-  | "shipped";
+  | "shipped"
+  | "cancelled";
 
 export type FbaRequestPriority = "low" | "normal" | "high" | "urgent";
 
@@ -34,6 +35,7 @@ export type CreateFbaReplenishmentInput = {
   priority: string;
   amazonSite: string;
   notes?: string;
+  requestedBy?: string | null;
 };
 
 export type CreateFbaReplenishmentDocumentInput = {
@@ -43,6 +45,7 @@ export type CreateFbaReplenishmentDocumentInput = {
   targetShipDate?: string | null;
   priority: string;
   notes?: string;
+  requestedBy?: string | null;
   items: Array<{
     productId: string | null;
     skuId: string;
@@ -61,6 +64,14 @@ export type UpdateFbaReplenishmentDocumentInput = {
     requestedQuantity: number;
     remark?: string | null;
   }>;
+};
+
+export type CancelFbaReplenishmentRequestInput = {
+  requestId: string;
+  reason: string;
+  operatorId?: string | null;
+  operatorName?: string | null;
+  operatorRole?: string | null;
 };
 
 export type CreatedFbaReplenishment = {
@@ -357,25 +368,10 @@ async function withTimeout<T>(promise: PromiseLike<T>, action: string) {
   }
 }
 
+import { generateSequentialCode } from "@/lib/utils/document-number";
+
 async function createRequestNo(offset = 0) {
-  const supabase = getSupabaseClient();
-  const rows = await fetchAllSupabaseRows<{ request_no: string }>(
-    () =>
-      supabase
-        .from("fba_replenishment_requests")
-        .select("request_no")
-        .like("request_no", "B____")
-        .order("request_no", { ascending: false }),
-    "生成备货单号"
-  );
-  const maxNumber = rows.reduce((max, row) => {
-    const match = row.request_no.match(/^B(\d{4})$/);
-
-    return match ? Math.max(max, Number(match[1])) : max;
-  }, 0);
-  const nextNumber = maxNumber + 1 + offset;
-
-  return `B${String(nextNumber).padStart(4, "0")}`;
+  return generateSequentialCode("fba_replenishment_requests", "request_no", "BH", offset);
 }
 
 function isDuplicateRequestNoError(error: { code?: string; message: string }) {
@@ -600,7 +596,7 @@ export async function createFbaReplenishmentRequest(
         .from("fba_replenishment_requests")
         .insert({
           request_no: await createRequestNo(attempt),
-          requested_by: null,
+          requested_by: input.requestedBy || null,
           sku_id: input.skuId,
           target_warehouse_id: input.targetWarehouseId || null,
           fba_warehouse_code: input.fbaWarehouseCode?.trim() || null,
@@ -683,7 +679,7 @@ export async function createFbaReplenishmentDocument(
         .from("fba_replenishment_requests")
         .insert({
           request_no: await createRequestNo(attempt),
-          requested_by: null,
+          requested_by: input.requestedBy || null,
           sku_id: firstItem.skuId,
           target_warehouse_id: input.targetWarehouseId,
           fba_warehouse_code: input.fbaWarehouseCode?.trim() || null,
@@ -889,6 +885,98 @@ export async function updateFbaReplenishmentDocument(
   }
 }
 
+const cancellableRequestStatuses: FbaRequestStatus[] = ["draft", "submitted"];
+
+function buildCancellationNote(input: {
+  cancelledAt: string;
+  operatorLabel: string;
+  reason: string;
+  originalStatus: FbaRequestStatus;
+}) {
+  return [
+    "",
+    "[删除/作废记录]",
+    `操作类型：删除/作废`,
+    `删除/作废时间：${input.cancelledAt}`,
+    `操作人：${input.operatorLabel}`,
+    `删除原因：${input.reason}`,
+    `原状态：${input.originalStatus}`
+  ].join("\n");
+}
+
+export async function cancelFbaReplenishmentRequest(
+  input: CancelFbaReplenishmentRequestInput
+): Promise<void> {
+  const reason = input.reason.trim();
+
+  if (!reason) {
+    throw new Error("请填写删除/作废原因。");
+  }
+
+  const supabase = getSupabaseClient();
+  const { data, error } = await withTimeout(
+    supabase
+      .from("fba_replenishment_requests")
+      .select("id, status, requested_by, notes")
+      .eq("id", input.requestId)
+      .single(),
+    "读取 FBA 备货需求"
+  );
+
+  if (error) {
+    throw formatSupabaseError("读取 FBA 备货需求", error);
+  }
+
+  const request = data as {
+    id: string;
+    status: FbaRequestStatus;
+    requested_by: string | null;
+    notes: string | null;
+  };
+
+  if (!cancellableRequestStatuses.includes(request.status)) {
+    throw new Error("已受理、生产中、已出库、已完成的备货单不能物理删除，请走取消/作废流程。");
+  }
+
+  const isAdmin = input.operatorRole === "admin";
+  const isOwner = Boolean(
+    input.operatorId && request.requested_by && input.operatorId === request.requested_by
+  );
+
+  if (!isAdmin && !isOwner) {
+    throw new Error("只能删除自己创建的已提交单据。");
+  }
+
+  const operatorLabel = [
+    input.operatorName?.trim() || input.operatorId || "未知操作人",
+    input.operatorRole ? `(${input.operatorRole})` : null
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const cancelledAt = new Date().toISOString();
+  const nextNotes = `${request.notes?.trim() || ""}${buildCancellationNote({
+    cancelledAt,
+    operatorLabel,
+    reason,
+    originalStatus: request.status
+  })}`.trim();
+  const { error: updateError } = await withTimeout(
+    supabase
+      .from("fba_replenishment_requests")
+      .update({
+        status: "cancelled",
+        notes: nextNotes
+      })
+      .eq("id", input.requestId)
+      .in("status", cancellableRequestStatuses),
+    "作废 FBA 备货需求"
+  );
+
+  if (updateError) {
+    throw formatSupabaseError("作废 FBA 备货需求", updateError);
+  }
+}
+
 export async function getFbaReplenishmentSkuOptions(): Promise<
   FbaReplenishmentSkuOption[]
 > {
@@ -915,7 +1003,7 @@ export async function searchFbaReplenishmentSkuOptions(
             `name.ilike.%${normalizedKeyword}%`
           ].join(",")
         )
-        .limit(100),
+        .limit(500),
       "搜索可备货产品"
     );
 
@@ -961,8 +1049,7 @@ export async function searchFbaReplenishmentSkuOptions(
     )
     .in("sku_type", finishedSkuTypes)
     .eq("status", "active")
-    .order("sku_code", { ascending: true })
-    .limit(safeLimit);
+    .limit(normalizedKeyword ? 500 : safeLimit);
 
   if (normalizedKeyword) {
     const skuFilters = [
@@ -978,6 +1065,8 @@ export async function searchFbaReplenishmentSkuOptions(
     }
 
     skuQuery = skuQuery.or(skuFilters.join(","));
+  } else {
+    skuQuery = skuQuery.order("sku_code", { ascending: true });
   }
 
   const { data: skuData, error: skuError } = await withTimeout(
@@ -989,7 +1078,40 @@ export async function searchFbaReplenishmentSkuOptions(
     throw formatSupabaseError("搜索可备货 SKU", skuError);
   }
 
-  const skuRows = (skuData ?? []) as unknown as RawFbaReplenishmentSkuOption[];
+  let skuRows = (skuData ?? []) as unknown as RawFbaReplenishmentSkuOption[];
+
+  if (normalizedKeyword) {
+    const exactLower = normalizedKeyword.toLowerCase();
+    skuRows.sort((a, b) => {
+      const aSkuExact = a.sku_code.toLowerCase() === exactLower;
+      const bSkuExact = b.sku_code.toLowerCase() === exactLower;
+      if (aSkuExact && !bSkuExact) return -1;
+      if (!aSkuExact && bSkuExact) return 1;
+
+      const aProduct = singleRelation(a.product);
+      const bProduct = singleRelation(b.product);
+
+      const aSpuExact = aProduct?.product_code.toLowerCase() === exactLower;
+      const bSpuExact = bProduct?.product_code.toLowerCase() === exactLower;
+      if (aSpuExact && !bSpuExact) return -1;
+      if (!aSpuExact && bSpuExact) return 1;
+
+      const aSkuPrefix = a.sku_code.toLowerCase().startsWith(exactLower);
+      const bSkuPrefix = b.sku_code.toLowerCase().startsWith(exactLower);
+      if (aSkuPrefix && !bSkuPrefix) return -1;
+      if (!aSkuPrefix && bSkuPrefix) return 1;
+
+      const aSpuPrefix = aProduct?.product_code.toLowerCase().startsWith(exactLower);
+      const bSpuPrefix = bProduct?.product_code.toLowerCase().startsWith(exactLower);
+      if (aSpuPrefix && !bSpuPrefix) return -1;
+      if (!aSpuPrefix && bSpuPrefix) return 1;
+
+      return a.sku_code.localeCompare(b.sku_code);
+    });
+
+    skuRows = skuRows.slice(0, safeLimit);
+  }
+
   const skuIds = skuRows.map((sku) => sku.id);
   const [stockResult, bomResult] = await Promise.all([
     withTimeout(

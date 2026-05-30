@@ -16,6 +16,7 @@ import { DownloadIcon, PlusIcon, UploadIcon } from "@/components/ui/icons";
 import { type Product, type Warehouse } from "@/lib/api/master-data";
 import { searchWarehouseOptions } from "@/lib/api/warehouses";
 import {
+  cancelFbaReplenishmentRequest,
   createFbaReplenishmentDocument,
   getFbaReplenishmentSkuOptions,
   getReplenishmentRequestsPage,
@@ -156,7 +157,8 @@ const statusOptions: { value: StatusFilter; label: string }[] = [
   { value: "rejected", label: "已拒绝" },
   { value: "in_production", label: "生产中" },
   { value: "completed", label: "已完成" },
-  { value: "shipped", label: "已发往 FBA" }
+  { value: "shipped", label: "已发往 FBA" },
+  { value: "cancelled", label: "已作废" }
 ];
 
 const statusLabels: Record<FbaRequestStatus, string> = {
@@ -166,8 +168,11 @@ const statusLabels: Record<FbaRequestStatus, string> = {
   rejected: "已拒绝",
   in_production: "生产中",
   completed: "已完成",
-  shipped: "已发往 FBA"
+  shipped: "已发往 FBA",
+  cancelled: "已作废"
 };
+
+const requestCancelStatuses: FbaRequestStatus[] = ["draft", "submitted"];
 
 const priorityLabels: Record<string, string> = {
   low: "低",
@@ -464,6 +469,15 @@ function isValidDateText(value: string) {
   );
 }
 
+function isUuid(value: string | null | undefined) {
+  return Boolean(
+    value &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        value
+      )
+  );
+}
+
 function createDraftItemFromSku(
   sku: FbaReplenishmentSkuOption,
   quantity: number | string,
@@ -610,6 +624,10 @@ export default function ReplenishmentPage() {
   const [targetShipDateEnd, setTargetShipDateEnd] = useState("");
   const [selectedRequest, setSelectedRequest] =
     useState<FbaReplenishmentRequest | null>(null);
+  const [cancelRequest, setCancelRequest] =
+    useState<FbaReplenishmentRequest | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancellingRequest, setCancellingRequest] = useState(false);
   const [detailEditMode, setDetailEditMode] = useState(false);
   const [detailDraftItems, setDetailDraftItems] = useState<
     DraftReplenishmentItem[]
@@ -638,6 +656,8 @@ export default function ReplenishmentPage() {
   const [pickerProducts, setPickerProducts] = useState<Product[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [savingDetail, setSavingDetail] = useState(false);
+  const [pickerSearching, setPickerSearching] = useState(false);
+  const [pickerSearchPerformed, setPickerSearchPerformed] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [createErrorMessage, setCreateErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -721,7 +741,17 @@ export default function ReplenishmentPage() {
       return;
     }
 
+    if (!pickerSearch.trim()) {
+      setPickerSkuOptions([]);
+      setPickerProducts([]);
+      setPickerSearching(false);
+      setPickerSearchPerformed(false);
+      return;
+    }
+
     let cancelled = false;
+    setPickerSearching(true);
+
     const timer = setTimeout(async () => {
       try {
         const skuData = await searchFbaReplenishmentSkuOptions(pickerSearch, 100);
@@ -729,10 +759,15 @@ export default function ReplenishmentPage() {
         if (!cancelled) {
           setPickerSkuOptions(skuData);
           setPickerProducts(getProductsFromSkuOptions(skuData));
+          setPickerSearchPerformed(true);
         }
       } catch (error) {
         if (!cancelled) {
           setCreateErrorMessage(getErrorMessage(error));
+        }
+      } finally {
+        if (!cancelled) {
+          setPickerSearching(false);
         }
       }
     }, 300);
@@ -823,41 +858,9 @@ export default function ReplenishmentPage() {
       }, 0),
     [detailDraftItems]
   );
-  const filteredPickerProducts = useMemo(() => {
-    const keyword = pickerSearch.trim().toLowerCase();
-
-    return pickerProducts.filter((product) => {
-      const productSkus = pickerSkusByProductId.get(product.id) ?? [];
-
-      if (productSkus.length === 0) {
-        return false;
-      }
-
-      if (!keyword) {
-        return true;
-      }
-
-      const productText = [
-        product.name,
-        product.product_code,
-        product.brand?.name,
-        product.brand?.brand_code
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      const skuText = productSkus
-        .flatMap((sku) => [sku.sku_name, sku.sku_code, sku.specs])
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-
-      return productText.includes(keyword) || skuText.includes(keyword);
-    });
-  }, [pickerSearch, pickerProducts, pickerSkusByProductId]);
   const activePickerProduct =
-    filteredPickerProducts.find((product) => product.id === activePickerProductId) ??
-    filteredPickerProducts[0] ??
+    pickerProducts.find((product) => product.id === activePickerProductId) ??
+    pickerProducts[0] ??
     null;
   const activePickerSkus = activePickerProduct
     ? pickerSkusByProductId.get(activePickerProduct.id) ?? []
@@ -928,6 +931,64 @@ export default function ReplenishmentPage() {
     setSelectedRequest(null);
     setDetailEditMode(false);
     setDetailDraftItems([]);
+  };
+
+  const openCancelRequest = (request: FbaReplenishmentRequest) => {
+    if (!requestCancelStatuses.includes(request.status)) {
+      setErrorMessage("已受理、生产中、已出库、已完成的备货单不能物理删除，请走取消/作废流程。");
+      return;
+    }
+
+    if (!canCancelRequest(request)) {
+      setErrorMessage("只能删除自己创建的已提交单据。");
+      return;
+    }
+
+    setCancelRequest(request);
+    setCancelReason("");
+    setErrorMessage("");
+    setCreateErrorMessage("");
+    setSuccessMessage("");
+  };
+
+  const closeCancelRequest = () => {
+    if (cancellingRequest) {
+      return;
+    }
+
+    setCancelRequest(null);
+    setCancelReason("");
+  };
+
+  const confirmCancelRequest = async () => {
+    if (!cancelRequest) {
+      return;
+    }
+
+    if (!cancelReason.trim()) {
+      setErrorMessage("请填写删除/作废原因。");
+      return;
+    }
+
+    try {
+      setCancellingRequest(true);
+      setErrorMessage("");
+      await cancelFbaReplenishmentRequest({
+        requestId: cancelRequest.id,
+        reason: cancelReason,
+        operatorId: user.id,
+        operatorName: user.name,
+        operatorRole: user.role
+      });
+      setCancelRequest(null);
+      setCancelReason("");
+      await refreshRequests();
+      setSuccessMessage(`已作废备货单：${cancelRequest.request_no}`);
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setCancellingRequest(false);
+    }
   };
 
   const startDetailEdit = () => {
@@ -1025,17 +1086,13 @@ export default function ReplenishmentPage() {
   };
 
   const openPickerModal = () => {
-    // Initialize picker with global SKU data so list shows immediately on open
-    setPickerSkuOptions(skuOptions);
-    setPickerProducts(products);
-
-    const firstProductWithSku = products.find(
-      (product) => (skusByProductId.get(product.id) ?? []).length > 0
-    );
-
+    setPickerSkuOptions([]);
+    setPickerProducts([]);
+    setPickerSearching(false);
+    setPickerSearchPerformed(false);
     setPickerOpen(true);
     setPickerSearch("");
-    setActivePickerProductId(firstProductWithSku?.id ?? "");
+    setActivePickerProductId("");
     setPickerSkuState({});
     setCreateErrorMessage("");
     setCreateNoticeMessage("");
@@ -1415,6 +1472,7 @@ export default function ReplenishmentPage() {
       targetShipDate: createForm.targetShipDate || null,
       priority: "normal",
       notes: createForm.notes,
+      requestedBy: isUuid(user.id) ? user.id : null,
       items: draftItems.map((item) => ({
         productId: item.productId,
         skuId: item.skuId,
@@ -1492,6 +1550,17 @@ export default function ReplenishmentPage() {
         createDraftItemFromRequestItem(item, skuStockById.get(item.sku_id))
       )
     );
+  const canCancelRequest = (request: FbaReplenishmentRequest) => {
+    if (!requestCancelStatuses.includes(request.status)) {
+      return false;
+    }
+
+    if (user.role === "admin") {
+      return true;
+    }
+
+    return Boolean(user.id && request.requested_by && user.id === request.requested_by);
+  };
   const getRequestSummary = (request: FbaReplenishmentRequest) => {
     const items = request.items.slice(0, 2);
     const labels = items.map((item) => {
@@ -1666,7 +1735,16 @@ export default function ReplenishmentPage() {
               onClick: () => {
                 window.location.href = "/production/planning";
               }
-            }
+            },
+            ...(canCancelRequest(request)
+              ? [
+                  {
+                    label: "作废",
+                    danger: true,
+                    onClick: () => openCancelRequest(request)
+                  }
+                ]
+              : [])
           ]}
         />
       )
@@ -2101,6 +2179,51 @@ export default function ReplenishmentPage() {
         </DetailDrawer>
       ) : null}
 
+      <Modal
+        open={Boolean(cancelRequest)}
+        eyebrow="删除/作废确认"
+        title={cancelRequest ? `作废备货单 ${cancelRequest.request_no}` : "作废备货单"}
+        maxWidth="md"
+        onClose={closeCancelRequest}
+        footer={
+          <>
+            <button
+              className="secondaryButton"
+              type="button"
+              onClick={closeCancelRequest}
+              disabled={cancellingRequest}
+            >
+              取消
+            </button>
+            <button
+              className="dangerButton"
+              type="button"
+              onClick={confirmCancelRequest}
+              disabled={cancellingRequest || !cancelReason.trim()}
+            >
+              {cancellingRequest ? "作废中..." : "确认作废"}
+            </button>
+          </>
+        }
+      >
+        <div className="dataForm">
+          <p className="formHint">
+            草稿/已提交备货单会改为已作废，并在备注中追加删除/作废记录。
+          </p>
+          <label>
+            删除/作废原因 *
+            <textarea
+              value={cancelReason}
+              onChange={(event) => setCancelReason(event.target.value)}
+              placeholder="请填写本次删除/作废原因"
+              disabled={cancellingRequest}
+              autoFocus
+              required
+            />
+          </label>
+        </div>
+      </Modal>
+
       <DrawerForm
         open={createOpen}
         title="创建备货单"
@@ -2525,45 +2648,64 @@ export default function ReplenishmentPage() {
           maxWidth="xl"
           onClose={() => setPickerOpen(false)}
         >
-          <label className="skuPickerSearch">
-            搜索
-            <input
-              value={pickerSearch}
-              onChange={(event) => setPickerSearch(event.target.value)}
-              placeholder="产品名称、SPU、品牌、SKU 名称、SKU 编码、规格/米数"
-            />
-          </label>
+          <div className="skuPickerSearchWrap">
+            <label className="skuPickerSearch">
+              <span className="searchIcon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              </span>
+              <input
+                value={pickerSearch}
+                onChange={(event) => setPickerSearch(event.target.value)}
+                placeholder="搜索产品名称、SPU、SKU 编码、规格/米数"
+                autoFocus
+              />
+            </label>
+            {pickerSearching && <span className="searchingText">
+              <svg className="spinner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>
+              正在搜索...
+            </span>}
+          </div>
 
-              <div className="skuPickerLayout skuPickerModalBody">
-            <div className="skuPickerProducts">
-              {filteredPickerProducts.length === 0 ? (
-                <div className="emptyState">没有匹配的产品。</div>
-              ) : null}
+          <div className="skuPickerLayout skuPickerModalBody">
+            {!pickerSearch.trim() ? (
+              <div className="pickerInitState emptyState">
+                <p>请输入产品名称、SPU、SKU 编码或规格搜索</p>
+              </div>
+            ) : pickerSearching ? (
+              <div className="pickerLoadingState emptyState">
+                <p>正在搜索...</p>
+              </div>
+            ) : pickerSearchPerformed && pickerProducts.length === 0 ? (
+              <div className="pickerEmptyState emptyState">
+                <p>未找到匹配产品或 SKU</p>
+              </div>
+            ) : pickerProducts.length > 0 ? (
+              <>
+                <div className="skuPickerProducts">
+                  {pickerProducts.map((product) => {
+                    const isActive = activePickerProduct?.id === product.id;
 
-              {filteredPickerProducts.map((product) => {
-                const isActive = activePickerProduct?.id === product.id;
-
-                return (
-                  <button
-                    className={
-                      isActive
-                        ? "skuPickerProductButton active"
-                        : "skuPickerProductButton"
-                    }
-                    type="button"
-                    onClick={() => setActivePickerProductId(product.id)}
-                    key={product.id}
-                  >
-                    <ProductHeader
-                      imageUrl={product.product_image_url ?? null}
-                      name={product.name}
-                      code={product.product_code}
-                      brandLabel={getBrandCodeName(product.brand)}
-                    />
-                  </button>
-                );
-              })}
-            </div>
+                    return (
+                      <button
+                        className={
+                          isActive
+                            ? "skuPickerProductButton active"
+                            : "skuPickerProductButton"
+                        }
+                        type="button"
+                        onClick={() => setActivePickerProductId(product.id)}
+                        key={product.id}
+                      >
+                        <ProductHeader
+                          imageUrl={product.product_image_url ?? null}
+                          name={product.name}
+                          code={product.product_code}
+                          brandLabel={getBrandCodeName(product.brand)}
+                        />
+                      </button>
+                    );
+                  })}
+                </div>
 
             <div className="skuPickerSkus">
               {!activePickerProduct ? (
@@ -2623,6 +2765,8 @@ export default function ReplenishmentPage() {
                 </div>
               )}
             </div>
+            </>
+            ) : null}
           </div>
 
           <div className="modalFooter stickyPickerFooter">
